@@ -82,11 +82,22 @@ class UserInviteEmailService
       CGI.escapeHTML(value.to_s)
     end
 
+    def accessible_brand_color(hex)
+      return "#0f172a" unless /\A#[0-9A-Fa-f]{6}\z/.match?(hex.to_s)
+
+      r, g, b = hex[1..6].scan(/../).map { |c| c.to_i(16) / 255.0 }
+      linear = [ r, g, b ].map { |v| v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055)**2.4 }
+      luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+      # Require >= 4.5:1 contrast against white (#ffffff)
+      contrast_with_white = (1.0 + 0.05) / (luminance + 0.05)
+      contrast_with_white >= 4.5 ? hex : "#0f172a"
+    end
+
     def invite_html(user:, invited_by:, role_label: 'admin', org_name: 'HafaGolf', brand_color: '#0f172a')
       inviter = escape(invited_by&.name.presence || invited_by&.email.presence || "an administrator")
       login_url = escape("#{frontend_url}/admin/login")
       safe_org_name = escape(org_name)
-      safe_color = /\A#[0-9A-Fa-f]{6}\z/.match?(brand_color.to_s) ? brand_color : "#0f172a"
+      safe_color = accessible_brand_color(brand_color)
 
       <<~HTML
         <!doctype html>

@@ -120,9 +120,10 @@ class ClicksendClient
       return false unless top_code == "SUCCESS"
 
       if status_code.present?
-        status_code_text = status_code.to_s
+        status_code_text = status_code.to_s.strip
         return status_code_text.match?(/\A20\d\z/) if status_code_text.match?(/\A\d+\z/)
         return false if MessageDelivery.failure_status_text?(status_code_text)
+        return false unless status_code_text.match?(/\A(success|queued|sent|accepted|ok)\z/i)
       end
 
       text = status_text.presence || top_message

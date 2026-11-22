@@ -4,6 +4,16 @@ class MessageDelivery < ApplicationRecord
   PROVIDERS = %w[resend clicksend action_mailer].freeze
   CHANNELS = %w[email sms].freeze
   STATUSES = %w[pending accepted delivered failed bounced delayed complained skipped].freeze
+  STATUS_PRECEDENCE = {
+    "pending" => 0,
+    "accepted" => 1,
+    "delayed" => 2,
+    "delivered" => 3,
+    "failed" => 3,
+    "bounced" => 3,
+    "complained" => 3,
+    "skipped" => 3
+  }.freeze
 
   belongs_to :tournament, optional: true
   belongs_to :messageable, polymorphic: true, optional: true
@@ -44,8 +54,9 @@ class MessageDelivery < ApplicationRecord
     )
   end
 
-  def apply_provider_event!(status:, provider_status_code: nil, provider_status_text: nil, error_code: nil, error_text: nil, payload: {})
+  def apply_provider_event!(status:, provider_status_code: nil, provider_status_text: nil, error_code: nil, error_text: nil, payload: {}, event_at: nil)
     normalized_status = self.class.normalize_status(status)
+    event_time = event_at || Time.current
     event_payload = {
       "status" => normalized_status,
       "provider_status_code" => provider_status_code,
@@ -53,9 +64,22 @@ class MessageDelivery < ApplicationRecord
       "error_code" => error_code,
       "error_text" => error_text,
       "payload" => payload,
+      "event_at" => event_at&.iso8601,
       "received_at" => Time.current.iso8601
     }.compact
     events = Array(response_payload["events"])
+    updated_response_payload = response_payload.merge("events" => events + [ event_payload ])
+
+    stale_by_time = event_at.present? && latest_provider_event_at.present? && event_at < latest_provider_event_at
+    regresses_status = STATUS_PRECEDENCE.fetch(normalized_status, 0) < STATUS_PRECEDENCE.fetch(self.status, 0)
+
+    if stale_by_time || regresses_status
+      update!(response_payload: updated_response_payload)
+      return
+    end
+
+    updated_response_payload["latest_event"] = payload
+    updated_response_payload["latest_provider_event_at"] = event_at.iso8601 if event_at.present?
 
     update!(
       status: normalized_status,
@@ -63,13 +87,10 @@ class MessageDelivery < ApplicationRecord
       provider_status_text: provider_status_text.presence || self.provider_status_text,
       error_code: error_code.presence || self.error_code,
       error_text: error_text.presence || self.error_text,
-      response_payload: response_payload.merge(
-        "latest_event" => payload,
-        "events" => events + [ event_payload ]
-      ),
-      last_event_at: Time.current,
-      delivered_at: normalized_status == "delivered" ? Time.current : delivered_at,
-      failed_at: failed_status?(normalized_status) ? Time.current : failed_at
+      response_payload: updated_response_payload,
+      last_event_at: [ last_event_at, event_time ].compact.max,
+      delivered_at: normalized_status == "delivered" ? (delivered_at || event_time) : delivered_at,
+      failed_at: failed_status?(normalized_status) ? (failed_at || event_time) : failed_at
     )
   end
 
@@ -78,25 +99,27 @@ class MessageDelivery < ApplicationRecord
     return "accepted" if value.match?(/\A20\d\z/)
 
     case
-    when value.match?(/delivered|received on handset/)
-      "delivered"
-    when value.match?(/queued|sent|accepted|scheduled|success/)
-      "accepted"
     when value.match?(/\Abounce\z|\Abounced\z|hard_bounce|soft_bounce/)
       "bounced"
-    when value.match?(/delay|defer/)
-      "delayed"
     when value.match?(/complain|spam/)
       "complained"
     when value == "skipped"
       "skipped"
+    when value.match?(/delay|defer/)
+      "delayed"
+    when failure_status_text?(value)
+      "failed"
+    when value.match?(/delivered|received on handset/)
+      "delivered"
+    when value.match?(/queued|sent|accepted|scheduled|success/)
+      "accepted"
     else
-      failure_status_text?(value) ? "failed" : (STATUSES.include?(value) ? value : "failed")
+      STATUSES.include?(value) ? value : "failed"
     end
   end
 
   def self.failure_status_text?(text)
-    text.to_s.match?(/fail|invalid|reject|bounce|undeliver|expired|blocked|unsubscribed|spam|insufficient|credit|balance|unauthori[sz]ed|forbidden|quota|limit|opt.?out|stopped|cancel/i)
+    text.to_s.match?(/fail|invalid|reject|bounce|undeliver|not[[:space:]_-]+delivered|suppressed|throttl|expired|blocked|unsubscribed|spam|insufficient|credit|balance|unauthori[sz]ed|forbidden|quota|limit|opt.?out|stopped|cancel/i)
   end
 
   def self.normalize_response_payload(payload)
@@ -106,6 +129,15 @@ class MessageDelivery < ApplicationRecord
   end
 
   private
+
+  def latest_provider_event_at
+    raw = response_payload["latest_provider_event_at"]
+    return nil if raw.blank?
+
+    Time.zone.parse(raw.to_s)
+  rescue ArgumentError, TypeError
+    nil
+  end
 
   def delivered_status?(status)
     self.class.normalize_status(status) == "delivered"

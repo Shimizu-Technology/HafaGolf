@@ -26,11 +26,10 @@ if ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
   exit 0
 fi
 
-MATCHES=$(
-  git diff -U0 "$BASE_REF"...HEAD -- api/app web/src ':!**/*.test.*' ':!**/*.spec.*' \
-    | grep -E '^\+[^+]' \
-    | grep -i -E "$PATTERN" || true
-)
+DIFF_OUTPUT=$(git diff -U0 "$BASE_REF"...HEAD -- api/app web/src ':!**/*.test.*' ':!**/*.spec.*')
+
+ADDED_LINES=$(printf '%s\n' "$DIFF_OUTPUT" | grep -E '^\+' | grep -vE '^\+\+\+ ' || true)
+MATCHES=$(printf '%s\n' "$ADDED_LINES" | grep -i -E "$PATTERN" || true)
 
 if [[ -n "$MATCHES" ]]; then
   echo "ERROR: Newly added client-specific identifier(s) detected in api/app/ or web/src/:"

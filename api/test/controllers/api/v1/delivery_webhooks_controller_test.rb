@@ -1,6 +1,45 @@
 require "test_helper"
 
 class Api::V1::DeliveryWebhooksControllerTest < ActionDispatch::IntegrationTest
+  setup do
+    @previous_delivery_token = ENV["DELIVERY_WEBHOOK_TOKEN"]
+    @previous_resend_token = ENV["RESEND_WEBHOOK_TOKEN"]
+    @previous_clicksend_token = ENV["CLICKSEND_WEBHOOK_TOKEN"]
+    ENV["DELIVERY_WEBHOOK_TOKEN"] = "test-webhook-secret"
+    ENV["RESEND_WEBHOOK_TOKEN"] = nil
+    ENV["CLICKSEND_WEBHOOK_TOKEN"] = nil
+  end
+
+  teardown do
+    ENV["DELIVERY_WEBHOOK_TOKEN"] = @previous_delivery_token
+    ENV["RESEND_WEBHOOK_TOKEN"] = @previous_resend_token
+    ENV["CLICKSEND_WEBHOOK_TOKEN"] = @previous_clicksend_token
+  end
+
+  def webhook_headers
+    { "X-Webhook-Token" => "test-webhook-secret" }
+  end
+
+  test "webhooks fail closed with 401 when no token is configured" do
+    ENV["DELIVERY_WEBHOOK_TOKEN"] = nil
+
+    post "/api/v1/webhooks/resend",
+         params: { type: "email.delivered", data: { email_id: "email_unauth" } }
+
+    assert_response :unauthorized
+  end
+
+  test "webhooks reject missing or invalid token with 401" do
+    post "/api/v1/webhooks/resend",
+         params: { type: "email.delivered", data: { email_id: "email_missing" } }
+    assert_response :unauthorized
+
+    post "/api/v1/webhooks/clicksend",
+         params: { message_id: "sms_invalid", status_text: "Delivered" },
+         headers: { "X-Webhook-Token" => "wrong-secret" }
+    assert_response :unauthorized
+  end
+
   test "resend webhook updates matching delivery" do
     delivery = MessageDelivery.create!(
       provider: "resend",
@@ -14,13 +53,73 @@ class Api::V1::DeliveryWebhooksControllerTest < ActionDispatch::IntegrationTest
     post "/api/v1/webhooks/resend",
          params: {
            type: "email.delivered",
+           created_at: "2026-05-12T10:05:00Z",
            data: { email_id: "email_123" }
-         }
+         },
+         headers: webhook_headers
 
     assert_response :success
     assert_equal "delivered", delivery.reload.status
     assert delivery.delivered_at.present?
     assert_equal 1, delivery.response_payload.fetch("events").length
+  end
+
+  test "resend webhook classifies email.suppressed as failed and preserves reason" do
+    delivery = MessageDelivery.create!(
+      provider: "resend",
+      channel: "email",
+      purpose: "sponsor_portal_invite",
+      recipient: "suppressed@example.com",
+      status: "accepted",
+      provider_message_id: "email_suppressed_123"
+    )
+
+    post "/api/v1/webhooks/resend",
+         params: {
+           type: "email.suppressed",
+           data: { email_id: "email_suppressed_123", reason: "Recipient on suppression list" }
+         },
+         headers: webhook_headers
+
+    assert_response :success
+    delivery.reload
+    assert_equal "failed", delivery.status
+    assert_equal "Recipient on suppression list", delivery.error_text
+    assert delivery.failed_at.present?
+  end
+
+  test "delayed out-of-order email.sent event does not regress delivered status" do
+    delivery = MessageDelivery.create!(
+      provider: "resend",
+      channel: "email",
+      purpose: "sponsor_portal_invite",
+      recipient: "sponsor@example.com",
+      status: "accepted",
+      provider_message_id: "email_order_123"
+    )
+
+    post "/api/v1/webhooks/resend",
+         params: {
+           type: "email.delivered",
+           created_at: "2026-05-12T10:05:00Z",
+           data: { email_id: "email_order_123" }
+         },
+         headers: webhook_headers
+    assert_response :success
+
+    post "/api/v1/webhooks/resend",
+         params: {
+           type: "email.sent",
+           created_at: "2026-05-12T10:00:00Z",
+           data: { email_id: "email_order_123" }
+         },
+         headers: webhook_headers
+    assert_response :success
+
+    delivery.reload
+    assert_equal "delivered", delivery.status
+    assert delivery.delivered_at.present?
+    assert_equal 2, delivery.response_payload.fetch("events").length
   end
 
   test "clicksend webhook updates matching delivery failure" do
@@ -39,7 +138,8 @@ class Api::V1::DeliveryWebhooksControllerTest < ActionDispatch::IntegrationTest
            status_code: "400",
            status_text: "Message rejected by carrier",
            error_text: "Carrier rejected message"
-         }
+         },
+         headers: webhook_headers
 
     assert_response :success
     assert_equal "failed", delivery.reload.status
@@ -61,14 +161,16 @@ class Api::V1::DeliveryWebhooksControllerTest < ActionDispatch::IntegrationTest
          params: {
            type: "email.delivery_delayed",
            data: { email_id: "email_history_123", reason: "Temporary deferral" }
-         }
+         },
+         headers: webhook_headers
     assert_response :success
 
     post "/api/v1/webhooks/resend",
          params: {
            type: "email.delivered",
            data: { email_id: "email_history_123" }
-         }
+         },
+         headers: webhook_headers
     assert_response :success
 
     delivery.reload
@@ -91,7 +193,8 @@ class Api::V1::DeliveryWebhooksControllerTest < ActionDispatch::IntegrationTest
          params: {
            type: "email.opened",
            data: { email_id: "email_unknown_123" }
-         }
+         },
+         headers: webhook_headers
 
     assert_response :success
     delivery.reload
@@ -115,7 +218,8 @@ class Api::V1::DeliveryWebhooksControllerTest < ActionDispatch::IntegrationTest
          params: {
            type: "email.delivered",
            data: {}
-         }
+         },
+         headers: webhook_headers
 
     assert_response :accepted
     delivery.reload
@@ -129,7 +233,8 @@ class Api::V1::DeliveryWebhooksControllerTest < ActionDispatch::IntegrationTest
          params: {
            type: "email.delivered",
            data: "unexpected"
-         }
+         },
+         headers: webhook_headers
 
     assert_response :accepted
     json = JSON.parse(response.body)
@@ -150,7 +255,8 @@ class Api::V1::DeliveryWebhooksControllerTest < ActionDispatch::IntegrationTest
          params: {
            status_code: "200",
            status_text: "Message delivered to the handset"
-         }
+         },
+         headers: webhook_headers
 
     assert_response :accepted
     delivery.reload

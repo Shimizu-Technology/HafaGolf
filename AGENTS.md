@@ -31,11 +31,11 @@
 
 ```bash
 # API tests (confirm DB is hafagolf_test)
-cd api && bundle exec rails test
+(cd api && bundle exec rails test)
 
 # API security checks
-cd api && bundle exec brakeman --no-pager && bundle exec bundler-audit check
+(cd api && bundle exec brakeman --no-pager && bundle exec bundler-audit check)
 
 # Web checks
-cd web && npm run typecheck && npm test && npm run build
+(cd web && npm run typecheck && npm test && npm run build)
 ```

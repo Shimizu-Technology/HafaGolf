@@ -80,6 +80,32 @@ class UserInviteEmailServiceTest < ActiveSupport::TestCase
     ENV["RESEND_FROM_EMAIL"] = previous_from
   end
 
+  test "send invite falls back to dark color for low-contrast light brand colors and preserves dark brand colors" do
+    previous_key = ENV["RESEND_API_KEY"]
+    previous_from = ENV["RESEND_FROM_EMAIL"]
+    ENV["RESEND_API_KEY"] = "test_resend_key"
+    ENV["RESEND_FROM_EMAIL"] = "noreply@example.com"
+
+    captured_html = []
+    light_org = Organization.create!(name: "Light Brand Org", slug: "light-brand-org", primary_color: "#ffffff")
+    dark_org = Organization.create!(name: "Dark Brand Org", slug: "dark-brand-org", primary_color: "#1e3a8a")
+
+    with_singleton_method(Resend::Emails, :send, ->(payload) {
+      captured_html << payload.fetch(:html)
+      { "id" => "email_color_test" }
+    }) do
+      UserInviteEmailService.send_invite(user: users(:user_no_clerk), invited_by: users(:user_one), organization: light_org)
+      UserInviteEmailService.send_invite(user: users(:user_no_clerk), invited_by: users(:user_one), organization: dark_org)
+    end
+
+    assert_includes captured_html[0], "background: #0f172a"
+    refute_includes captured_html[0], "background: #ffffff; border-radius"
+    assert_includes captured_html[1], "background: #1e3a8a"
+  ensure
+    ENV["RESEND_API_KEY"] = previous_key
+    ENV["RESEND_FROM_EMAIL"] = previous_from
+  end
+
   private
 
   def with_singleton_method(klass, method_name, replacement)

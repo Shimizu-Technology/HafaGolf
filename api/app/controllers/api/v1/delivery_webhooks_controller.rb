@@ -17,12 +17,15 @@ module Api
         delivery = MessageDelivery.where(provider: "resend", provider_message_id: provider_message_id).recent.first
         return render json: { message: "No matching delivery", provider_message_id: provider_message_id }, status: :accepted if delivery.blank?
 
-        delivery.apply_provider_event!(
-          status: resend_status(event_type, current_status: delivery.status),
-          provider_status_text: event_type,
-          error_text: data[:error].presence || data[:reason].presence,
-          payload: payload
-        )
+        delivery.with_lock do
+          delivery.apply_provider_event!(
+            status: resend_status(event_type, current_status: delivery.status),
+            provider_status_text: event_type,
+            error_text: data[:error].presence || data[:reason].presence || (event_type == "email.suppressed" ? "Recipient suppressed" : nil),
+            payload: payload,
+            event_at: parse_event_time(payload["created_at"])
+          )
+        end
 
         render json: { message: "Delivery updated", delivery_id: delivery.id, status: delivery.status }
       end
@@ -37,14 +40,17 @@ module Api
         return render json: { message: "No matching delivery", provider_message_id: provider_message_id }, status: :accepted if delivery.blank?
 
         status_text = payload["status_text"].presence || payload["status"].presence
-        delivery.apply_provider_event!(
-          status: status_text.presence || payload["status_code"],
-          provider_status_code: payload["status_code"],
-          provider_status_text: status_text,
-          error_code: payload["error_code"],
-          error_text: payload["error_text"],
-          payload: payload
-        )
+        delivery.with_lock do
+          delivery.apply_provider_event!(
+            status: status_text.presence || payload["status_code"],
+            provider_status_code: payload["status_code"],
+            provider_status_text: status_text,
+            error_code: payload["error_code"],
+            error_text: payload["error_text"],
+            payload: payload,
+            event_at: parse_event_time(payload["timestamp"])
+          )
+        end
 
         render json: { message: "Delivery updated", delivery_id: delivery.id, status: delivery.status }
       end
@@ -65,7 +71,7 @@ module Api
             ENV["RESEND_WEBHOOK_TOKEN"].presence
           end
         expected = provider_token || ENV["DELIVERY_WEBHOOK_TOKEN"].presence
-        return if expected.blank?
+        return render json: { error: "Invalid webhook token" }, status: :unauthorized if expected.blank?
 
         provided = params[:token].presence || request.headers["X-Webhook-Token"].presence
         valid = provided.present? &&
@@ -83,6 +89,15 @@ module Api
         data.is_a?(Hash) ? data.with_indifferent_access : {}.with_indifferent_access
       end
 
+      def parse_event_time(value)
+        return nil if value.blank?
+        return Time.zone.at(value.to_i) if value.is_a?(Integer) || value.to_s.match?(/\A\d+\z/)
+
+        Time.zone.parse(value.to_s)
+      rescue ArgumentError, TypeError
+        nil
+      end
+
       def resend_status(event_type, current_status:)
         case event_type
         when "email.sent"
@@ -95,6 +110,8 @@ module Api
           "delayed"
         when "email.complained"
           "complained"
+        when "email.suppressed"
+          "failed"
         else
           event_type.include?("failed") ? "failed" : current_status
         end

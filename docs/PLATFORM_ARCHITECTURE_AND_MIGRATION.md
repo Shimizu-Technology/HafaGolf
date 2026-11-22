@@ -349,10 +349,11 @@ Per Leon's Nov 22 direction: **build HafaGolf properly; no deadline-driven short
 
 ### 5.3 Rollback & Retiring Old Deployments
 - **Pre-registration rollback (< 10 minutes):** Before any new live registrations arrive on HafaGolf:
-  1. Revert DNS to the old Netlify site.
-  2. Take the old app out of read-only/maintenance mode so writes work again.
-  3. Restore Resend/ClickSend delivery webhooks to the old app's active endpoints (only if the old deployment actually serves those webhook endpoints — e.g. if PR #28 was deployed to MAW).
-  4. Verify a test write and a test delivery callback succeed on the restored app before declaring rollback complete.
+  1. Freeze HafaGolf writes: put the HafaGolf API and frontend in maintenance/read-only mode and confirm zero new registrations or payments were created after the freeze. (If any live registration or payment exists, stop the rollback and apply the post-registration rule below.)
+  2. Revert DNS to the old Netlify site.
+  3. Take the old app out of read-only/maintenance mode so writes work again.
+  4. Restore Resend/ClickSend delivery webhooks to the old app's active endpoints (only if the old deployment actually serves those webhook endpoints — e.g. if PR #28 was deployed to MAW).
+  5. Verify a test write and a test delivery callback succeed on the restored app before declaring rollback complete.
 - **Post-registration rule:** Once live registrations/payments exist on HafaGolf, **never split writes across two databases** — fix forward on HafaGolf.
 - **Retirement checklist (only after 30–60 days post-event and Leon's explicit OK):**
   1. Confirm old Netlify auto-builds remain stopped (`make-a-wish-guam` and `giaa-tournament` were set to `stop_builds: true` on Nov 13).

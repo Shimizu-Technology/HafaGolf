@@ -13,6 +13,7 @@ Required:
 - `DATABASE_URL` (Neon pooled `-pooler` connection string)
 - `RAILS_MASTER_KEY`
 - `SECRET_KEY_BASE`
+- `FRONTEND_URL` (required by mailer links, ActionCable allowed origins, and checkout fallback URLs until PR-1a/PR-1c fully replace all reads with `OrgUrlBuilder` + `ADMIN_ORIGIN`)
 - `ADMIN_ORIGIN=https://golf.shimizu-technology.com`
 - `CLERK_JWKS_URL` (single Clerk app on `golf.shimizu-technology.com`)
 - `CLERK_SECRET_KEY`
