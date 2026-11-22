@@ -41,6 +41,8 @@ interface TournamentFormData {
   tournament_format: string;
   scoring_type: string;
   team_size: number;
+  capacity_unit: 'players' | 'teams';
+  allow_partial_teams: boolean;
   teams_per_start_position: number;
   start_positions_per_hole: string;
   shotgun_start: boolean;
@@ -93,6 +95,8 @@ const defaultFormData: TournamentFormData = {
   tournament_format: 'scramble',
   scoring_type: 'gross',
   team_size: 4,
+  capacity_unit: 'players',
+  allow_partial_teams: false,
   teams_per_start_position: 1,
   start_positions_per_hole: '',
   shotgun_start: true,
@@ -543,15 +547,27 @@ export const CreateTournamentPage: React.FC = () => {
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-4">
-                  <InputField
-                    label="Team Size"
-                    name="team_size"
-                    type="number"
-                    min={1}
-                    max={4}
-                    value={formData.team_size}
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Team Size</label>
+                    <select
+                      name="team_size"
+                      value={formData.team_size}
+                      onChange={(e) => {
+                        const nextSize = Number(e.target.value);
+                        setFormData((prev) => ({
+                          ...prev,
+                          team_size: nextSize,
+                          allow_partial_teams: nextSize === 1 ? false : prev.allow_partial_teams,
+                        }));
+                      }}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value={1}>1 — Individual</option>
+                      <option value={2}>2 — Pairs (2-Person Team)</option>
+                      <option value={4}>4 — Foursomes (4-Person Team)</option>
+                    </select>
+                  </div>
                   <InputField
                     label="Teams Per Start Position"
                     name="teams_per_start_position"
@@ -570,6 +586,24 @@ export const CreateTournamentPage: React.FC = () => {
                     placeholder="Unlimited"
                   />
                 </div>
+
+                {formData.team_size > 1 && (
+                  <div className="flex items-center gap-3 pt-1">
+                    <input
+                      type="checkbox"
+                      name="allow_partial_teams"
+                      checked={formData.allow_partial_teams}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-brand-600 rounded focus:ring-brand-500"
+                    />
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Allow Partial Teams</label>
+                      <p className="text-xs text-gray-500">
+                        Allow public registrations with fewer than {formData.team_size} players (e.g., solo or pairs in a foursome event).
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-600">
@@ -604,9 +638,22 @@ export const CreateTournamentPage: React.FC = () => {
             <SectionHeader title="Capacity & Waitlist" icon={<Users className="w-5 h-5" />} section="capacity" />
             {expandedSections.capacity && (
               <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Capacity Unit</label>
+                  <select
+                    name="capacity_unit"
+                    value={formData.capacity_unit}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500"
+                  >
+                    <option value="players">Players (recommended for individual or partial-team events)</option>
+                    <option value="teams">Teams (counts each team registration as 1 unit)</option>
+                  </select>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <InputField
-                    label="Maximum Capacity"
+                    label={`Maximum Capacity (${formData.capacity_unit})`}
                     name="max_capacity"
                     type="number"
                     min={1}
@@ -614,7 +661,7 @@ export const CreateTournamentPage: React.FC = () => {
                     error={errors.max_capacity}
                   />
                   <InputField
-                    label="Reserved Slots"
+                    label={`Reserved Slots (${formData.capacity_unit})`}
                     name="reserved_slots"
                     type="number"
                     min={0}

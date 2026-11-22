@@ -572,6 +572,12 @@ module Api
           ).compact
         end
 
+        if attrs.key?('team_categories')
+          attrs['config'] = (attrs['config'] || {}).merge(
+            'team_categories' => Array(attrs.delete('team_categories')).map { |c| c.to_s.strip }.reject(&:blank?).uniq
+          )
+        end
+
         tournament = organization.tournaments.build(attrs)
         
         # Generate slug if not provided
@@ -592,6 +598,7 @@ module Api
             tournament: tournament.as_json(
               only: [:id, :name, :slug, :year, :edition, :status, :event_date,
                      :location_name, :entry_fee, :max_capacity, :event_type,
+                     :team_size, :capacity_unit, :allow_partial_teams,
                      :theme_preset, :use_org_branding]
             ),
             message: 'Tournament created successfully'
@@ -1042,7 +1049,7 @@ module Api
           :name, :year, :edition, :event_type, :status, :slug,
           :event_date, :registration_time, :start_time, :check_in_time,
           :location_name, :location_address,
-          :tournament_format, :scoring_type, :team_size, :teams_per_start_position, :start_positions_per_hole, :shotgun_start,
+          :tournament_format, :scoring_type, :team_size, :capacity_unit, :allow_partial_teams, :teams_per_start_position, :start_positions_per_hole, :shotgun_start,
           :max_capacity, :reserved_slots, :waitlist_enabled, :waitlist_max,
           :entry_fee, :early_bird_fee, :early_bird_deadline,
           :allow_cash, :allow_check, :allow_card, :checks_payable_to, :payment_instructions,
@@ -1050,6 +1057,7 @@ module Api
           :contact_name, :contact_phone, :fee_includes, :tournament_info,
           :walkin_fee, :walkin_registration_open,
           :theme_preset, :use_org_branding,
+          team_categories: [],
           course_configs: [:key, :name, :hole_count]
         )
       end

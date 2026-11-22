@@ -1,6 +1,7 @@
 class SponsorSlot < ApplicationRecord
   belongs_to :sponsor
   belongs_to :tournament
+  has_one :team_member, dependent: :nullify
 
   validates :slot_number, presence: true,
             numericality: { only_integer: true, greater_than: 0 }

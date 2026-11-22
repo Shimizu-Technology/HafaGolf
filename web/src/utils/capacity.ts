@@ -1,3 +1,5 @@
+import type { CapacitySummary, CapacityUnit } from '../services/api';
+
 type CapacityRecord = {
   max_capacity?: number | null;
   confirmed_count?: number | null;
@@ -9,6 +11,8 @@ type CapacityRecord = {
   at_capacity?: boolean;
   public_at_capacity?: boolean;
   waitlist_enabled?: boolean;
+  capacity_unit?: CapacityUnit;
+  capacity_summary?: CapacitySummary;
 };
 
 export function getTotalConfirmed(record: CapacityRecord) {
@@ -38,6 +42,7 @@ export function usesReservedPublicCapacity(record: CapacityRecord) {
 }
 
 export function getPublicFacingCapacitySummary(record: CapacityRecord) {
+  const unitLabel = record.capacity_unit === 'players' ? 'players' : 'teams';
   const publicCapacity = getPublicCapacity(record);
   const publicConfirmed = getPublicConfirmed(record);
   const sponsorReserved = getSponsorReservedTeams(record);
@@ -46,7 +51,7 @@ export function getPublicFacingCapacitySummary(record: CapacityRecord) {
 
   if (publicCapacity == null) {
     return {
-      label: `${publicConfirmed} teams registered`,
+      label: `${publicConfirmed} ${unitLabel} registered`,
       secondaryLabel: sponsorReserved > 0 ? `${sponsorConfirmed} / ${sponsorReserved} sponsor-reserved spots used` : null,
       percent: null as number | null,
     };
@@ -56,7 +61,7 @@ export function getPublicFacingCapacitySummary(record: CapacityRecord) {
   const numerator = usesReservedCapacity ? publicConfirmed : getTotalConfirmed(record);
   const label = usesReservedCapacity
     ? `${numerator} / ${denominator} public spots claimed`
-    : `${numerator} / ${denominator} teams registered`;
+    : `${numerator} / ${denominator} ${unitLabel} registered`;
 
   const secondaryLabel = usesReservedCapacity && sponsorReserved > 0
     ? `${sponsorConfirmed} / ${sponsorReserved} sponsor-reserved spots used`

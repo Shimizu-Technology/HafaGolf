@@ -147,6 +147,8 @@ interface TournamentSettings {
   format_name: string;
   tournament_format: string;
   team_size: string;
+  capacity_unit: 'players' | 'teams';
+  allow_partial_teams: boolean;
   teams_per_start_position: string;
   start_positions_per_hole: string;
   registration_mode: RegistrationMode;
@@ -471,6 +473,8 @@ export const OrgSettingsPage: React.FC = () => {
                 format_name: t.format_name || '',
                 tournament_format: t.tournament_format || '',
                 team_size: t.team_size?.toString() || '2',
+                capacity_unit: t.capacity_unit === 'players' ? 'players' : 'teams',
+                allow_partial_teams: t.allow_partial_teams ?? false,
                 teams_per_start_position: t.teams_per_start_position?.toString() || '1',
                 start_positions_per_hole: t.start_positions_per_hole?.toString() || '',
                 registration_mode: deriveRegistrationMode(t.registration_open ?? false, t.walkin_registration_open ?? false),
@@ -613,6 +617,9 @@ export const OrgSettingsPage: React.FC = () => {
       location_name: tournamentSettings.location_name || null,
       location_address: tournamentSettings.location_address || null,
       format_name: tournamentSettings.format_name || null,
+      team_size: tournamentSettings.team_size ? parseInt(tournamentSettings.team_size, 10) : 2,
+      capacity_unit: tournamentSettings.capacity_unit,
+      allow_partial_teams: tournamentSettings.allow_partial_teams,
       teams_per_start_position: tournamentSettings.teams_per_start_position ? parseInt(tournamentSettings.teams_per_start_position) : 1,
       start_positions_per_hole: tournamentSettings.start_positions_per_hole ? parseInt(tournamentSettings.start_positions_per_hole) : null,
       registration_open: isRegular,
@@ -1175,12 +1182,39 @@ export const OrgSettingsPage: React.FC = () => {
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Team Size
                     </label>
-                    <div className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 rounded-xl text-base bg-gray-50 text-gray-600">
-                      {tournamentSettings.team_size || '2'} players per team
-                    </div>
-                    <p className="mt-1 text-xs text-gray-400">Contact support to change team size</p>
+                    <select
+                      value={tournamentSettings.team_size || '2'}
+                      onChange={(e) => {
+                        const nextSize = e.target.value;
+                        handleTournamentChange('team_size', nextSize);
+                        if (nextSize === '1') {
+                          handleTournamentChange('allow_partial_teams', false);
+                        }
+                      }}
+                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value="1">1 player (Individual)</option>
+                      <option value="2">2 players (Pairs)</option>
+                      <option value="4">4 players (Foursomes)</option>
+                    </select>
                   </div>
                 </div>
+                {parseInt(tournamentSettings.team_size || '2', 10) > 1 && (
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={tournamentSettings.allow_partial_teams}
+                      onChange={(e) => handleTournamentChange('allow_partial_teams', e.target.checked)}
+                      className="w-5 h-5 text-brand-600 rounded focus:ring-brand-500"
+                    />
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Allow partial teams</label>
+                      <p className="text-xs text-gray-400">
+                        Permit public registrations with fewer than {tournamentSettings.team_size} players.
+                      </p>
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1460,7 +1494,21 @@ export const OrgSettingsPage: React.FC = () => {
               <div className="mt-4 pt-4 border-t border-gray-200 space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Max Capacity (teams)
+                    Capacity Unit
+                  </label>
+                  <select
+                    value={tournamentSettings.capacity_unit}
+                    onChange={(e) => handleTournamentChange('capacity_unit', e.target.value as 'players' | 'teams')}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    <option value="players">Players (counts individual players &amp; partial teams)</option>
+                    <option value="teams">Teams (counts each team registration)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Max Capacity ({tournamentSettings.capacity_unit})
                   </label>
                   <input
                     type="number"
@@ -1470,7 +1518,7 @@ export const OrgSettingsPage: React.FC = () => {
                   />
                   {sponsorReservedTeams > 0 && tournamentSettings.max_capacity && (
                     <p className="mt-1 text-xs text-gray-500">
-                      {sponsorReservedTeams} team{sponsorReservedTeams !== 1 ? 's' : ''} reserved for sponsors
+                      {sponsorReservedTeams} {tournamentSettings.capacity_unit === 'players' ? 'slot' : 'team'}{sponsorReservedTeams !== 1 ? 's' : ''} reserved for sponsors
                       {' \u2022 '}
                       {Math.max(0, parseInt(tournamentSettings.max_capacity) - sponsorReservedTeams)} available for public registration
                     </p>

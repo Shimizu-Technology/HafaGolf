@@ -15,7 +15,7 @@ class TournamentSerializer < ActiveModel::Serializer
              :display_name, :short_name,
              :organization_id, :organization_slug,
              # New configuration fields
-             :tournament_format, :scoring_type, :team_size, :teams_per_start_position, :start_positions_per_hole, :players_per_start_position, :teams_per_hole, :players_per_hole, :allow_partial_teams,
+             :tournament_format, :scoring_type, :team_size, :capacity_unit, :team_categories, :capacity_summary, :teams_per_start_position, :start_positions_per_hole, :players_per_start_position, :teams_per_hole, :players_per_hole, :allow_partial_teams,
              :handicap_required, :handicap_max,
              :use_flights, :flights_config,
              # Pricing
@@ -153,6 +153,14 @@ class TournamentSerializer < ActiveModel::Serializer
 
   def course_configs
     object.course_configs
+  end
+
+  def team_categories
+    object.team_categories
+  end
+
+  def capacity_summary
+    object.capacity_summary
   end
 
   def features

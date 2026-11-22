@@ -330,22 +330,41 @@ module Api
       end
 
       # POST /api/v1/checkout/swipe_simple
-      # Redirect golfer to SwipeSimple payment link.
-      # Keyed on the golfer-bound cryptographic `payment_token` (never raw sequential golfer_id).
+      # Redirect golfer or registration to SwipeSimple payment link.
+      # Keyed on the record-bound cryptographic `payment_token` (never raw sequential IDs).
       def swipe_simple_redirect
-        golfer = find_golfer_by_payment_token!
-        return unless golfer
+        token = params[:payment_token].to_s.strip
+        if token.blank?
+          render json: { error: "Missing payment token" }, status: :bad_request
+          return
+        end
 
-        if golfer.payment_status == "paid"
+        record = TenantContext.with_platform_access do
+          Golfer.includes(tournament: :organization).find_by(payment_token: token) ||
+            Registration.includes(tournament: :organization).find_by(payment_token: token)
+        end
+
+        unless record
+          render json: { error: "Invalid payment token" }, status: :not_found
+          return
+        end
+
+        return unless verify_tenant_match!(
+          record.tournament.organization_id,
+          status: :not_found,
+          message: "Invalid payment token"
+        )
+
+        if record.payment_status == "paid"
           render json: { error: "Already paid" }, status: :unprocessable_entity
           return
         end
 
-        original_payment_type = golfer.payment_type
-        tournament = golfer.tournament
+        original_payment_type = record.payment_type
+        tournament = record.tournament
 
         TenantContext.with_organization(tournament.organization_id) do
-          golfer.update!(payment_type: "swipe_simple", payment_status: "pending")
+          record.update!(payment_type: "swipe_simple", payment_status: "pending")
         end
 
         payment_url = if original_payment_type == 'walk_in'
@@ -355,10 +374,14 @@ module Api
                       end
         payment_url ||= ENV.fetch('SWIPE_SIMPLE_PAYMENT_URL', 'https://swipesimple.com/links/lnk_e1c8f45f9c401c93552781ef3d52fdfc')
 
-        render json: {
-          redirect_url: payment_url,
-          golfer_id: golfer.id
-        }
+        payload = { redirect_url: payment_url }
+        if record.is_a?(Registration)
+          payload[:registration_id] = record.id
+        else
+          payload[:golfer_id] = record.id
+        end
+
+        render json: payload
       end
 
       # GET /api/v1/checkout/session/:session_id

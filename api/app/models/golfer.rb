@@ -5,6 +5,7 @@ class Golfer < ApplicationRecord
   belongs_to :refunded_by, class_name: "User", optional: true
   belongs_to :payment_verified_by, class_name: "User", foreign_key: :payment_verified_by_id, optional: true
   belongs_to :checked_in_by, class_name: "User", foreign_key: :checked_in_by_id, optional: true
+  has_one :registration, dependent: :nullify
   has_many :scores, dependent: :destroy
   has_many :raffle_tickets, dependent: :nullify
 
