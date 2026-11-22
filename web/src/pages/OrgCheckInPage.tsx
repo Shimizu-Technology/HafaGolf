@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useAuthToken } from '../hooks/useAuthToken';
 import { useOrganization } from '../components/OrganizationProvider';
 import { useGolferChannel } from '../hooks/useGolferChannel';
-import type { Golfer as ApiGolfer } from '../services/api';
+import type { Golfer as ApiGolfer, Registration as ApiRegistration, TeamMember as ApiTeamMember } from '../services/api';
 import {
   Search,
   UserCheck,
@@ -54,6 +54,9 @@ export const OrgCheckInPage: React.FC = () => {
   const { getToken } = useAuthToken();
 
   const [golfers, setGolfers] = useState<ApiGolfer[]>([]);
+  const [registrations, setRegistrations] = useState<ApiRegistration[]>([]);
+  const [checkingInMemberId, setCheckingInMemberId] = useState<number | null>(null);
+  const [verifyingRegistrationId, setVerifyingRegistrationId] = useState<number | null>(null);
   const [tournamentName, setTournamentName] = useState('');
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -110,6 +113,30 @@ export const OrgCheckInPage: React.FC = () => {
       setSelectedGolfer((current) => (
         current ? confirmed.find((g: ApiGolfer) => g.id === current.id) || null : current
       ));
+
+      if (data.tournament?.id) {
+        try {
+          const allRegistrations: ApiRegistration[] = [];
+          let page = 1;
+          let totalPages = 1;
+          while (page <= totalPages) {
+            const regRes = await fetch(
+              `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${data.tournament.id}/registrations?registration_status=confirmed&per_page=200&page=${page}`,
+              { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            if (!regRes.ok) break;
+            const regData = await regRes.json();
+            if (Array.isArray(regData.registrations)) {
+              allRegistrations.push(...regData.registrations);
+            }
+            totalPages = Number(regData.meta?.total_pages) || 1;
+            page += 1;
+          }
+          setRegistrations(allRegistrations);
+        } catch {
+          // Non-fatal: legacy golfer check-in remains available
+        }
+      }
     } catch {
       toast.error('Failed to load golfers');
     } finally {
@@ -177,6 +204,119 @@ export const OrgCheckInPage: React.FC = () => {
 
     return filtered;
   }, [golfers, activeQueue, searchTerm]);
+
+  const filteredRegistrations = useMemo(() => {
+    let filtered = [...registrations];
+
+    switch (activeQueue) {
+      case 'not_checked_in':
+        filtered = filtered.filter((reg) => !reg.all_checked_in);
+        break;
+      case 'paid':
+        filtered = filtered.filter((reg) => reg.payment_status === 'paid' && !reg.all_checked_in);
+        break;
+      case 'not_paid':
+        filtered = filtered.filter((reg) => reg.payment_status !== 'paid');
+        break;
+      case 'checked_in':
+        filtered = filtered.filter((reg) => reg.checked_in_count > 0);
+        break;
+    }
+
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter((reg) =>
+        reg.display_team_name.toLowerCase().includes(term) ||
+        (reg.contact_name && reg.contact_name.toLowerCase().includes(term)) ||
+        (reg.contact_email && reg.contact_email.toLowerCase().includes(term)) ||
+        (reg.contact_phone && reg.contact_phone.includes(term)) ||
+        (reg.company && reg.company.toLowerCase().includes(term)) ||
+        reg.team_members.some(
+          (member) =>
+            member.name.toLowerCase().includes(term) ||
+            (member.email && member.email.toLowerCase().includes(term)) ||
+            (member.phone && member.phone.includes(term))
+        )
+      );
+    }
+
+    return filtered;
+  }, [registrations, activeQueue, searchTerm]);
+
+  const handleTeamMemberCheckIn = async (registration: ApiRegistration, member: ApiTeamMember) => {
+    if (registration.payment_status !== 'paid') {
+      toast.error('Verify team payment before checking in players');
+      return;
+    }
+    setCheckingInMemberId(member.id);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const action = member.checked_in ? 'undo_check_in' : 'check_in';
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/v1/team_members/${member.id}/${action}`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to update check-in status');
+      }
+
+      const data = await response.json();
+      if (data.registration) {
+        setRegistrations((prev) =>
+          prev.map((reg) => (reg.id === data.registration.id ? data.registration : reg))
+        );
+      }
+      toast.success(
+        member.checked_in ? `Undid check-in for ${member.name}` : `${member.name} checked in`,
+        { duration: 2000 }
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update check-in');
+    } finally {
+      setCheckingInMemberId(null);
+    }
+  };
+
+  const handleVerifyRegistrationPayment = async (registration: ApiRegistration) => {
+    setVerifyingRegistrationId(registration.id);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/v1/registrations/${registration.id}/verify_payment`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payment_method: verifyMethod, notes: verifyNotes }),
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to verify payment');
+      }
+
+      const data = await response.json();
+      if (data.registration) {
+        setRegistrations((prev) =>
+          prev.map((reg) => (reg.id === data.registration.id ? data.registration : reg))
+        );
+      }
+      toast.success(`Payment verified for ${registration.display_team_name}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to verify payment');
+    } finally {
+      setVerifyingRegistrationId(null);
+    }
+  };
 
   const requestCheckIn = (golfer: ApiGolfer) => {
     if (golfer.checked_in_at) return;
@@ -411,6 +551,139 @@ export const OrgCheckInPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Team Registrations (Per-Player Check-In) */}
+      {filteredRegistrations.length > 0 && (
+        <section className="max-w-6xl mx-auto space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-2">
+              <Users className="w-4 h-4 text-brand-600" />
+              Team Registrations ({filteredRegistrations.length})
+            </h2>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            {filteredRegistrations.map((reg) => (
+              <div
+                key={reg.id}
+                className={`rounded-2xl border bg-white p-4 shadow-sm ${
+                  reg.payment_status !== 'paid'
+                    ? 'border-gray-200 border-l-4 border-l-amber-500'
+                    : reg.all_checked_in
+                      ? 'border-green-200 bg-green-50/30'
+                      : 'border-gray-200'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-semibold text-gray-900 truncate">{reg.display_team_name}</h3>
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          reg.all_checked_in
+                            ? 'bg-green-100 text-green-700'
+                            : reg.checked_in_count > 0
+                              ? 'bg-brand-100 text-brand-700'
+                              : 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {reg.checked_in_count}/{reg.player_count} checked in
+                      </span>
+                      {reg.payment_status === 'paid' ? (
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full ${
+                            reg.payment_type === 'sponsor'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-green-100 text-green-700'
+                          }`}
+                        >
+                          {reg.payment_type === 'sponsor' ? 'Sponsored' : 'Paid'}
+                        </span>
+                      ) : (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                          Unpaid
+                        </span>
+                      )}
+                    </div>
+                    {reg.starting_position_label && (
+                      <p className="text-xs text-brand-700 mt-1 flex items-center gap-1">
+                        <Flag className="w-3.5 h-3.5" />
+                        Start {reg.starting_position_label}
+                      </p>
+                    )}
+                  </div>
+
+                  {reg.payment_status !== 'paid' && (
+                    <button
+                      type="button"
+                      onClick={() => handleVerifyRegistrationPayment(reg)}
+                      disabled={verifyingRegistrationId === reg.id}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shrink-0 disabled:opacity-50"
+                    >
+                      {verifyingRegistrationId === reg.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                      )}
+                      Verify Payment
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  {reg.team_members.map((member) => (
+                    <div
+                      key={member.id}
+                      className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 ${
+                        member.checked_in ? 'bg-green-50 border border-green-100' : 'bg-gray-50'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-100 text-brand-700 text-[10px] font-bold shrink-0">
+                            {member.position}
+                          </span>
+                          <span className="text-sm font-medium text-gray-900 truncate">{member.name}</span>
+                          {member.is_captain && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 font-medium">
+                              Captain
+                            </span>
+                          )}
+                        </div>
+                        {(member.email || member.phone) && (
+                          <p className="text-xs text-gray-500 pl-7 truncate">
+                            {[member.email, member.phone].filter(Boolean).join(' • ')}
+                          </p>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleTeamMemberCheckIn(reg, member)}
+                        disabled={checkingInMemberId === member.id || (!member.checked_in && reg.payment_status !== 'paid')}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition disabled:opacity-50 ${
+                          member.checked_in
+                            ? 'border border-gray-300 bg-white text-gray-600 hover:bg-gray-100'
+                            : 'bg-green-600 hover:bg-green-500 text-white'
+                        }`}
+                      >
+                        {checkingInMemberId === member.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : member.checked_in ? (
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        ) : (
+                          <UserCheck className="w-3.5 h-3.5" />
+                        )}
+                        {member.checked_in ? 'Undo' : 'Check In'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Two-Column Layout */}
       <div className="max-w-6xl mx-auto grid lg:grid-cols-[1fr_380px] gap-4">

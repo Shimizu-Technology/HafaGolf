@@ -6,6 +6,8 @@ class Tournament < ApplicationRecord
   # Associations
   belongs_to :organization
   has_many :golfers, dependent: :restrict_with_error
+  has_many :registrations, dependent: :restrict_with_error
+  has_many :team_members, dependent: :restrict_with_error
   has_many :groups, dependent: :restrict_with_error
   has_many :scores, dependent: :destroy
   has_many :raffle_prizes, dependent: :destroy
@@ -47,11 +49,24 @@ class Tournament < ApplicationRecord
   # Status constants
   STATUSES = %w[draft open closed in_progress completed archived].freeze
   EVENT_TYPES = %w[golf_tournament gala].freeze
+  CAPACITY_UNITS = %w[players teams].freeze
   CANONICAL_THEME_PACKS = %w[default-clean charity-bright memorial-formal crest-classic].freeze
   LEGACY_THEME_PRESETS = %w[classic premium minimal event].freeze
   THEME_PRESETS = (CANONICAL_THEME_PACKS + LEGACY_THEME_PRESETS).freeze
 
   validates :theme_preset, presence: true, inclusion: { in: THEME_PRESETS }
+  validates :capacity_unit, presence: true, inclusion: { in: CAPACITY_UNITS }
+
+  def team_categories
+    raw = config&.dig('team_categories')
+    return [] unless raw.is_a?(Array)
+
+    raw.map { |c| c.to_s.strip }.reject(&:blank?).uniq
+  end
+
+  def team_categories_enabled?
+    team_categories.any?
+  end
 
   def resolved_theme_pack
     return theme_preset if CANONICAL_THEME_PACKS.include?(theme_preset)
@@ -174,6 +189,11 @@ class Tournament < ApplicationRecord
   end
 
   def players_per_start_position
+    raw = config&.dig('players_per_start_position')
+    if valid_positive_integer_config?(raw)
+      return raw.to_i
+    end
+
     (team_size.presence || Group::MAX_GOLFERS_DEFAULT) * teams_per_start_position
   end
 
@@ -211,11 +231,16 @@ class Tournament < ApplicationRecord
   # Scoring type constants
   SCORING_TYPES = %w[gross net both stableford].freeze
   
+  # Team size constants
+  TEAM_SIZES = [1, 2, 4].freeze
+
   # Format validations
   validates :tournament_format, inclusion: { in: FORMATS }, allow_nil: true
   validates :scoring_type, inclusion: { in: SCORING_TYPES }, allow_nil: true
-  validates :team_size, numericality: { only_integer: true, greater_than: 0, less_than_or_equal_to: 4 }, allow_nil: true
+  validates :team_size, inclusion: { in: TEAM_SIZES }, allow_nil: true
+  validate :team_size_not_below_existing_registrations
   validate :teams_per_start_position_is_valid
+  validate :players_per_start_position_is_valid
   validate :start_positions_per_hole_is_valid
   
   # Alias for backwards compatibility with 'format_name' column
@@ -305,11 +330,7 @@ class Tournament < ApplicationRecord
   end
 
   def can_register?
-    return false unless open? && registration_open? && !registration_deadline_passed?
-    return true unless public_at_capacity?
-    return false unless waitlist_enabled?
-    return true if waitlist_max.nil? || waitlist_max == 0
-    waitlist_count < waitlist_max
+    can_accept_public_registration?(player_count: 1)
   end
 
   # Single-query stats computation — replaces 8+ individual COUNT queries
@@ -337,23 +358,172 @@ class Tournament < ApplicationRecord
   end
 
   def confirmed_count
-    golfer_stats[:confirmed]
+    capacity_summary[:confirmed_units]
   end
 
   def public_confirmed_count
-    golfer_stats[:public_confirmed]
+    capacity_summary[:public_confirmed_units]
   end
 
   def sponsor_confirmed_count
-    golfer_stats[:sponsor_confirmed]
+    capacity_summary[:sponsor_confirmed_units]
+  end
+
+  def sponsor_reserved_slots
+    if sponsors.loaded?
+      sponsors.select(&:active?).sum(&:slot_count).to_i
+    else
+      sponsors.active.sum(:slot_count).to_i
+    end
   end
 
   def sponsor_reserved_teams
-    @sponsor_reserved_teams ||= if sponsors.loaded?
-      sponsors.select(&:active?).sum(&:slot_count).to_i / 2
-    else
-      sponsors.active.sum(:slot_count).to_i / 2
+    divisor = [team_size.to_i, 1].max
+    active_sponsors = sponsors.loaded? ? sponsors.select(&:active?) : sponsors.active.to_a
+    active_sponsors.sum do |sponsor|
+      slots = sponsor.slot_count.to_i
+      slots.positive? ? ((slots + divisor - 1) / divisor) : 0
     end
+  end
+
+  def sponsor_reserved_units
+    capacity_unit == "teams" ? sponsor_reserved_teams : sponsor_reserved_slots
+  end
+
+  def capacity_summary
+    unit = capacity_unit.presence || "players"
+    effective_team_size = [team_size.to_i, 1].max
+    sponsor_slots_total = sponsor_reserved_slots
+    sponsor_reserved = unit == "teams" ? sponsor_reserved_teams : sponsor_slots_total
+    effective_reserved = [reserved_slots.to_i, sponsor_reserved].max
+    public_cap = max_capacity.nil? ? nil : [max_capacity - effective_reserved, 0].max
+
+    # Registrations + TeamMembers counts
+    reg_confirmed_count = registrations.confirmed.count
+    reg_public_confirmed_count = registrations.confirmed.where("COALESCE(payment_type, '') != 'sponsor'").count
+    reg_sponsor_confirmed_count = registrations.confirmed.where(payment_type: "sponsor").count
+    reg_waitlist_count = registrations.waitlist.count
+
+    reg_confirmed_players = team_members.joins(:registration)
+      .where(registrations: { registration_status: "confirmed" })
+      .count
+    reg_public_confirmed_players = team_members.joins(:registration)
+      .where(registrations: { registration_status: "confirmed" })
+      .where("COALESCE(registrations.payment_type, '') != 'sponsor'")
+      .count
+    reg_sponsor_confirmed_players = team_members.joins(:registration)
+      .where(registrations: { registration_status: "confirmed", payment_type: "sponsor" })
+      .count
+    reg_waitlist_players = team_members.joins(:registration)
+      .where(registrations: { registration_status: "waitlist" })
+      .count
+
+    # Unlinked legacy golfers (excluding bridged golfers via registrations.golfer_id
+    # AND legacy sponsor golfers belonging to sponsors already synced into Registrations)
+    bridged_golfer_ids = registrations.where.not(golfer_id: nil).select(:golfer_id)
+    synced_sponsor_ids = registrations.where.not(sponsor_id: nil).select(:sponsor_id)
+    unlinked_golfers = golfers
+      .where.not(id: bridged_golfer_ids)
+      .where("golfers.sponsor_id IS NULL OR golfers.sponsor_id NOT IN (?)", synced_sponsor_ids)
+
+    legacy_row = unlinked_golfers.pick(
+      Arel.sql("COUNT(*) FILTER (WHERE registration_status = 'confirmed')"),
+      Arel.sql("COUNT(*) FILTER (WHERE registration_status = 'confirmed' AND COALESCE(payment_type, '') != 'sponsor')"),
+      Arel.sql("COUNT(*) FILTER (WHERE registration_status = 'confirmed' AND payment_type = 'sponsor')"),
+      Arel.sql("COUNT(*) FILTER (WHERE registration_status = 'waitlist')"),
+      Arel.sql("COALESCE(SUM(CASE WHEN registration_status = 'confirmed' THEN CASE WHEN NULLIF(partner_name, '') IS NOT NULL THEN 2 ELSE 1 END ELSE 0 END), 0)"),
+      Arel.sql("COALESCE(SUM(CASE WHEN registration_status = 'confirmed' AND COALESCE(payment_type, '') != 'sponsor' THEN CASE WHEN NULLIF(partner_name, '') IS NOT NULL THEN 2 ELSE 1 END ELSE 0 END), 0)"),
+      Arel.sql("COALESCE(SUM(CASE WHEN registration_status = 'confirmed' AND payment_type = 'sponsor' THEN CASE WHEN NULLIF(partner_name, '') IS NOT NULL THEN 2 ELSE 1 END ELSE 0 END), 0)"),
+      Arel.sql("COALESCE(SUM(CASE WHEN registration_status = 'waitlist' THEN CASE WHEN NULLIF(partner_name, '') IS NOT NULL THEN 2 ELSE 1 END ELSE 0 END), 0)")
+    )
+
+    confirmed_regs_count = reg_confirmed_count + legacy_row[0].to_i
+    public_confirmed_regs_count = reg_public_confirmed_count + legacy_row[1].to_i
+    sponsor_confirmed_regs_count = reg_sponsor_confirmed_count + legacy_row[2].to_i
+    waitlist_regs_count = reg_waitlist_count + legacy_row[3].to_i
+
+    confirmed_players_count = reg_confirmed_players + legacy_row[4].to_i
+    public_confirmed_players_count = reg_public_confirmed_players + legacy_row[5].to_i
+    sponsor_confirmed_players_count = reg_sponsor_confirmed_players + legacy_row[6].to_i
+    waitlist_players_count = reg_waitlist_players + legacy_row[7].to_i
+
+    if unit == "teams"
+      confirmed_units = confirmed_regs_count
+      public_confirmed_units = public_confirmed_regs_count
+      sponsor_confirmed_units = sponsor_confirmed_regs_count
+      waitlist_units = waitlist_regs_count
+    else
+      confirmed_units = confirmed_players_count
+      public_confirmed_units = public_confirmed_players_count
+      sponsor_confirmed_units = sponsor_confirmed_players_count
+      waitlist_units = waitlist_players_count
+    end
+
+    overall_remaining = max_capacity.nil? ? nil : [max_capacity - confirmed_units, 0].max
+    raw_public_remaining = public_cap.nil? ? nil : [public_cap - public_confirmed_units, 0].max
+    bounded_public_remaining =
+      if overall_remaining.nil?
+        raw_public_remaining
+      elsif raw_public_remaining.nil?
+        overall_remaining
+      else
+        [raw_public_remaining, overall_remaining].min
+      end
+
+    {
+      capacity_unit: unit,
+      team_size: effective_team_size,
+      allow_partial_teams: allow_partial_teams?,
+      max_capacity: max_capacity,
+      reserved_slots: reserved_slots.to_i,
+      sponsor_reserved_slots: sponsor_slots_total,
+      sponsor_reserved: sponsor_reserved,
+      effective_reserved: effective_reserved,
+      public_capacity: public_cap,
+      confirmed_units: confirmed_units,
+      public_confirmed_units: public_confirmed_units,
+      sponsor_confirmed_units: sponsor_confirmed_units,
+      waitlist_units: waitlist_units,
+      confirmed_registrations_count: confirmed_regs_count,
+      confirmed_players_count: confirmed_players_count,
+      waitlist_registrations_count: waitlist_regs_count,
+      waitlist_players_count: waitlist_players_count,
+      remaining: overall_remaining,
+      public_remaining: bounded_public_remaining,
+      at_capacity: max_capacity.present? && overall_remaining <= 0,
+      public_at_capacity: public_cap.present? && bounded_public_remaining <= 0
+    }
+  end
+
+  def public_capacity_available_for?(player_count: 1)
+    summary = capacity_summary
+    return true if summary[:max_capacity].nil?
+
+    units_needed = summary[:capacity_unit] == "teams" ? 1 : [player_count.to_i, 1].max
+    summary[:public_remaining] >= units_needed && summary[:remaining] >= units_needed
+  end
+
+  def registration_waitlist_full?(player_count: 1)
+    return false if waitlist_max.nil? || waitlist_max.to_i <= 0
+
+    summary = capacity_summary
+    units_needed = summary[:capacity_unit] == "teams" ? 1 : [player_count.to_i, 1].max
+    summary[:waitlist_units] + units_needed > waitlist_max.to_i
+  end
+
+  def registration_status_for_new_entry(player_count: 1, registration_source: "public", payment_type: nil)
+    return "confirmed" if registration_source == "admin" || payment_type == "sponsor"
+    return "confirmed" if public_capacity_available_for?(player_count: player_count)
+
+    waitlist_enabled? ? "waitlist" : "confirmed"
+  end
+
+  def can_accept_public_registration?(player_count: 1)
+    return false unless open? && registration_open? && !registration_deadline_passed?
+    return true if public_capacity_available_for?(player_count: player_count)
+    return false unless waitlist_enabled?
+
+    !registration_waitlist_full?(player_count: player_count)
   end
 
   def paid_count
@@ -365,7 +535,7 @@ class Tournament < ApplicationRecord
   end
 
   def waitlist_count
-    golfer_stats[:waitlist]
+    capacity_summary[:waitlist_units]
   end
 
   def checked_in_count
@@ -373,32 +543,23 @@ class Tournament < ApplicationRecord
   end
 
   def capacity_remaining
-    return nil if max_capacity.nil?
-    remaining = max_capacity - confirmed_count
-    remaining.negative? ? 0 : remaining
+    capacity_summary[:remaining]
   end
 
   def public_capacity
-    return max_capacity if max_capacity.nil?
-    reserved = [reserved_slots || 0, sponsor_reserved_teams].max
-    public_cap = max_capacity - reserved
-    public_cap.negative? ? 0 : public_cap
+    capacity_summary[:public_capacity]
   end
 
   def public_capacity_remaining
-    return public_capacity if public_capacity.nil?
-    remaining = public_capacity - public_confirmed_count
-    remaining.negative? ? 0 : remaining
+    capacity_summary[:public_remaining]
   end
 
   def public_at_capacity?
-    return false if max_capacity.nil?
-    public_confirmed_count >= public_capacity
+    capacity_summary[:public_at_capacity]
   end
 
   def at_capacity?
-    return false if max_capacity.nil?
-    confirmed_count >= max_capacity
+    capacity_summary[:at_capacity]
   end
 
   # Display helpers
@@ -493,6 +654,44 @@ class Tournament < ApplicationRecord
 
   def course_configs_are_valid
     validate_raw_course_configs_input if @course_configs_input_present
+  end
+
+  def valid_positive_integer_config?(value)
+    return false if value.nil? || value == true || value == false
+    return value.positive? if value.is_a?(Integer)
+    return false unless value.is_a?(String) && value.strip.match?(/\A\d+\z/)
+
+    value.strip.to_i.positive?
+  end
+
+  def team_size_not_below_existing_registrations
+    return unless persisted? && will_save_change_to_team_size? && team_size.present?
+
+    max_existing = TeamMember.joins(:registration)
+      .where(registrations: { tournament_id: id })
+      .where.not(registrations: { registration_status: "cancelled" })
+      .group(:registration_id)
+      .count
+      .values
+      .max
+      .to_i
+
+    return if max_existing <= team_size
+
+    errors.add(:team_size, "cannot be reduced below #{max_existing} because existing active registrations have #{max_existing} players")
+  end
+
+  def players_per_start_position_is_valid
+    return unless config.is_a?(Hash) && config.deep_stringify_keys.key?('players_per_start_position')
+
+    value = config.deep_stringify_keys['players_per_start_position']
+    return if value.nil? || (value.is_a?(String) && value.strip.empty?)
+
+    if valid_positive_integer_config?(value) && value.to_i <= 16
+      return
+    end
+
+    errors.add(:config, 'Players per start position must be an integer between 1 and 16')
   end
 
   def teams_per_start_position_is_valid

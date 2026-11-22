@@ -29,6 +29,12 @@ class ActivityLog < ApplicationRecord
     group_deleted
     golfer_assigned_to_group
     golfer_removed_from_group
+    registration_created
+    registration_updated
+    registration_assigned_to_group
+    registration_removed_from_group
+    team_member_checked_in
+    team_member_unchecked
     settings_updated
     admin_created
     admin_deleted

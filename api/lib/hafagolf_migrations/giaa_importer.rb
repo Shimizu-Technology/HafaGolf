@@ -256,13 +256,10 @@ module HafagolfMigrations
         paid_at: golfer.paid_at,
         refunded_at: golfer.refunded_at
       )
-      reg.save!
 
-      m1 = TeamMember.find_or_initialize_by(legacy_source: LEGACY_SOURCE, legacy_id: "#{row['id']}:1")
-      m1.assign_attributes(
+      m1_attrs = {
         organization: org,
         tournament: tournament,
-        registration: reg,
         position: 1,
         is_captain: true,
         name: golfer.name,
@@ -270,9 +267,21 @@ module HafagolfMigrations
         phone: golfer.phone,
         company: golfer.company,
         waiver_accepted_at: golfer.waiver_accepted_at,
-        checked_in_at: golfer.checked_in_at
-      )
-      m1.save!
+        checked_in_at: golfer.checked_in_at,
+        legacy_source: LEGACY_SOURCE,
+        legacy_id: "#{row['id']}:1"
+      }
+
+      if reg.new_record?
+        reg.team_members.build(m1_attrs)
+        reg.save!
+      else
+        reg.save!
+
+        m1 = TeamMember.find_or_initialize_by(legacy_source: LEGACY_SOURCE, legacy_id: "#{row['id']}:1")
+        m1.assign_attributes(m1_attrs.merge(registration: reg))
+        m1.save!
+      end
     end
 
     def import_employee_numbers!(org, tournament_map, golfer_map)

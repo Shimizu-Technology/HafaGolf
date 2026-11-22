@@ -57,7 +57,12 @@ module Api
         require_org_admin!(organization)
         return if performed?
 
-        attrs = tournament_params.except(:organization_id, :course_configs, :teams_per_start_position, :start_positions_per_hole, :raffle_include_with_registration, :raffle_hold_winner_on_screen)
+        attrs = tournament_params.except(:organization_id, :course_configs, :teams_per_start_position, :start_positions_per_hole, :raffle_include_with_registration, :raffle_hold_winner_on_screen, :team_categories)
+        if params[:tournament]&.key?(:team_categories)
+          attrs[:config] = (attrs[:config] || {}).merge(
+            'team_categories' => Array(tournament_params[:team_categories]).map { |c| c.to_s.strip }.reject(&:blank?).uniq
+          )
+        end
         if params[:tournament]&.key?(:raffle_include_with_registration)
           attrs[:config] = (attrs[:config] || {}).merge(
             'raffle_include_with_registration' => ActiveModel::Type::Boolean.new.cast(params[:tournament][:raffle_include_with_registration])
@@ -105,9 +110,13 @@ module Api
         raffle_snapshot_before = raffle_settings_snapshot(@tournament)
         attrs = tournament_params.except(:organization_id, :sponsor_tiers,
                                          :raffle_include_with_registration, :raffle_hold_winner_on_screen, :raffle_bundles,
-                                         :course_configs, :teams_per_start_position, :start_positions_per_hole)
+                                         :course_configs, :teams_per_start_position, :start_positions_per_hole, :team_categories)
 
         merged_config = (@tournament.config || {}).deep_dup
+
+        if params[:tournament]&.key?(:team_categories)
+          merged_config['team_categories'] = Array(tournament_params[:team_categories]).map { |c| c.to_s.strip }.reject(&:blank?).uniq
+        end
 
         if params.dig(:tournament, :sponsor_tiers).present?
           tiers = tournament_params[:sponsor_tiers]&.map(&:to_h)
@@ -169,9 +178,9 @@ module Api
 
       # DELETE /api/v1/tournaments/:id
       def destroy
-        if @tournament.golfers.any? || @tournament.groups.any?
+        if @tournament.golfers.any? || @tournament.registrations.any? || @tournament.groups.any?
           render json: { 
-            error: "Cannot delete tournament with existing golfers or groups. Archive it instead." 
+            error: "Cannot delete tournament with existing golfers, registrations, or groups. Archive it instead." 
           }, status: :unprocessable_entity
           return
         end
@@ -379,7 +388,7 @@ module Api
           :name, :year, :edition, :status,
           :event_date, :registration_time, :start_time,
           :location_name, :location_address,
-          :tournament_format, :team_size, :teams_per_start_position, :start_positions_per_hole,
+          :tournament_format, :team_size, :capacity_unit, :allow_partial_teams, :teams_per_start_position, :start_positions_per_hole,
           :max_capacity, :reserved_slots, :entry_fee, :employee_entry_fee,
           :format_name, :fee_includes, :checks_payable_to,
           :contact_name, :contact_phone, :contact_email,
@@ -401,6 +410,7 @@ module Api
           :theme_preset, :use_org_branding,
           :raffle_include_with_registration, :raffle_hold_winner_on_screen,
           config: {},
+          team_categories: [],
           course_configs: [:key, :name, :hole_count],
           sponsor_tiers: [:key, :label, :sort_order],
           raffle_bundles: [:quantity, :price_cents, :label]

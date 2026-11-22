@@ -3,6 +3,8 @@
 class RaffleTicket < ApplicationRecord
   belongs_to :tournament
   belongs_to :golfer, optional: true
+  belongs_to :registration, optional: true
+  belongs_to :team_member, optional: true
   belongs_to :raffle_prize, optional: true
   belongs_to :sold_by_user, class_name: 'User', optional: true
   belongs_to :raffle_sale_batch, optional: true
@@ -14,7 +16,7 @@ class RaffleTicket < ApplicationRecord
   validates :payment_status, inclusion: { in: PAYMENT_STATUSES }
   validates :purchaser_name, presence: true
   validates :payment_method, inclusion: { in: %w[swipe_simple swipesimple cash check card credit comp stripe], allow_blank: true }
-  validate :purchaser_phone_must_be_complete, if: -> { golfer_id.nil? && purchaser_phone.present? && (new_record? || will_save_change_to_purchaser_phone?) }
+  validate :purchaser_phone_must_be_complete, if: -> { golfer_id.nil? && registration_id.nil? && purchaser_phone.present? && (new_record? || will_save_change_to_purchaser_phone?) }
 
   before_validation :generate_ticket_number, on: :create
 
@@ -25,10 +27,16 @@ class RaffleTicket < ApplicationRecord
   scope :winners, -> { where(is_winner: true) }
   scope :not_winners, -> { where(is_winner: false) }
   scope :for_golfer, ->(golfer) { where(golfer: golfer) }
+  scope :for_registration, ->(registration) { where(registration: registration) }
   scope :recent, -> { order(created_at: :desc) }
   scope :with_eligible_participant, -> {
-    left_outer_joins(:golfer)
-      .where("golfers.id IS NULL OR golfers.registration_status NOT IN (?)", %w[cancelled waitlist])
+    left_outer_joins(:golfer, :registration)
+      .where(
+        "(golfers.id IS NULL OR golfers.registration_status NOT IN (?)) AND " \
+        "(registrations.id IS NULL OR registrations.registration_status NOT IN (?))",
+        %w[cancelled waitlist],
+        %w[cancelled waitlist]
+      )
   }
   scope :eligible_for_draw, -> { active.paid.not_winners.with_eligible_participant }
 

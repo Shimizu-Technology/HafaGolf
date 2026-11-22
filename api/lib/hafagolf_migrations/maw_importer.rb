@@ -314,14 +314,11 @@ module HafagolfMigrations
         paid_at: golfer.paid_at,
         refunded_at: golfer.refunded_at
       )
-      reg.save!
 
       # Composite "<golfer_id>:<position>" keys so Player 1 and Player 2 are uniquely idempotent
-      m1 = TeamMember.find_or_initialize_by(legacy_source: LEGACY_SOURCE, legacy_id: "#{row['id']}:1")
-      m1.assign_attributes(
+      m1_attrs = {
         organization: org,
         tournament: tournament,
-        registration: reg,
         position: 1,
         is_captain: true,
         name: golfer.name,
@@ -329,26 +326,44 @@ module HafagolfMigrations
         phone: golfer.phone,
         company: golfer.company,
         waiver_accepted_at: golfer.waiver_accepted_at,
-        checked_in_at: golfer.checked_in_at
-      )
-      m1.save!
+        checked_in_at: golfer.checked_in_at,
+        legacy_source: LEGACY_SOURCE,
+        legacy_id: "#{row['id']}:1"
+      }
 
-      if golfer.partner_name.present?
-        m2 = TeamMember.find_or_initialize_by(legacy_source: LEGACY_SOURCE, legacy_id: "#{row['id']}:2")
-        m2.assign_attributes(
-          organization: org,
-          tournament: tournament,
-          registration: reg,
-          position: 2,
-          is_captain: false,
-          name: golfer.partner_name,
-          email: golfer.partner_email,
-          phone: golfer.partner_phone,
-          company: golfer.company,
-          waiver_accepted_at: golfer.waiver_accepted_at,
-          checked_in_at: golfer.checked_in_at
-        )
-        m2.save!
+      m2_attrs = if golfer.partner_name.present?
+                   {
+                     organization: org,
+                     tournament: tournament,
+                     position: 2,
+                     is_captain: false,
+                     name: golfer.partner_name,
+                     email: golfer.partner_email,
+                     phone: golfer.partner_phone,
+                     company: golfer.company,
+                     waiver_accepted_at: golfer.waiver_accepted_at,
+                     checked_in_at: golfer.checked_in_at,
+                     legacy_source: LEGACY_SOURCE,
+                     legacy_id: "#{row['id']}:2"
+                   }
+                 end
+
+      if reg.new_record?
+        reg.team_members.build(m1_attrs)
+        reg.team_members.build(m2_attrs) if m2_attrs
+        reg.save!
+      else
+        reg.save!
+
+        m1 = TeamMember.find_or_initialize_by(legacy_source: LEGACY_SOURCE, legacy_id: "#{row['id']}:1")
+        m1.assign_attributes(m1_attrs.merge(registration: reg))
+        m1.save!
+
+        if m2_attrs
+          m2 = TeamMember.find_or_initialize_by(legacy_source: LEGACY_SOURCE, legacy_id: "#{row['id']}:2")
+          m2.assign_attributes(m2_attrs.merge(registration: reg))
+          m2.save!
+        end
       end
     end
 
