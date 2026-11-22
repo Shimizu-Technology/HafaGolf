@@ -12,12 +12,12 @@ This document defines the exact, repeatable rehearsal workflow for:
 ## 1. Non-Negotiable Safety Invariants
 
 1. **Read-only source snapshots only:** Export via `pg_dump --no-owner --no-privileges` during an off-peak Guam window and restore into a **separate isolated staging source database** (never query production directly from migration tasks).
-2. **`EXPECTED_DB_NAME` guard:** Every HafaGolf migration rake task refuses to execute unless `ENV["EXPECTED_DB_NAME"]` matches `ActiveRecord::Base.connection.current_database` (preventing accidental writes to the wrong database or local `api_development`).
-3. **Idempotent, re-runnable imports:** Imported records are keyed by `(legacy_source, legacy_id)` with unique partial indexes (`WHERE legacy_source IS NOT NULL`). Re-running an import twice on the same snapshot MUST produce **identical row counts** and **zero duplicate records**.
+2. **`EXPECTED_DB_NAME` guard:** Every HafaGolf migration/seed rake task refuses to execute unless `ENV["EXPECTED_DB_NAME"]` matches `ActiveRecord::Base.connection.current_database`, unconditionally blocks local development DBs (`api_development`, `hafagolf_development`), and refuses if `SOURCE_DATABASE_URL` points to the same database as the target.
+3. **Idempotent, non-destructive imports:** Imported records are keyed by `(legacy_source, legacy_id)` (or natural keys / legacy markers). Re-running an import or seeder twice on the same snapshot MUST produce **identical row counts**, **zero duplicate records**, and **never overwrite live admin edits** on already-created organizations, tournaments, payment configs, or memberships.
    - For `team_members` derived from legacy 2-person `golfers` rows, `legacy_id` uses the composite key `"<golfer_id>:<position>"` (`"42:1"` for Player 1, `"42:2"` for Player 2).
 4. **Zero cross-account Stripe refund risk:** Every imported historical Stripe `payment_intent_id` is tagged with `stripe_account_origin` (`legacy_giaa` or `legacy_maw`) so `Golfer#process_refund!` refuses automated API refunds against a mismatched Stripe account.
-5. **No plaintext legacy secrets migrated:** Legacy `settings` rows are read once only for non-secret metadata if needed; plaintext Stripe keys are **never** copied into `organization_payment_configs`.
-6. **Admin Clerk relinking:** Deduplicate `users` by `LOWER(email)` and assign `clerk_id = "pending_<sha256(email)>"` so each admin automatically links to the centralized `golf.shimizu-technology.com` Clerk app on first sign-in.
+5. **No plaintext legacy secrets migrated & no `super_admin` escalation:** Legacy `settings` rows are read once only for non-secret metadata if needed; plaintext Stripe keys are **never** copied into `organization_payment_configs`, and imported users are capped at `org_admin` / `tournament_admin` (never `super_admin`).
+6. **Admin Clerk relinking:** Deduplicate `users` by `LOWER(email)` and assign `clerk_id = "pending_<sha256(email)[0,32]>"` (32-char lowercase hex prefix) so each admin automatically links to the centralized `golf.shimizu-technology.com` Clerk app on first sign-in.
 
 ---
 
@@ -33,8 +33,9 @@ This document defines the exact, repeatable rehearsal workflow for:
    # Restore into isolated staging source DB
    pg_restore --clean --if-exists --no-owner --no-privileges -d "$STAGING_MAW_SOURCE_DB_URL" maw_staging_snapshot.dump
    ```
-2. **Dry-Run & Import on Staging HafaGolf DB:**
+2. **Dry-Run & Import on Staging HafaGolf DB (`RAILS_ENV=production` against staging DB):**
    ```bash
+   RAILS_ENV=production \
    DATABASE_APP_URL="" \
    EXPECTED_DB_NAME="hafagolf_staging" \
    SOURCE_DATABASE_URL="$STAGING_MAW_SOURCE_DB_URL" \
@@ -42,13 +43,13 @@ This document defines the exact, repeatable rehearsal workflow for:
    ```
 3. **Idempotency Re-Run Check:**
    Run the exact same command a **second time** and verify zero duplicates and identical JSON verification output.
-4. **S3 Media Copy & Checksum Verification:**
-   Copy Active Storage blobs (org logo, banner, sponsor logos, raffle prize images) to the HafaGolf staging bucket, recreate `active_storage_blobs` / `active_storage_attachments`, and verify every blob returns `HTTP 200` with matching MD5/ETag checksum.
+4. **S3 Media Copy & Checksum Verification (Operator Media Step):**
+   Copy Active Storage blobs (org logo, banner, sponsor logos, raffle prize images) to the HafaGolf staging bucket, recreate `active_storage_blobs` / `active_storage_attachments`, and verify every blob returns `HTTP 200` with matching MD5/ETag checksum and zero orphaned `active_storage_attachments`.
 5. **Automated Verification Report (100% Match Required):**
-   The importer emits a machine-readable JSON report and exits non-zero on any mismatch:
-   - **Row counts:** tournaments, groups (preserving `starting_course_key`), registrations (confirmed / waitlist / pending / cancelled), `team_members` (`source_golfers + non-blank partner_name`), scores, sponsors, sponsor slots, raffle sale batches, raffle tickets (paid / comp / voided / winner), raffle prizes (won / claimed), message deliveries (with `organization_id` backfilled), activity logs.
-   - **Cent-exact financial sums:** `SUM(payment_amount_cents)` for paid registrations, `SUM(refund_amount_cents)` for refunds, `SUM(price_cents)` for paid raffle tickets, count of Stripe `payment_intent_id`s and `refund_id`s.
-   - **Referential integrity:** zero orphaned `group_id`, `sponsor_id`, `winning_ticket_id`, `registration_id`, `team_member_id`, or `active_storage_attachments`.
+   The importer emits a machine-readable JSON report (printing the mismatch report to stderr and exiting non-zero on any drift, and refusing empty/missing core source tables):
+   - **Row counts:** tournaments, groups (preserving `starting_course_key`), golfers (confirmed / waitlist / cancelled), `team_members` (`source_golfers + non-blank partner_name`, when Real Teams tables are migrated), sponsors, sponsor slots, raffle sale batches, raffle prizes, raffle tickets, message deliveries (with `organization_id` backfilled), activity logs.
+   - **Cent-exact financial sums:** `SUM(payment_amount_cents)` for paid/refunded golfers, `SUM(refund_amount_cents)` for refunds, `SUM(price_cents)` for paid raffle tickets, count of Stripe `payment_intent_id`s and `refund_id`s.
+   - **Referential integrity:** zero orphaned `golfer.group_id`, `golfer.sponsor_id`, or `raffle_prize.winning_ticket_id` references (plus operator check on `active_storage_attachments` in Step 4).
 6. **Functional & Guam Carrier QA:**
    - **Clone 2026 → 2027 Draft:** Run `Tournaments::CloneService` on the imported 2026 tournament; confirm 2027 starts in `draft`, clears stale deadlines/SwipeSimple URLs, and issues year-prefixed raffle tickets (`MAWG27-0001`) with zero collision against 2026 tickets.
    - **Guam SMS Carrier Rehearsal:** Send live ClickSend test messages to real **IT&E**, **Docomo Pacific**, and **GTA** numbers; compare alphanumeric vs numeric sender ID; verify ClickSend delivery webhooks transition `message_deliveries.status` to `delivered`.
@@ -64,7 +65,7 @@ This document defines the exact, repeatable rehearsal workflow for:
 ### Step-by-Step Staging Walkthrough Checklist
 1. **Seed FD Tenant on Staging:**
    ```bash
-   DATABASE_APP_URL="" EXPECTED_DB_NAME="hafagolf_staging" bundle exec rails hafagolf:seed:fd_alumni
+   RAILS_ENV=production DATABASE_APP_URL="" EXPECTED_DB_NAME="hafagolf_staging" bundle exec rails hafagolf:seed:fd_alumni
    ```
    Verifies:
    - Organization `fd-alumni-golf` + primary domain `fd-golf.shimizu-technology.com`
@@ -92,6 +93,7 @@ This document defines the exact, repeatable rehearsal workflow for:
 1. **Snapshot & Restore (Leon Gate B required):** Export read-only `pg_dump` of `giaa-tournament-api` into isolated staging source DB.
 2. **Run Idempotent GIAA Importer + Second-Run Check:**
    ```bash
+   RAILS_ENV=production \
    DATABASE_APP_URL="" \
    EXPECTED_DB_NAME="hafagolf_staging" \
    SOURCE_DATABASE_URL="$STAGING_GIAA_SOURCE_DB_URL" \
@@ -115,5 +117,5 @@ This document defines the exact, repeatable rehearsal workflow for:
 
 Before opening staging to any second tenant or cutting over production:
 1. Run the full CI cross-org isolation suite (`TenantIsolationTest`, `TenantRlsTest`, `PerOrgPaymentsTest`, `SettlementsAndPayoutsTest`).
-2. Run the non-owner Postgres RLS end-to-end request smoke test (`hafagolf_app` role: public registration → checkout → raffle draw → refund → settlement read) and confirm zero `PG::InsufficientPrivilege` errors and zero cross-org data leakage.
-3. Verify `bundle exec rails rls:status` reports `enforced_for_current_role: true`.
+2. Run the automated non-owner Postgres RLS end-to-end request smoke test (`RlsNonOwnerE2eTest` under `hafagolf_rls_test_role`: public registration → admin list + cross-org block → raffle draw readiness → raffle draw) plus manual staging QA for checkout, refund, and settlement read under `DATABASE_APP_URL`, confirming zero `PG::InsufficientPrivilege` errors and zero cross-org data leakage.
+3. Verify `RAILS_ENV=production bundle exec rails db:rls:status` reports `enforced_for_current_role: true`.

@@ -39,16 +39,16 @@ No step in Sections 3–6 below may be executed without Leon's explicit confirma
 
 ## 3. Environment Variables Matrix
 
-Validate all required variables before any staging or production deploy using `bash scripts/check-prod-env.sh`.
+Validate the core Render + Netlify variables before any staging or production deploy using `bash scripts/check-prod-env.sh` from your operator shell with `RENDER_SERVICE_ID`, `NETLIFY_SITE_ID`, `RENDER_API_KEY`, and `NETLIFY_AUTH_TOKEN` exported. Note that `scripts/check-prod-env.sh` checks the core required variables (`DATABASE_URL`, `RAILS_MASTER_KEY`, `SECRET_KEY_BASE`, `FRONTEND_URL`, `CLERK_JWKS_URL`, `RESEND_API_KEY`, `AWS_*`, `VITE_API_URL`, `VITE_WS_URL`, `VITE_CLERK_PUBLISHABLE_KEY`); verify the additional multi-tenant, encryption, webhook, and RLS variables below against your Render/Netlify dashboards before cutover.
 
 ### 3.1 Rails API (`hafagolf-api` on Render)
 
 | Variable | Required | Notes |
 |---|---|---|
-| `RAILS_ENV` | Yes | `production` (or `staging`) |
+| `RAILS_ENV` | Yes | Always `production` for both staging and production (`api/config/database.yml` defines `development`, `test`, and `production` only; optionally set `APP_ENV=staging` on staging alongside the Neon staging DB URLs) |
 | `RAILS_MASTER_KEY` / `SECRET_KEY_BASE` | Yes | Rails credentials / session signing |
-| `DATABASE_URL` | Yes | Owner/migration Neon Postgres URL (used by migrations & `db:prepare`) |
-| `DATABASE_APP_URL` | Prod/Staging RLS | Non-owner `hafagolf_app` role URL (enforces PostgreSQL `FORCE ROW LEVEL SECURITY` on runtime queries — see `docs/RLS_OPERATIONS.md`) |
+| `DATABASE_URL` | Yes | **Direct (non-pooled)** owner Neon Postgres URL for migrations (`db:migrate`) and `db:rls:setup_app_role` (advisory locks & DDL require a non-pooled owner connection) |
+| `DATABASE_APP_URL` | Prod/Staging RLS | Non-owner `hafagolf_app` role URL (pooled `-pooler` Neon endpoint for runtime traffic; enforces PostgreSQL `FORCE ROW LEVEL SECURITY` via transaction-local `SET LOCAL` inside `TenantContext` — see `docs/RLS_OPERATIONS.md`) |
 | `WEB_CONCURRENCY` | Yes | `0` (single Puma process — required for `async` ActionCable!) |
 | `SOLID_QUEUE_IN_PUMA` | Yes | `false` (prevents DB polling and preserves Neon scale-to-zero) |
 | `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` | Yes | 32+ char key (`bin/rails db:encryption:init`) — encrypts `organization_payment_configs` |
@@ -60,18 +60,19 @@ Validate all required variables before any staging or production deploy using `b
 | `CLERK_SECRET_KEY` / `CLERK_JWKS_URL` | Yes | From the single `golf.shimizu-technology.com` Clerk app |
 | `PLATFORM_STRIPE_PUBLISHABLE_KEY` | Yes | Shimizu Technology platform Stripe account (for `platform_collect` orgs) |
 | `PLATFORM_STRIPE_SECRET_KEY` | Yes | Never stored in DB or tenant rows |
-| `PLATFORM_STRIPE_WEBHOOK_SECRET` | Yes | Mandatory in **both** `staging` and `production` (`POST /api/v1/webhooks/stripe`) |
+| `PLATFORM_STRIPE_WEBHOOK_SECRET` | Yes | Mandatory in **both** staging and production (`POST /api/v1/webhooks/stripe`) |
 | `RESEND_API_KEY` | Yes | Transactional email sending |
 | `RESEND_WEBHOOK_SECRET` | Yes | Svix `whsec_...` signing secret (`POST /api/v1/webhooks/resend`) |
 | `CLICKSEND_USERNAME` / `CLICKSEND_API_KEY` | Yes (SMS orgs) | SMS delivery (`POST /api/v1/webhooks/clicksend`) |
 | `CLICKSEND_WEBHOOK_TOKEN` | Yes (SMS orgs) | Shared secret token for ClickSend delivery callbacks |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `AWS_S3_BUCKET` | Yes | Active Storage direct uploads & logos |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `AWS_S3_BUCKET` (or `AWS_BUCKET`) | Yes | Active Storage direct uploads & logos (`check-prod-env.sh` accepts either `AWS_BUCKET` or `AWS_S3_BUCKET`) |
 
 ### 3.2 Web Frontend (`hafagolf-web` on Netlify)
 
 | Variable | Required | Notes |
 |---|---|---|
 | `VITE_API_URL` | Yes | Render API base URL (`https://...`) |
+| `VITE_WS_URL` | Yes | Render ActionCable WebSocket URL (`wss://<hafagolf-api-host>/cable`) |
 | `VITE_ADMIN_ORIGIN` | Yes | `https://golf.shimizu-technology.com` (public domains redirect `/admin*` here) |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Yes | Loaded **only** inside the lazy-loaded `admin-clerk` chunk on the admin host |
 
@@ -80,23 +81,28 @@ Validate all required variables before any staging or production deploy using `b
 ## 4. Database, Migrations & PostgreSQL RLS Activation
 
 1. **Same-region Neon + Render:** Provision the Neon project in the same cloud region as Render (`oregon` / `us-west-2` or matched region) to keep query latency <10ms.
-2. **Run migrations as the table owner (never with `DATABASE_APP_URL` set):**
+2. **Run migrations as the table owner using the direct (non-pooled) `DATABASE_URL` (never with `DATABASE_APP_URL` set):**
    ```bash
-   DATABASE_APP_URL="" bundle exec rails db:migrate
+   RAILS_ENV=production DATABASE_APP_URL="" bundle exec rails db:migrate
    ```
 3. **Provision the non-owner runtime role (`hafagolf_app`):**
    ```bash
-   DATABASE_APP_URL="" HAFAGOLF_APP_ROLE_PASSWORD="<strong-random-password>" bundle exec rails rls:setup_app_role
+   RAILS_ENV=production DATABASE_APP_URL="" \
+     DB_APP_ROLE="hafagolf_app" \
+     DB_APP_ROLE_PASSWORD="<strong-random-password>" \
+     bundle exec rails db:rls:setup_app_role
    ```
-4. **Verify RLS enforcement before cutting over traffic:**
+   *(If you need to re-apply RLS policies after adding tables manually, run `RAILS_ENV=production DATABASE_APP_URL="" bundle exec rails db:rls:apply`.)*
+4. **Verify RLS enforcement before cutting over traffic (with `DATABASE_APP_URL` set):**
    ```bash
-   bundle exec rails rls:status
+   RAILS_ENV=production bundle exec rails db:rls:status
    ```
    Confirm `enforced_for_current_role: true` (`rolsuper: false`, `rolbypassrls: false`) and `rls_enabled: true`, `rls_forced: true` on every multi-tenant table (`tournaments`, `golfers`, `groups`, `registrations`, `team_members`, `scores`, `sponsors`, `sponsor_slots`, `sponsor_tiers`, `donations`, `employee_numbers`, `raffle_prizes`, `raffle_tickets`, `raffle_sale_batches`, `message_deliveries`, `organization_payment_configs`, `tournament_settlements`, `tournament_payouts`, `tournament_assignments`, `activity_logs`).
 5. **Confirm Neon scale-to-zero hygiene:**
    - Render `healthCheckPath` MUST be `/up` (zero DB queries; verified by `RuntimeHygieneTest`).
    - Do **not** point external uptime monitors at `/health` (which queries Postgres).
    - Confirm `config/cable.yml` uses `async` and `SOLID_QUEUE_IN_PUMA=false`.
+   - When using Neon PgBouncer transaction pooling on `DATABASE_APP_URL`, ensure `prepared_statements: false` if your pooler rejects prepared statements (or use Neon's transaction-pooler-compatible setting) and rely on `TenantContext` transaction-local `SET LOCAL` GUCs.
    - Observe Neon compute metrics over a 48-hour idle staging window to confirm compute suspends cleanly.
 
 ---
@@ -104,17 +110,21 @@ Validate all required variables before any staging or production deploy using `b
 ## 5. Netlify, Clerk & DNS Cutover Steps
 
 ### 5.1 Netlify Site Configuration
-1. Connect `Shimizu-Technology/HafaGolf` to **one** Netlify site (`base = "web"`, `command = "npm run build"`, `publish = "dist"`).
-2. Confirm `netlify.toml` uses `ignore = "bash ../scripts/netlify-ignore-build.sh"` and enable `skip_prs` in Netlify build settings so API-only or docs-only commits never spend build credits.
+1. Connect `Shimizu-Technology/HafaGolf` to **one** Netlify site using base directory `web` (`command = "npm run build"`). Note the repository keeps both root `netlify.toml` (`base = "web"`, `publish = "web/dist"`) and `web/netlify.toml` (`publish = "dist"`, effective once Netlify enters `base = "web"`) in sync.
+2. Confirm `ignore = "bash ../scripts/netlify-ignore-build.sh"` is active and enable `skip_prs` in Netlify build settings so API-only or docs-only commits never spend build credits.
 3. Verify the production build outputs **zero** Clerk references in `dist/assets/index-*.js` and `dist/sw.js` (automated in CI).
 
 ### 5.2 Cloudflare DNS (`shimizu-technology.com`) — Platform Admin & FD Alumni Golf
-1. Add DNS-only (grey cloud / unproxied during TLS verification) `CNAME` records:
+1. **Pre-check:** Verify existing `shimizu-technology.com` **MX / SPF / DKIM** records and Cloudflare HSTS / SSL mode remain untouched (only add dedicated `golf` and `fd-golf` subdomains).
+2. Add DNS-only (grey cloud / unproxied during TLS verification) `CNAME` records:
    - `golf` → `<hafagolf-site>.netlify.app`
    - `fd-golf` → `<hafagolf-site>.netlify.app`
-2. Add the 5 Clerk Production DNS `CNAME` records for `golf.shimizu-technology.com` (matching the `clerk.hafapass.shimizu-technology.com` pattern) and verify cookie isolation from HafaPass / Payroll.
-3. Add `golf.shimizu-technology.com` and `fd-golf.shimizu-technology.com` as Domain Aliases on Netlify and confirm Let's Encrypt HTTPS certificates issue.
-4. Register `fd-golf.shimizu-technology.com` as the primary domain in `organization_domains` for the FD Alumni Golf organization.
+3. Add the 5 Clerk Production DNS `CNAME` records for `golf.shimizu-technology.com` (matching the `clerk.hafapass.shimizu-technology.com` pattern) and verify cookie isolation from HafaPass / Payroll.
+4. Add `golf.shimizu-technology.com` and `fd-golf.shimizu-technology.com` as Domain Aliases on Netlify and confirm Let's Encrypt HTTPS certificates issue.
+5. Seed the FD Alumni Golf tenant on production (idempotent; registers `fd-golf.shimizu-technology.com` as primary in `organization_domains`, applies `crest-classic`, configures `platform_collect` with $0 in-kind fee, and seeds `draft` 2027 tournament + priced sponsor tiers):
+   ```bash
+   RAILS_ENV=production DATABASE_APP_URL="" EXPECTED_DB_NAME="<prod_db_name>" bundle exec rails hafagolf:seed:fd_alumni
+   ```
 
 ### 5.3 Square DNS (`golfforwishes.com`) — Make-A-Wish Cutover (Feb 22 Go/No-Go → Mar 1 Target)
 1. **Pre-check:** Inspect Square DNS for all existing **MX / TXT / SPF / DKIM** records — **never alter or delete email records**. Check if HSTS is active on `golfforwishes.com`.
@@ -128,6 +138,7 @@ Validate all required variables before any staging or production deploy using `b
    - Wait for Let's Encrypt TLS certificate issuance (typically 2–15 minutes).
    - Point Resend (Svix) and ClickSend webhooks to the HafaGolf API endpoints.
    - Run `scripts/smoke-prod.sh` + verify public landing, sponsor portal, raffle board, and admin login on `golf.shimizu-technology.com`.
+4. **T+24h (after stability confirmed):** Restore `@` and `www` DNS TTLs from `300s` back to normal (`3600s` / provider default).
 
 ### 5.4 GIAA DNS (`giaa-tournament.com`) — Post-2027 Event Cutover
 Follow the exact same sequence as Section 5.3 after GIAA's 2027 tournament completes (or if GIAA passes full staging acceptance before registration opens). Verify `employee_pricing`, `checkin_alpha_lanes`, and `memorial-formal` branding before declaring live.
