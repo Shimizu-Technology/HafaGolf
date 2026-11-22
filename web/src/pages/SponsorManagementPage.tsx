@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuth } from '@clerk/react';
 import { useOrganization } from '../components/OrganizationProvider';
 import {
   Building2, Plus, Trash2, Edit, ArrowLeft, RefreshCw, Loader2,

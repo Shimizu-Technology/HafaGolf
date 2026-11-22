@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Navigate, Route, Routes, useParams, useSearchParams } from 'react-router-dom';
-import { ClerkProvider, useAuth, useUser } from '@clerk/clerk-react';
+import { ClerkProvider, useAuth, useUser } from '@clerk/react';
 import { usePostHog } from 'posthog-js/react';
 import { AlertTriangle } from 'lucide-react';
 import { ClerkAuthBridgeContext } from '../contexts/ClerkAuthBridge';

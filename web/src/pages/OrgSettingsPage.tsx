@@ -1613,7 +1613,7 @@ export const OrgSettingsPage: React.FC = () => {
                     type="text"
                     value={tournamentSettings.contact_name}
                     onChange={(e) => handleTournamentChange('contact_name', e.target.value)}
-                    placeholder="e.g. Eric Tydingco"
+                    placeholder="e.g. Tournament Director"
                     className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                 </div>

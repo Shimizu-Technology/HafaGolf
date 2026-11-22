@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { UserButton, useUser } from '@clerk/clerk-react';
+import { UserButton, useUser } from '@clerk/react';
 import {
   BadgeCheck,
   BarChart3,
@@ -383,7 +383,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
               </div>
             )}
             <UserButton
-              afterSignOutUrl="/"
               appearance={{
                 elements: {
                   avatarBox: 'h-9 w-9',
