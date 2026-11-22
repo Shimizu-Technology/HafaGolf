@@ -82,9 +82,14 @@ class EmployeeNumber < ApplicationRecord
   end
 
   # Releases this employee number so it becomes available again.
-  def release!(clear_golfer: true)
+  # When `expected_golfer_id` is supplied, only releases if currently claimed by that golfer.
+  def release!(clear_golfer: true, expected_golfer_id: nil)
     ActiveRecord::Base.transaction(requires_new: true) do
       lock!
+      if expected_golfer_id.present? && used_by_golfer_id != expected_golfer_id
+        return self
+      end
+
       previous_golfer = used_by_golfer
 
       update!(

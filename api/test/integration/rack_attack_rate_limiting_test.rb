@@ -57,7 +57,7 @@ class RackAttackRateLimitingTest < ActionDispatch::IntegrationTest
     post "/api/v1/employee_numbers/validate/", params: { employee_number: "TEST" }, env: ip_env
     refute_equal 429, response.status
 
-    post "/api/v1/employee_numbers/validate.json", params: { employee_number: "TEST" }, env: ip_env
+    post "/api/v1/employee_numbers/validate.xml", params: { employee_number: "TEST" }, env: ip_env
     assert_response :too_many_requests
   end
 end

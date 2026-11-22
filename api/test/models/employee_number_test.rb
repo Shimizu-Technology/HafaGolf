@@ -124,6 +124,23 @@ class EmployeeNumberTest < ActiveSupport::TestCase
     assert_nil record.used_by_golfer_id
   end
 
+  test "release! with expected_golfer_id does not clear another golfer's claim" do
+    record = @tournament.employee_numbers.create!(organization: @org, employee_number: "EMP-GUARD-1")
+    golfer_one = create_golfer(@tournament, name: "Owner One")
+    golfer_two = create_golfer(@tournament, name: "Stale Caller")
+
+    record.claim!(golfer_one)
+    record.release!(clear_golfer: false, expected_golfer_id: golfer_two.id)
+
+    record.reload
+    assert record.used?, "Claim owned by golfer_one must remain intact"
+    assert_equal golfer_one.id, record.used_by_golfer_id
+
+    record.release!(clear_golfer: false, expected_golfer_id: golfer_one.id)
+    assert_not record.reload.used?
+    assert_nil record.used_by_golfer_id
+  end
+
   test "expected_entry_fee_cents preserves standard entry_fee for non-employee and sponsored golfers" do
     @tournament.update!(
       entry_fee: 15000,

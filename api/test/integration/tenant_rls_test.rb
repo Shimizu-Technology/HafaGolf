@@ -109,6 +109,34 @@ class TenantRlsTest < ActiveSupport::TestCase
         provider: "check",
         status: "pending"
       )
+      @sponsor_tier_a = @tournament_a.sponsor_tiers.create!(
+        organization: @org_a,
+        key: "rls_gold",
+        label: "Gold Sponsor",
+        price_cents: 100_000,
+        included_player_slots: 4
+      )
+      @sponsor_tier_b = @tournament_b.sponsor_tiers.create!(
+        organization: @org_b,
+        key: "rls_gold",
+        label: "Gold Sponsor",
+        price_cents: 100_000,
+        included_player_slots: 4
+      )
+      @donation_a = @tournament_a.donations.create!(
+        organization: @org_a,
+        donor_name: "RLS Donor A",
+        amount_cents: 5_000,
+        payment_type: "stripe",
+        payment_status: "paid"
+      )
+      @donation_b = @tournament_b.donations.create!(
+        organization: @org_b,
+        donor_name: "RLS Donor B",
+        amount_cents: 5_000,
+        payment_type: "stripe",
+        payment_status: "paid"
+      )
     end
   end
 
@@ -117,6 +145,8 @@ class TenantRlsTest < ActiveSupport::TestCase
       tournament_ids = [@tournament_a&.id, @tournament_b&.id].compact
       org_ids = [@org_a&.id, @org_b&.id].compact
 
+      Donation.where(organization_id: org_ids).delete_all if org_ids.any?
+      SponsorTier.where(organization_id: org_ids).delete_all if org_ids.any?
       TournamentPayout.where(organization_id: org_ids).delete_all if org_ids.any?
       TournamentSettlement.where(organization_id: org_ids).delete_all if org_ids.any?
       OrganizationPaymentConfig.where(organization_id: org_ids).delete_all if org_ids.any?
@@ -143,6 +173,8 @@ class TenantRlsTest < ActiveSupport::TestCase
       assert_equal 0, OrganizationPaymentConfig.where(id: [@payment_config_a.id, @payment_config_b.id]).count
       assert_equal 0, TournamentSettlement.where(id: [@settlement_a.id, @settlement_b.id]).count
       assert_equal 0, TournamentPayout.where(id: [@payout_a.id, @payout_b.id]).count
+      assert_equal 0, SponsorTier.where(id: [@sponsor_tier_a.id, @sponsor_tier_b.id]).count
+      assert_equal 0, Donation.where(id: [@donation_a.id, @donation_b.id]).count
 
       TenantContext.with_closed_access do
         assert_equal 0, Tournament.where(id: [@tournament_a.id, @tournament_b.id]).count
@@ -188,6 +220,36 @@ class TenantRlsTest < ActiveSupport::TestCase
 
         visible_payouts = TournamentPayout.where(id: [@payout_a.id, @payout_b.id]).pluck(:id)
         assert_equal [@payout_a.id], visible_payouts
+
+        visible_tiers = SponsorTier.where(id: [@sponsor_tier_a.id, @sponsor_tier_b.id]).pluck(:id)
+        assert_equal [@sponsor_tier_a.id], visible_tiers
+
+        visible_donations = Donation.where(id: [@donation_a.id, @donation_b.id]).pluck(:id)
+        assert_equal [@donation_a.id], visible_donations
+
+        # Cross-tenant INSERT into donations and sponsor_tiers rejected by RLS WITH CHECK
+        assert_raises(ActiveRecord::StatementInvalid) do
+          ActiveRecord::Base.transaction(requires_new: true) do
+            Donation.create!(
+              organization: @org_b,
+              tournament: @tournament_b,
+              donor_name: "Cross Tenant Donor",
+              amount_cents: 2500
+            )
+          end
+        end
+
+        assert_raises(ActiveRecord::StatementInvalid) do
+          ActiveRecord::Base.transaction(requires_new: true) do
+            SponsorTier.create!(
+              organization: @org_b,
+              tournament: @tournament_b,
+              key: "cross_tier",
+              label: "Cross Tier",
+              price_cents: 50_000
+            )
+          end
+        end
 
         # Org-scoped activity log with tournament_id: nil succeeds under org context
         org_log = ActivityLog.log(

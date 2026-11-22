@@ -101,6 +101,9 @@ export const OrgCheckInPage: React.FC = () => {
 
   useGolferChannel({
     onGolferUpdated: (updatedGolfer) => {
+      if (!tournament?.id || (updatedGolfer.tournament_id != null && updatedGolfer.tournament_id !== tournament.id)) {
+        return;
+      }
       if (updatedGolfer.registration_status === 'cancelled') {
         setGolfers(prev => prev.filter(g => g.id !== updatedGolfer.id));
         return;
@@ -112,6 +115,9 @@ export const OrgCheckInPage: React.FC = () => {
       });
     },
     onGolferCreated: (newGolfer) => {
+      if (!tournament?.id || (newGolfer.tournament_id != null && newGolfer.tournament_id !== tournament.id)) {
+        return;
+      }
       if (newGolfer.registration_status === 'confirmed' || newGolfer.registration_status === 'waitlist') {
         setGolfers(prev => [...prev.filter(g => g.id !== newGolfer.id), newGolfer]);
       }
@@ -1161,7 +1167,7 @@ export const OrgCheckInPage: React.FC = () => {
         >
           <form
             onSubmit={handlePromoteAndCheckIn}
-            className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden"
+            className="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
@@ -1221,10 +1227,11 @@ export const OrgCheckInPage: React.FC = () => {
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                      <label htmlFor="promote-payment-method" className="block text-xs font-medium text-gray-700 mb-1">
                         Payment Method
                       </label>
                       <select
+                        id="promote-payment-method"
                         value={promoteMethod}
                         onChange={(e) => setPromoteMethod(e.target.value)}
                         className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-gray-900 text-sm focus:ring-2 focus:ring-purple-500"
@@ -1237,10 +1244,11 @@ export const OrgCheckInPage: React.FC = () => {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                      <label htmlFor="promote-payment-amount" className="block text-xs font-medium text-gray-700 mb-1">
                         Amount (USD)
                       </label>
                       <input
+                        id="promote-payment-amount"
                         type="number"
                         step="0.01"
                         min="0"
@@ -1253,10 +1261,11 @@ export const OrgCheckInPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                    <label htmlFor="promote-receipt-number" className="block text-xs font-medium text-gray-700 mb-1">
                       Receipt Number (optional)
                     </label>
                     <input
+                      id="promote-receipt-number"
                       type="text"
                       value={promoteReceipt}
                       onChange={(e) => setPromoteReceipt(e.target.value)}
@@ -1266,10 +1275,11 @@ export const OrgCheckInPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                    <label htmlFor="promote-payment-notes" className="block text-xs font-medium text-gray-700 mb-1">
                       Notes (optional)
                     </label>
                     <textarea
+                      id="promote-payment-notes"
                       value={promoteNotes}
                       onChange={(e) => setPromoteNotes(e.target.value)}
                       rows={2}

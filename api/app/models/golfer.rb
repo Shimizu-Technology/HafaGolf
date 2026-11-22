@@ -245,7 +245,7 @@ class Golfer < ApplicationRecord
   def release_employee_number!
     record = employee_number_record || EmployeeNumber.find_by(used_by_golfer_id: id)
     if record
-      record.release!(clear_golfer: false)
+      record.release!(clear_golfer: false, expected_golfer_id: id)
     end
     if persisted? && !destroyed? && (employee_number_record_id.present? || is_employee?)
       assign_attributes(employee_number_record_id: nil, is_employee: false)
@@ -350,14 +350,16 @@ class Golfer < ApplicationRecord
 
   # Cancel a golfer's registration (without refund - for unpaid or non-Stripe payments)
   def cancel!(admin: nil, reason: nil)
-    release_employee_number!
-    assign_attributes(
-      registration_status: "cancelled",
-      refund_reason: reason,
-      refunded_at: Time.current,
-      refunded_by: admin
-    )
-    save!(validate: false)
+    ActiveRecord::Base.transaction(requires_new: true) do
+      release_employee_number!
+      assign_attributes(
+        registration_status: "cancelled",
+        refund_reason: reason,
+        refunded_at: Time.current,
+        refunded_by: admin
+      )
+      save!(validate: false)
+    end
   end
 
   # Process a refund through Stripe and cancel the registration

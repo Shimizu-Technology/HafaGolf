@@ -11,6 +11,8 @@ class Organization < ApplicationRecord
   has_one :organization_payment_config, dependent: :destroy
   has_many :tournament_settlements, dependent: :restrict_with_error
   has_many :tournament_payouts, dependent: :restrict_with_error
+  has_many :sponsor_tiers, dependent: :destroy
+  has_many :donations, dependent: :destroy
 
   # Validations
   validates :name, presence: true

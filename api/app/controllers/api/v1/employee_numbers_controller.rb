@@ -181,7 +181,12 @@ module Api
           )
 
           begin
-            if record.save
+            saved = false
+            ActiveRecord::Base.transaction(requires_new: true) do
+              saved = record.save
+            end
+
+            if saved
               created_records << record
               existing_set[downcased] = true
             else
@@ -248,18 +253,29 @@ module Api
         allow_release = ActiveModel::Type::Boolean.new.cast(params[:release]) ||
                         ActiveModel::Type::Boolean.new.cast(params[:force])
 
-        if @employee_number.used?
-          unless allow_release
-            render json: {
-              error: "Cannot delete a used employee number. Release it first or pass release=true."
-            }, status: :unprocessable_entity
-            return
+        blocked = false
+        ActiveRecord::Base.transaction(requires_new: true) do
+          @employee_number.lock!
+
+          if @employee_number.used?
+            unless allow_release
+              blocked = true
+              raise ActiveRecord::Rollback
+            end
+
+            @employee_number.release!
           end
 
-          @employee_number.release!
+          @employee_number.destroy!
         end
 
-        @employee_number.destroy!
+        if blocked
+          render json: {
+            error: "Cannot delete a used employee number. Release it first or pass release=true."
+          }, status: :unprocessable_entity
+          return
+        end
+
         head :no_content
       end
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { Button, Card } from '../components/ui';
 import { LiabilityWaiver } from '../components/LiabilityWaiver';
@@ -109,6 +109,7 @@ export const OrgRegistrationPage: React.FC = () => {
     message?: string;
   }>({ status: 'idle' });
   const [employeeError, setEmployeeError] = useState<string | null>(null);
+  const validationReqRef = useRef(0);
 
   const employeePricingEnabled = isFeatureEnabled(
     tournament?.features ?? organization?.features,
@@ -139,16 +140,20 @@ export const OrgRegistrationPage: React.FC = () => {
     if (!tournament || !employeePricingEnabled) return;
     const normalized = normalizeEmployeeNumber(rawValue ?? employeeNumberInput);
     if (!normalized) {
+      validationReqRef.current += 1;
       setEmployeeValidation({ status: 'idle' });
       setEmployeeError('Please enter your employee number');
       return;
     }
 
+    const reqId = ++validationReqRef.current;
     setEmployeeError(null);
     setEmployeeValidation({ status: 'checking' });
 
     try {
       const result = await api.validateEmployeeNumber(normalized, tournament.id, orgSlug);
+      if (validationReqRef.current !== reqId) return;
+
       if (result.valid && result.available) {
         setEmployeeValidation({
           status: 'valid',
@@ -163,6 +168,7 @@ export const OrgRegistrationPage: React.FC = () => {
         });
       }
     } catch (err) {
+      if (validationReqRef.current !== reqId) return;
       setEmployeeValidation({
         status: 'invalid',
         message: err instanceof Error ? err.message : 'Unable to validate employee number',
@@ -523,6 +529,7 @@ export const OrgRegistrationPage: React.FC = () => {
                               checked={isEmployee}
                               onChange={(e) => {
                                 const checked = e.target.checked;
+                                validationReqRef.current += 1;
                                 setIsEmployee(checked);
                                 setEmployeeError(null);
                                 if (!checked) {
@@ -552,6 +559,7 @@ export const OrgRegistrationPage: React.FC = () => {
                                   type="text"
                                   value={employeeNumberInput}
                                   onChange={(e) => {
+                                    validationReqRef.current += 1;
                                     setEmployeeNumberInput(e.target.value);
                                     setEmployeeError(null);
                                     if (employeeValidation.status !== 'idle') {
