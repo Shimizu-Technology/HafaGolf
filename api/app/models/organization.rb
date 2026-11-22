@@ -9,6 +9,9 @@ class Organization < ApplicationRecord
   has_many :organization_domains, dependent: :destroy
   has_many :users, through: :organization_memberships
   has_many :message_deliveries, dependent: :nullify
+  has_one :organization_payment_config, dependent: :destroy
+  has_many :tournament_settlements, dependent: :restrict_with_error
+  has_many :tournament_payouts, dependent: :restrict_with_error
 
   # Validations
   validates :name, presence: true
@@ -76,6 +79,23 @@ class Organization < ApplicationRecord
 
   def admin?(user)
     organization_memberships.exists?(user: user, role: 'admin')
+  end
+
+  def effective_payment_config
+    organization_payment_config || build_organization_payment_config(
+      payment_mode: "offline",
+      processor_provider: "none",
+      test_mode: false
+    )
+  end
+
+  def admin_notification_emails
+    emails = users.joins(:organization_memberships)
+                  .where(organization_memberships: { organization_id: id, role: "admin" })
+                  .pluck(:email)
+    emails << contact_email if contact_email.present?
+    emails << ENV["PLATFORM_ADMIN_EMAIL"] if emails.empty? && ENV["PLATFORM_ADMIN_EMAIL"].present?
+    emails.compact.map { |e| e.to_s.strip.downcase }.reject(&:blank?).uniq
   end
 
   private

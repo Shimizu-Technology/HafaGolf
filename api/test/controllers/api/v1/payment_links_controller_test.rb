@@ -65,6 +65,11 @@ class Api::V1::PaymentLinksControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "checkout confirms pending registration after test-mode payment link payment" do
+    tournaments(:tournament_one).organization.create_organization_payment_config!(
+      payment_mode: "platform_collect",
+      processor_provider: "stripe",
+      test_mode: true
+    )
     golfer = create_pending_golfer
     golfer.generate_payment_token!
 

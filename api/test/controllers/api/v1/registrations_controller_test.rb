@@ -40,6 +40,7 @@ class Api::V1::RegistrationsControllerTest < ActionDispatch::IntegrationTest
       allow_partial_teams: true,
       waitlist_enabled: true,
       entry_fee: 40000,
+      swipe_simple_url: "https://swipesimple.com/links/test-alpha",
       raffle_enabled: true,
       config: { "raffle_include_with_registration" => true, "features" => { "raffle" => true } }
     )

@@ -85,24 +85,29 @@ module Api
           return
         end
 
-        setting = Setting.instance
         tournament = golfer.tournament
-        
-        if setting.test_mode?
+        organization = tournament.organization
+        payment_config = organization.effective_payment_config
+        adapter = Payments::Resolver.for(organization, config: payment_config)
+
+        if payment_config.offline? || payment_config.external_link?
+          render json: { error: "Online card checkout is not enabled for this organization" }, status: :unprocessable_entity
+          return
+        end
+
+        if adapter.test_mode?
           return handle_test_mode(golfer, tournament)
         end
 
-        stripe_secret = StripeConfig.secret_key(setting: setting)
-        unless stripe_secret.present?
+        unless adapter.configured?
           render json: { error: "Payment processing is not configured" }, status: :service_unavailable
           return
         end
 
-        Stripe.api_key = stripe_secret
         entry_fee = tournament&.entry_fee || 12500
 
         begin
-          session = Stripe::Checkout::Session.create({
+          session = adapter.create_checkout_session({
             ui_mode: "embedded",
             payment_method_types: ["card"],
             line_items: [{
@@ -117,11 +122,13 @@ module Api
               quantity: 1,
             }],
             mode: "payment",
-            return_url: OrgUrlBuilder.public_url(tournament&.organization, "/pay/#{params[:token]}/success?session_id={CHECKOUT_SESSION_ID}"),
+            return_url: OrgUrlBuilder.public_url(organization, "/pay/#{params[:token]}/success?session_id={CHECKOUT_SESSION_ID}"),
             customer_email: golfer.email,
             metadata: {
+              organization_id: organization.id.to_s,
               golfer_id: golfer.id.to_s,
               tournament_id: tournament.id.to_s,
+              item_type: "registration",
               payment_token: params[:token]
             }
           })
@@ -164,6 +171,7 @@ module Api
                 payment_type: "stripe",
                 stripe_checkout_session_id: test_session_id,
                 stripe_payment_intent_id: test_payment_intent_id,
+                stripe_account_origin: "platform_test",
                 payment_method: "stripe",
                 payment_amount_cents: entry_fee,
                 payment_notes: "Paid via payment link (test mode) on #{Time.current.in_time_zone('Pacific/Guam').strftime('%B %d, %Y at %I:%M %p')} (Guam Time)"

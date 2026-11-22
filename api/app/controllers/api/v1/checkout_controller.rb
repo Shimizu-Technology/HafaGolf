@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Api
   module V1
     class CheckoutController < BaseController
@@ -11,36 +13,35 @@ module Api
         golfer = find_golfer_by_payment_token!
         return unless golfer
 
-        # Ensure golfer hasn't already paid
         if golfer.payment_status == "paid"
           render json: { error: "Golfer has already paid" }, status: :unprocessable_entity
           return
         end
 
-        setting = Setting.instance
+        tournament = golfer.tournament
+        organization = tournament.organization
+        payment_config = organization.effective_payment_config
+        adapter = Payments::Resolver.for(organization, config: payment_config)
 
-        # TEST MODE: Simulate payment without Stripe
-        if setting.test_mode?
-          return handle_test_mode_checkout(golfer, setting)
+        if payment_config.offline? || payment_config.external_link?
+          render json: { error: "Online card checkout is not enabled for this organization." }, status: :unprocessable_entity
+          return
         end
 
-        # PRODUCTION MODE: Real Stripe checkout (external HTTP call runs OUTSIDE any DB transaction)
-        stripe_secret = StripeConfig.secret_key(setting: setting)
-        unless stripe_secret.present?
+        if adapter.test_mode?
+          return handle_test_mode_checkout(golfer)
+        end
+
+        unless adapter.configured?
           render json: { error: "Stripe is not configured. Please contact the administrator." }, status: :service_unavailable
           return
         end
 
-        # Set Stripe API key (ENV first, legacy Setting fallback)
-        Stripe.api_key = stripe_secret
-
-        # Entry fee from the golfer's tournament
-        tournament = golfer.tournament
         entry_fee = tournament&.entry_fee || 12500
 
         begin
-          # Create a Stripe Checkout Session
-          session = Stripe::Checkout::Session.create({
+          # External Stripe HTTP call runs OUTSIDE any DB transaction using per-request api_key
+          session = adapter.create_checkout_session({
             payment_method_types: ["card"],
             line_items: [{
               price_data: {
@@ -54,19 +55,21 @@ module Api
               quantity: 1,
             }],
             mode: "payment",
-            success_url: OrgUrlBuilder.public_url(tournament&.organization, "/payment/success?session_id={CHECKOUT_SESSION_ID}"),
-            cancel_url: OrgUrlBuilder.public_url(tournament&.organization, "/payment/cancel?golfer_id=#{golfer.id}"),
+            success_url: OrgUrlBuilder.public_url(organization, "/payment/success?session_id={CHECKOUT_SESSION_ID}"),
+            cancel_url: OrgUrlBuilder.public_url(organization, "/payment/cancel?golfer_id=#{golfer.id}"),
             customer_email: golfer.email,
             metadata: {
+              organization_id: organization.id.to_s,
+              tournament_id: tournament.id.to_s,
               golfer_id: golfer.id.to_s,
+              item_type: "registration",
               golfer_name: golfer.name,
               golfer_email: golfer.email,
             },
             billing_address_collection: "required",
           })
 
-          # Save the session ID inside an org-scoped transaction
-          TenantContext.with_organization(tournament.organization_id) do
+          TenantContext.with_organization(organization.id) do
             golfer.update!(stripe_checkout_session_id: session.id)
           end
 
@@ -85,7 +88,6 @@ module Api
       # POST /api/v1/checkout/embedded
       # Create a checkout session for embedded checkout (golfer not created yet)
       def create_embedded
-        setting = Setting.instance
         org = resolve_public_organization
         tournament = nil
         email_taken = false
@@ -112,25 +114,28 @@ module Api
           return
         end
 
+        organization = tournament.organization
+        payment_config = organization.effective_payment_config
+        adapter = Payments::Resolver.for(organization, config: payment_config)
+
+        if payment_config.offline? || payment_config.external_link?
+          render json: { error: "Online card checkout is not enabled for this organization." }, status: :unprocessable_entity
+          return
+        end
+
         entry_fee = tournament.entry_fee || 12500
 
-        # TEST MODE: Return a simulated embedded session
-        if setting.test_mode?
+        if adapter.test_mode?
           return handle_test_mode_embedded(golfer_data, tournament)
         end
 
-        # PRODUCTION MODE: Real Stripe embedded checkout
-        stripe_secret = StripeConfig.secret_key(setting: setting)
-        unless stripe_secret.present?
+        unless adapter.configured?
           render json: { error: "Stripe is not configured. Please contact the administrator." }, status: :service_unavailable
           return
         end
 
-        Stripe.api_key = stripe_secret
-
         begin
-          # Create a Stripe Checkout Session for embedded checkout
-          session = Stripe::Checkout::Session.create({
+          session = adapter.create_checkout_session({
             ui_mode: "embedded",
             payment_method_types: ["card"],
             line_items: [{
@@ -145,10 +150,12 @@ module Api
               quantity: 1,
             }],
             mode: "payment",
-            return_url: OrgUrlBuilder.public_url(tournament.organization, "/registration/success?session_id={CHECKOUT_SESSION_ID}"),
+            return_url: OrgUrlBuilder.public_url(organization, "/registration/success?session_id={CHECKOUT_SESSION_ID}"),
             customer_email: golfer_data[:email],
             metadata: {
+              organization_id: organization.id.to_s,
               tournament_id: tournament.id.to_s,
+              item_type: "registration",
               golfer_name: golfer_data[:name],
               golfer_email: golfer_data[:email],
               golfer_phone: golfer_data[:phone],
@@ -183,26 +190,32 @@ module Api
           return
         end
 
-        setting = Setting.instance
-
-        # Handle test mode confirmation
         if session_id.start_with?("test_session_") || session_id.start_with?("test_embedded_")
           return handle_test_mode_confirm(session_id)
         end
-        
-        stripe_secret = StripeConfig.secret_key(setting: setting)
-        unless stripe_secret.present?
+
+        existing_golfer = TenantContext.with_platform_access do
+          Golfer.includes(tournament: :organization).find_by(stripe_checkout_session_id: session_id)
+        end
+
+        org_for_adapter = existing_golfer&.tournament&.organization || resolve_public_organization
+        adapter = if org_for_adapter.present?
+                    Payments::Resolver.for(org_for_adapter)
+                  else
+                    Payments::StripeAdapter.new(
+                      organization: nil,
+                      payment_config: OrganizationPaymentConfig.new(payment_mode: "platform_collect", processor_provider: "stripe")
+                    )
+                  end
+
+        unless adapter.configured?
           render json: { error: "Stripe is not configured" }, status: :service_unavailable
           return
         end
 
-        Stripe.api_key = stripe_secret
-
         begin
-          # Retrieve the session from Stripe to verify payment
-          session = Stripe::Checkout::Session.retrieve(session_id)
+          session = adapter.retrieve_checkout_session(session_id)
 
-          # Check if payment was successful first
           unless session.payment_status == "paid"
             render json: {
               success: false,
@@ -212,14 +225,35 @@ module Api
             return
           end
 
-          # Find the golfer by verified Stripe session ID (for legacy redirect flow)
-          golfer = TenantContext.with_platform_access do
-            Golfer.includes(tournament: :organization).find_by(stripe_checkout_session_id: session_id) ||
-              create_golfer_from_session(session)
-          end
+          golfer = if existing_golfer.present?
+                     existing_golfer
+                   else
+                     unless org_for_adapter.present?
+                       render json: { error: "Session not found" }, status: :not_found
+                       return
+                     end
+
+                     metadata_org_id = session_metadata_value(session.metadata, :organization_id)
+                     if metadata_org_id.blank? || metadata_org_id.to_s != org_for_adapter.id.to_s
+                       Rails.logger.warn(
+                         "Blocked cross-tenant checkout confirm: adapter org=#{org_for_adapter.id} metadata org=#{metadata_org_id.inspect}"
+                       )
+                       render json: { error: "Session not found" }, status: :not_found
+                       return
+                     end
+
+                     TenantContext.with_organization(org_for_adapter.id) do
+                       create_golfer_from_session(session, organization: org_for_adapter)
+                     end
+                   end
 
           unless golfer
             render json: { error: "Could not find or create golfer for this session" }, status: :unprocessable_entity
+            return
+          end
+
+          if org_for_adapter.present? && golfer.tournament.organization_id != org_for_adapter.id
+            render json: { error: "Session not found" }, status: :not_found
             return
           end
 
@@ -232,9 +266,9 @@ module Api
           card_last4 = nil
           begin
             if payment_intent_id.present?
-              payment_intent = Stripe::PaymentIntent.retrieve(payment_intent_id)
+              payment_intent = adapter.retrieve_payment_intent(payment_intent_id)
               if payment_intent.payment_method.present?
-                payment_method = Stripe::PaymentMethod.retrieve(payment_intent.payment_method)
+                payment_method = adapter.retrieve_payment_method(payment_intent.payment_method)
                 if payment_method.card.present?
                   card_brand = payment_method.card.brand
                   card_last4 = payment_method.card.last4
@@ -245,27 +279,27 @@ module Api
             Rails.logger.warn("Could not retrieve card details: #{e.message}")
           end
 
-          # Use database-level locking inside org-scoped RLS transaction
           should_send_emails = false
           already_paid = false
+          origin_tag = adapter.account_origin || golfer.tournament.organization.effective_payment_config.expected_stripe_account_origin
 
           TenantContext.with_organization(golfer.tournament.organization_id) do
             ActiveRecord::Base.transaction(requires_new: true) do
               golfer.lock!
 
-              # Skip if already marked as paid (idempotency check after lock)
               if golfer.payment_status == "paid" && golfer.stripe_payment_intent_id.present?
                 already_paid = true
                 next
               end
 
-              formatted_time = Time.current.in_time_zone('Pacific/Guam').strftime('%B %d, %Y at %I:%M %p')
+              formatted_time = Time.current.in_time_zone("Pacific/Guam").strftime("%B %d, %Y at %I:%M %p")
 
               golfer.update!(
                 golfer.paid_registration_attributes(
                   payment_status: "paid",
                   payment_type: "stripe",
                   stripe_payment_intent_id: payment_intent_id,
+                  stripe_account_origin: origin_tag,
                   payment_method: "stripe",
                   payment_amount_cents: payment_amount,
                   stripe_card_brand: card_brand,
@@ -276,7 +310,7 @@ module Api
 
               ActivityLog.log(
                 admin: nil,
-                action: 'payment_completed',
+                action: "payment_completed",
                 target: golfer,
                 details: "Payment of $#{format('%.2f', payment_amount / 100.0)} completed via Stripe",
                 tournament: golfer.tournament
@@ -286,10 +320,14 @@ module Api
             end
           end
 
+          serialized_golfer = TenantContext.with_organization(golfer.tournament.organization_id) do
+            GolferSerializer.new(golfer).as_json
+          end
+
           if already_paid
             render json: {
               success: true,
-              golfer: GolferSerializer.new(golfer),
+              golfer: serialized_golfer,
               message: "Payment already confirmed!"
             }
             return
@@ -297,7 +335,7 @@ module Api
 
           render json: {
             success: true,
-            golfer: GolferSerializer.new(golfer),
+            golfer: serialized_golfer,
             message: "Payment confirmed successfully!"
           }
 
@@ -317,7 +355,7 @@ module Api
             begin
               ActionCable.server.broadcast("golfers_channel_#{golfer.tournament_id}", {
                 action: "payment_confirmed",
-                golfer: GolferSerializer.new(golfer).as_json
+                golfer: serialized_golfer
               })
             rescue StandardError => e
               Rails.logger.error("Failed to broadcast payment confirmation: #{e.message}")
@@ -330,7 +368,7 @@ module Api
       end
 
       # POST /api/v1/checkout/swipe_simple
-      # Redirect golfer or registration to SwipeSimple payment link.
+      # Redirect golfer or registration to external payment link (tournament override -> org config).
       # Keyed on the record-bound cryptographic `payment_token` (never raw sequential IDs).
       def swipe_simple_redirect
         token = params[:payment_token].to_s.strip
@@ -356,7 +394,8 @@ module Api
         )
 
         tournament = record.tournament
-        original_payment_type = nil
+        org_config = tournament.organization.effective_payment_config
+        payment_url = nil
         already_paid = false
 
         TenantContext.with_organization(tournament.organization_id) do
@@ -368,6 +407,18 @@ module Api
             end
 
             original_payment_type = record.payment_type
+            payment_url = if original_payment_type == "walk_in"
+                            tournament.walkin_swipe_simple_url.presence ||
+                              tournament.swipe_simple_url.presence ||
+                              org_config.external_walkin_url.presence ||
+                              org_config.external_checkout_url.presence
+                          else
+                            tournament.swipe_simple_url.presence ||
+                              org_config.external_checkout_url.presence
+                          end
+
+            next if payment_url.blank?
+
             record.update!(payment_type: "swipe_simple", payment_status: "pending")
           end
         end
@@ -377,12 +428,10 @@ module Api
           return
         end
 
-        payment_url = if original_payment_type == 'walk_in'
-                        tournament.walkin_swipe_simple_url.presence || tournament.swipe_simple_url.presence
-                      else
-                        tournament.swipe_simple_url.presence
-                      end
-        payment_url ||= ENV.fetch('SWIPE_SIMPLE_PAYMENT_URL', 'https://swipesimple.com/links/lnk_e1c8f45f9c401c93552781ef3d52fdfc')
+        if payment_url.blank?
+          render json: { error: "External checkout URL is not configured for this event." }, status: :unprocessable_entity
+          return
+        end
 
         payload = { redirect_url: payment_url }
         if record.is_a?(Registration)
@@ -398,20 +447,27 @@ module Api
       def session_status
         session_id = params[:session_id]
 
-        setting = Setting.instance
-        stripe_secret = StripeConfig.secret_key(setting: setting)
-        return render json: { error: "Stripe not configured" }, status: :service_unavailable unless stripe_secret.present?
+        golfer = TenantContext.with_platform_access do
+          Golfer.includes(tournament: :organization).find_by(stripe_checkout_session_id: session_id)
+        end
+        if golfer
+          return unless verify_tenant_match!(golfer.tournament.organization_id, status: :not_found, message: "Session not found")
+        end
 
-        Stripe.api_key = stripe_secret
+        org_for_adapter = golfer&.tournament&.organization || resolve_public_organization
+        adapter = if org_for_adapter.present?
+                    Payments::Resolver.for(org_for_adapter)
+                  else
+                    Payments::StripeAdapter.new(
+                      organization: nil,
+                      payment_config: OrganizationPaymentConfig.new(payment_mode: "platform_collect", processor_provider: "stripe")
+                    )
+                  end
+
+        return render json: { error: "Stripe not configured" }, status: :service_unavailable unless adapter.configured?
 
         begin
-          session = Stripe::Checkout::Session.retrieve(session_id)
-          golfer = TenantContext.with_platform_access do
-            Golfer.includes(:tournament).find_by(stripe_checkout_session_id: session_id)
-          end
-          if golfer
-            return unless verify_tenant_match!(golfer.tournament.organization_id, status: :not_found, message: "Session not found")
-          end
+          session = adapter.retrieve_checkout_session(session_id)
 
           render json: {
             session_id: session.id,
@@ -428,7 +484,6 @@ module Api
 
       private
 
-      # Looks up a golfer strictly by cryptographic payment_token and verifies tenant host match.
       def find_golfer_by_payment_token!
         token = params[:payment_token].to_s.strip
         if token.blank?
@@ -450,21 +505,37 @@ module Api
         golfer
       end
 
-      # Create a golfer from Stripe session metadata (for embedded checkout flow)
-      def create_golfer_from_session(session)
-        metadata = session.metadata
-        return nil unless metadata.tournament_id.present? && metadata.golfer_email.present?
+      def session_metadata_value(metadata, key)
+        return nil unless metadata
 
-        tournament = Tournament.find_by(id: metadata.tournament_id)
+        if metadata.respond_to?(:[])
+          metadata[key] || metadata[key.to_s]
+        elsif metadata.respond_to?(key)
+          metadata.public_send(key)
+        end
+      end
+
+      def create_golfer_from_session(session, organization:)
+        return nil unless organization
+
+        metadata = session.metadata
+        tournament_id = session_metadata_value(metadata, :tournament_id)
+        golfer_email = session_metadata_value(metadata, :golfer_email)
+        metadata_org_id = session_metadata_value(metadata, :organization_id)
+        return nil unless tournament_id.present? && golfer_email.present?
+        return nil unless metadata_org_id.present? && metadata_org_id.to_s == organization.id.to_s
+
+        # Strictly scope tournament lookup to the adapter's owning organization
+        tournament = organization.tournaments.find_by(id: tournament_id)
         return nil unless tournament
 
         golfer = nil
-        
+
         ActiveRecord::Base.transaction(requires_new: true) do
           tournament.lock!
-          
+
           existing = tournament.golfers.lock
-            .where(email: metadata.golfer_email)
+            .where(email: golfer_email)
             .where.not(registration_status: "cancelled")
             .where.not(registration_source: "admin")
             .first
@@ -474,12 +545,12 @@ module Api
           end
 
           golfer = tournament.golfers.create!(
-            name: metadata.golfer_name,
-            email: metadata.golfer_email,
-            phone: metadata.golfer_phone,
-            mobile: metadata.golfer_mobile.presence,
-            company: metadata.golfer_company.presence,
-            address: metadata.golfer_address.presence,
+            name: session_metadata_value(metadata, :golfer_name),
+            email: golfer_email,
+            phone: session_metadata_value(metadata, :golfer_phone),
+            mobile: session_metadata_value(metadata, :golfer_mobile).presence,
+            company: session_metadata_value(metadata, :golfer_company).presence,
+            address: session_metadata_value(metadata, :golfer_address).presence,
             payment_type: "stripe",
             payment_status: "unpaid",
             waiver_accepted_at: Time.current,
@@ -495,11 +566,10 @@ module Api
         nil
       end
 
-      # Handle embedded checkout in test mode
       def handle_test_mode_embedded(golfer_data, tournament)
         test_session_id = "test_embedded_#{SecureRandom.hex(16)}"
         entry_fee = tournament.entry_fee || 12500
-        
+
         Rails.cache.write(
           "test_embedded_#{test_session_id}",
           {
@@ -517,8 +587,7 @@ module Api
         }
       end
 
-      # Handle checkout in test mode (no real Stripe calls)
-      def handle_test_mode_checkout(golfer, setting)
+      def handle_test_mode_checkout(golfer)
         test_session_id = "test_session_#{SecureRandom.hex(16)}"
         TenantContext.with_organization(golfer.tournament.organization_id) do
           golfer.update!(stripe_checkout_session_id: test_session_id)
@@ -532,12 +601,10 @@ module Api
         }
       end
 
-      # Handle payment confirmation in test mode
       def handle_test_mode_confirm(session_id)
         golfer = TenantContext.with_platform_access do
-          found = Golfer.includes(:tournament).find_by(stripe_checkout_session_id: session_id)
+          found = Golfer.includes(tournament: :organization).find_by(stripe_checkout_session_id: session_id)
 
-          # For embedded test mode, create golfer from cached data
           if found.nil? && session_id.start_with?("test_embedded_")
             cached_data = Rails.cache.read("test_embedded_#{session_id}")
             if cached_data
@@ -573,6 +640,11 @@ module Api
 
         return unless verify_tenant_match!(golfer.tournament.organization_id, status: :not_found, message: "Golfer not found for this test session")
 
+        unless golfer.tournament.organization.effective_payment_config.effective_test_mode?
+          render json: { error: "Test mode checkout is disabled for this organization" }, status: :forbidden
+          return
+        end
+
         entry_fee = golfer.tournament&.entry_fee || 12500
         emails_sent = false
         already_paid = false
@@ -591,6 +663,7 @@ module Api
                 payment_status: "paid",
                 payment_type: "stripe",
                 stripe_payment_intent_id: "test_pi_#{SecureRandom.hex(8)}",
+                stripe_account_origin: "platform_test",
                 payment_method: "stripe",
                 payment_amount_cents: entry_fee,
                 payment_notes: "SIMULATED PAYMENT (Test Mode) - #{Time.current.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -599,7 +672,7 @@ module Api
 
             ActivityLog.log(
               admin: nil,
-              action: 'payment_completed',
+              action: "payment_completed",
               target: golfer,
               details: "Payment of $#{format('%.2f', entry_fee / 100.0)} completed via Stripe (Test Mode)",
               tournament: golfer.tournament
@@ -609,10 +682,14 @@ module Api
           end
         end
 
+        serialized_golfer = TenantContext.with_organization(golfer.tournament.organization_id) do
+          GolferSerializer.new(golfer).as_json
+        end
+
         if already_paid
           render json: {
             success: true,
-            golfer: GolferSerializer.new(golfer),
+            golfer: serialized_golfer,
             message: "Payment already confirmed (test mode)"
           }
           return
@@ -620,7 +697,7 @@ module Api
 
         render json: {
           success: true,
-          golfer: GolferSerializer.new(golfer),
+          golfer: serialized_golfer,
           message: "Payment confirmed (test mode - no actual charge)",
           test_mode: true
         }
@@ -642,7 +719,7 @@ module Api
         begin
           ActionCable.server.broadcast("golfers_channel_#{golfer.tournament_id}", {
             action: "payment_confirmed",
-            golfer: GolferSerializer.new(golfer).as_json
+            golfer: serialized_golfer
           })
         rescue StandardError => e
           Rails.logger.error("Failed to broadcast payment confirmation (test mode): #{e.message}")

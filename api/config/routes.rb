@@ -43,6 +43,7 @@ Rails.application.routes.draw do
 
       # Webhooks (public, authenticated via signature)
       post 'webhooks/stripe' => 'webhooks#stripe'
+      post 'webhooks/stripe/orgs/:webhook_endpoint_token' => 'webhooks#stripe_org'
       post 'webhooks/resend' => 'delivery_webhooks#resend'
       post 'webhooks/clicksend' => 'delivery_webhooks#clicksend'
 
@@ -77,6 +78,9 @@ Rails.application.routes.draw do
       delete 'admin/organizations/:slug/domains/:domain_id' => 'organizations#destroy_domain'
       get 'admin/organizations/:slug/features' => 'organizations#features'
       patch 'admin/organizations/:slug/features' => 'organizations#update_features'
+      get 'admin/organizations/:slug/payment_config' => 'organizations#payment_config'
+      patch 'admin/organizations/:slug/payment_config' => 'organizations#update_payment_config'
+      post 'admin/organizations/:slug/payment_config/rotate_webhook_token' => 'organizations#rotate_webhook_token'
       get 'admin/organizations/:slug/members' => 'organizations#members'
       post 'admin/organizations/:slug/members' => 'organizations#add_member'
       patch 'admin/organizations/:slug/members/:member_id' => 'organizations#update_member'
@@ -182,6 +186,15 @@ Rails.application.routes.draw do
         post 'raffle/sell' => 'raffle#sell_tickets'
         get 'payment_report' => 'payment_reports#show'
 
+        # Payout Settlements & Disbursements
+        get 'settlement' => 'settlements#show'
+        get 'settlement/export' => 'settlements#export_csv'
+        post 'settlement/calculate' => 'settlements#calculate'
+        post 'settlement/finalize' => 'settlements#finalize'
+        post 'settlement/payouts' => 'settlements#create_payout'
+        post 'settlement/payouts/:payout_id/mark_paid' => 'settlements#mark_payout_paid'
+        post 'settlement/payouts/:payout_id/void' => 'settlements#void_payout'
+
         # Sponsors
         resources :sponsors, only: [:index, :show, :create, :update, :destroy] do
           collection do
@@ -217,9 +230,6 @@ Rails.application.routes.draw do
           get :me
         end
       end
-
-      # Settings (singleton resource)
-      resource :settings, only: %i[show update]
 
       # Activity Logs
       resources :activity_logs, only: [:index] do
