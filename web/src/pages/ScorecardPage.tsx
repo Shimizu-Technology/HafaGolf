@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { adminEventPath } from '../utils/adminRoutes';
+import { useOrganization } from '../components/OrganizationProvider';
+import { getDefaultOrgSlug } from '../utils/tenant';
 
 interface Golfer {
   id: number;
@@ -83,7 +85,8 @@ interface Tournament {
 
 export const ScorecardPage: React.FC = () => {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
-  const orgSlug = 'make-a-wish-guam';
+  const { organization } = useOrganization();
+  const orgSlug = organization?.slug || getDefaultOrgSlug();
   const [searchParams] = useSearchParams();
   const groupId = searchParams.get('group');
   const tournamentIdParam = searchParams.get('tournament'); // For golfer flow

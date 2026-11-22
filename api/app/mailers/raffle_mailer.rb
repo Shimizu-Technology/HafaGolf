@@ -111,8 +111,8 @@ class RaffleMailer
   private
 
   def set_branding
-    @primary_color = @organization&.primary_color || '#0057B8'
-    @org_name = @organization&.name || 'Make-A-Wish Guam & CNMI'
+    @primary_color = @organization&.primary_color.presence || '#0f766e'
+    @org_name = @organization&.name.presence || 'HafaGolf'
     @logo_url = @organization&.logo_url
   end
 

@@ -37,21 +37,22 @@ import {
 import { PaymentReconciliationPage } from './pages/PaymentReconciliationPage';
 import { ActivityLogPage } from './pages/ActivityLogPage';
 import { PostHogPageView } from './providers/PostHogProvider';
+import { getDefaultOrgSlug } from './utils/tenant';
 
-const MAW_SLUG = 'make-a-wish-guam';
+const DEFAULT_ORG_SLUG = getDefaultOrgSlug();
 
-function MAWWrapper({ children }: { children: React.ReactNode }) {
-  return <OrganizationProvider orgSlug={MAW_SLUG}>{children}</OrganizationProvider>;
+function OrganizationRouteWrapper({ children }: { children: React.ReactNode }) {
+  return <OrganizationProvider orgSlug={DEFAULT_ORG_SLUG}>{children}</OrganizationProvider>;
 }
 
 function AdminShellPage({ children }: { children: React.ReactNode }) {
   return (
     <AdminProvider>
       <ProtectedRoute>
-        <TournamentProvider orgSlug={MAW_SLUG}>
-          <MAWWrapper>
+        <TournamentProvider orgSlug={DEFAULT_ORG_SLUG}>
+          <OrganizationRouteWrapper>
             <AdminLayout>{children}</AdminLayout>
-          </MAWWrapper>
+          </OrganizationRouteWrapper>
         </TournamentProvider>
       </ProtectedRoute>
     </AdminProvider>
@@ -71,10 +72,10 @@ function App() {
         <div className="min-h-screen flex flex-col">
           <Toaster position="top-right" />
           <Routes>
-            <Route path="/" element={<MAWWrapper><OrganizationLandingPage /></MAWWrapper>} />
+            <Route path="/" element={<OrganizationRouteWrapper><OrganizationLandingPage /></OrganizationRouteWrapper>} />
 
-            <Route path="/sponsor-portal" element={<MAWWrapper><SponsorPortalPage /></MAWWrapper>} />
-            <Route path="/sponsor-portal/login" element={<MAWWrapper><SponsorPortalPage /></MAWWrapper>} />
+            <Route path="/sponsor-portal" element={<OrganizationRouteWrapper><SponsorPortalPage /></OrganizationRouteWrapper>} />
+            <Route path="/sponsor-portal/login" element={<OrganizationRouteWrapper><SponsorPortalPage /></OrganizationRouteWrapper>} />
 
             <Route path="/admin/login" element={<AdminLoginPage />} />
             <Route path="/admin" element={<AdminShellPage><OrgAdminDashboard /></AdminShellPage>} />
@@ -109,11 +110,11 @@ function App() {
             <Route path="/golfer/dashboard" element={<GolferAuthProvider><GolferDashboardPage /></GolferAuthProvider>} />
             <Route path="/golfer/scorecard" element={<GolferAuthProvider><ScorecardPage /></GolferAuthProvider>} />
 
-            <Route path="/:tournamentSlug" element={<MAWWrapper><OrgTournamentPage /></MAWWrapper>} />
-            <Route path="/:tournamentSlug/register" element={<MAWWrapper><OrgRegistrationPage /></MAWWrapper>} />
-            <Route path="/:tournamentSlug/success" element={<MAWWrapper><OrgRegistrationSuccessPage /></MAWWrapper>} />
-            <Route path="/:tournamentSlug/leaderboard" element={<MAWWrapper><LeaderboardPage /></MAWWrapper>} />
-            <Route path="/:tournamentSlug/raffle" element={<MAWWrapper><RaffleBoardPage /></MAWWrapper>} />
+            <Route path="/:tournamentSlug" element={<OrganizationRouteWrapper><OrgTournamentPage /></OrganizationRouteWrapper>} />
+            <Route path="/:tournamentSlug/register" element={<OrganizationRouteWrapper><OrgRegistrationPage /></OrganizationRouteWrapper>} />
+            <Route path="/:tournamentSlug/success" element={<OrganizationRouteWrapper><OrgRegistrationSuccessPage /></OrganizationRouteWrapper>} />
+            <Route path="/:tournamentSlug/leaderboard" element={<OrganizationRouteWrapper><LeaderboardPage /></OrganizationRouteWrapper>} />
+            <Route path="/:tournamentSlug/raffle" element={<OrganizationRouteWrapper><RaffleBoardPage /></OrganizationRouteWrapper>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -10,6 +10,8 @@ import { useOrganization } from '../components/OrganizationProvider';
 import { formatEventDate } from '../utils/dates';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { getPublicFacingCapacitySummary } from '../utils/capacity';
+import { useApplyBranding } from '../utils/branding';
+import { getDefaultOrgSlug } from '../utils/tenant';
 
 // ---------------------------------------------------------------------------
 // Animation helpers
@@ -47,15 +49,15 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
         <React.Fragment key={index}>
           <div className="flex flex-col items-center">
             <div className={`w-9 h-9 rounded-full flex items-center justify-center font-semibold text-sm
-              ${currentStep > index + 1 ? 'bg-[#0057B8] text-white' :
-                currentStep === index + 1 ? 'bg-[#E31837] text-white' :
+              ${currentStep > index + 1 ? 'bg-brand-600 text-brand-foreground' :
+                currentStep === index + 1 ? 'bg-accent-600 text-accent-foreground' :
                 'bg-neutral-200 text-neutral-500'}`}>
               {currentStep > index + 1 ? <Check className="w-4 h-4" /> : index + 1}
             </div>
             <span className="text-xs mt-1.5 font-medium text-neutral-600 hidden sm:block">{stepName}</span>
           </div>
           {index < stepNames.length - 1 && (
-            <div className={`flex-1 h-0.5 mx-2 ${currentStep > index + 1 ? 'bg-[#0057B8]' : 'bg-neutral-200'}`} />
+            <div className={`flex-1 h-0.5 mx-2 ${currentStep > index + 1 ? 'bg-brand-600' : 'bg-neutral-200'}`} />
           )}
         </React.Fragment>
       ))}
@@ -71,12 +73,13 @@ export const OrgRegistrationPage: React.FC = () => {
   const navigate = useNavigate();
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
-  const orgSlug = organization?.slug || 'make-a-wish-guam';
+  const orgSlug = organization?.slug || getDefaultOrgSlug();
 
   const [currentStep, setCurrentStep] = useState(1);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const branding = useApplyBranding(organization, tournament);
 
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'redirecting'>('idle');
   const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
@@ -231,13 +234,13 @@ export const OrgRegistrationPage: React.FC = () => {
     }
   };
 
-  const inputClass = "w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:border-[#0057B8] focus:ring-2 focus:ring-[#0057B8]/20 transition-colors min-h-[44px]";
+  const inputClass = "w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20 transition-colors min-h-[44px]";
 
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="text-center">
-          <Loader2 className="h-10 w-10 animate-spin mx-auto text-[#0057B8]" />
+          <Loader2 className="h-10 w-10 animate-spin mx-auto text-brand-600" />
           <p className="mt-4 text-sm text-neutral-500 tracking-wide uppercase">Loading registration</p>
         </div>
       </div>
@@ -299,12 +302,12 @@ export const OrgRegistrationPage: React.FC = () => {
   const displayTeamName = formData.teamName || (formData.player1Name && formData.player2Name
     ? `${formData.player1Name} & ${formData.player2Name}`
     : 'TBD');
-  const heroBannerUrl = tournament.banner_url_override || null;
+  const heroBannerUrl = branding.bannerUrl;
 
   return (
     <MotionConfig reducedMotion="user">
     <PageTransition>
-    <div className="min-h-screen bg-[#F5F5F5]">
+    <div className="min-h-screen bg-neutral-100">
       <SignedInAdminBar />
       {/* ================================================================= */}
       {/* HERO HEADER                                                        */}
@@ -402,7 +405,7 @@ export const OrgRegistrationPage: React.FC = () => {
                   transition={{ duration: 0.3, ease }}
                 >
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
-                    <div className="border-l-4 border-[#E31837] pl-3 mb-6">
+                    <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Team Captain (Player 1)</h2>
                       <p className="text-sm text-neutral-500">Primary contact for the team</p>
                     </div>
@@ -457,7 +460,7 @@ export const OrgRegistrationPage: React.FC = () => {
                   transition={{ duration: 0.3, ease }}
                 >
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
-                    <div className="border-l-4 border-[#E31837] pl-3 mb-6">
+                    <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Playing Partner (Player 2)</h2>
                       <p className="text-sm text-neutral-500">Your teammate</p>
                     </div>
@@ -540,7 +543,7 @@ export const OrgRegistrationPage: React.FC = () => {
                   transition={{ duration: 0.3, ease }}
                 >
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
-                    <div className="border-l-4 border-[#E31837] pl-3 mb-6">
+                    <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Liability Waiver</h2>
                       <p className="text-sm text-neutral-500">Both players must agree</p>
                     </div>
@@ -552,14 +555,14 @@ export const OrgRegistrationPage: React.FC = () => {
                     </div>
 
                     <div className="space-y-4">
-                      <div className="p-4 bg-[#F5F5F5] rounded-2xl">
+                      <div className="p-4 bg-neutral-100 rounded-2xl">
                         <label className="flex items-start gap-3 cursor-pointer">
                           <input
                             type="checkbox"
                             name="player1WaiverAccepted"
                             checked={formData.player1WaiverAccepted}
                             onChange={handleInputChange}
-                            className="mt-1 w-5 h-5 min-w-[20px] rounded border-neutral-300 accent-[#0057B8]"
+                            className="mt-1 w-5 h-5 min-w-[20px] rounded border-neutral-300 accent-brand-600"
                           />
                           <span className="text-sm text-neutral-700">
                             I, <strong>{formData.player1Name || 'Player 1'}</strong>, have read and agree to the liability waiver
@@ -569,14 +572,14 @@ export const OrgRegistrationPage: React.FC = () => {
                           <p className="text-red-500 text-sm mt-2">{errors.player1WaiverAccepted}</p>
                         )}
                       </div>
-                      <div className="p-4 bg-[#F5F5F5] rounded-2xl">
+                      <div className="p-4 bg-neutral-100 rounded-2xl">
                         <label className="flex items-start gap-3 cursor-pointer">
                           <input
                             type="checkbox"
                             name="player2WaiverAccepted"
                             checked={formData.player2WaiverAccepted}
                             onChange={handleInputChange}
-                            className="mt-1 w-5 h-5 min-w-[20px] rounded border-neutral-300 accent-[#0057B8]"
+                            className="mt-1 w-5 h-5 min-w-[20px] rounded border-neutral-300 accent-brand-600"
                           />
                           <span className="text-sm text-neutral-700">
                             I, <strong>{formData.player2Name || 'Player 2'}</strong>, have read and agree to the liability waiver
@@ -601,14 +604,14 @@ export const OrgRegistrationPage: React.FC = () => {
                   transition={{ duration: 0.3, ease }}
                 >
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
-                    <div className="border-l-4 border-[#E31837] pl-3 mb-6">
+                    <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Review & Pay</h2>
                       <p className="text-sm text-neutral-500">Confirm your details before payment</p>
                     </div>
 
                     <div className="space-y-5">
                       {/* Player 1 summary */}
-                      <div className="p-4 bg-[#F5F5F5] rounded-2xl">
+                      <div className="p-4 bg-neutral-100 rounded-2xl">
                         <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-2">Team Captain (Player 1)</p>
                         <p className="font-medium text-neutral-900">{formData.player1Name}</p>
                         <p className="text-sm text-neutral-600">{formData.player1Email}</p>
@@ -616,7 +619,7 @@ export const OrgRegistrationPage: React.FC = () => {
                       </div>
 
                       {/* Player 2 summary */}
-                      <div className="p-4 bg-[#F5F5F5] rounded-2xl">
+                      <div className="p-4 bg-neutral-100 rounded-2xl">
                         <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-2">Playing Partner (Player 2)</p>
                         <p className="font-medium text-neutral-900">{formData.player2Name}</p>
                         {formData.player2Email && <p className="text-sm text-neutral-600">{formData.player2Email}</p>}
@@ -624,7 +627,7 @@ export const OrgRegistrationPage: React.FC = () => {
                       </div>
 
                       {/* Team & fee */}
-                      <div className="p-4 bg-[#F5F5F5] rounded-2xl">
+                      <div className="p-4 bg-neutral-100 rounded-2xl">
                         <div className="flex justify-between items-baseline mb-2">
                           <span className="text-sm text-neutral-500">Team Name</span>
                           <span className="font-medium text-neutral-900">{displayTeamName}</span>
@@ -636,7 +639,7 @@ export const OrgRegistrationPage: React.FC = () => {
                       </div>
 
                       {/* Order total */}
-                      <div className="p-4 bg-[#F5F5F5] rounded-2xl">
+                      <div className="p-4 bg-neutral-100 rounded-2xl">
                         <div className="flex justify-between items-baseline">
                           <span className="text-sm font-medium text-neutral-700">Total</span>
                           <span className="text-xl font-bold text-neutral-900">${((tournament.entry_fee || 0) / 100).toFixed(0)}</span>
@@ -644,9 +647,9 @@ export const OrgRegistrationPage: React.FC = () => {
                       </div>
 
                       {/* Payment note */}
-                      <div className="bg-[#0057B8]/5 rounded-2xl p-4">
+                      <div className="bg-brand-600/5 rounded-2xl p-4">
                         <p className="text-sm text-neutral-600">
-                          Payment processed via Bank of Guam SwipeSimple. You will be redirected to complete payment.
+                          You will be redirected to complete payment securely online.
                         </p>
                       </div>
                     </div>
@@ -672,7 +675,7 @@ export const OrgRegistrationPage: React.FC = () => {
               {currentStep < 4 ? (
                 <button
                   onClick={handleNext}
-                  className="inline-flex items-center gap-1 bg-[#0057B8] hover:bg-[#003a6e] text-white font-semibold text-sm rounded-full px-6 py-3 transition-colors min-h-[44px] w-full sm:w-auto justify-center"
+                  className="inline-flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-brand-foreground font-semibold text-sm rounded-full px-6 py-3 transition-colors min-h-[44px] w-full sm:w-auto justify-center"
                 >
                   Next
                   <ChevronRight className="w-4 h-4" />
@@ -681,7 +684,7 @@ export const OrgRegistrationPage: React.FC = () => {
                 <motion.button
                   onClick={handleSubmit}
                   disabled={submitState !== 'idle'}
-                  className={`inline-flex items-center gap-2 ${(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled ? 'bg-amber-500 hover:bg-amber-600' : 'bg-[#E31837] hover:bg-[#c41230]'} text-white font-semibold text-sm rounded-full px-8 py-3 transition-colors min-h-[44px] w-full sm:w-auto justify-center ${submitState !== 'idle' ? 'opacity-75 cursor-not-allowed' : ''}`}
+                  className={`inline-flex items-center gap-2 ${(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-brand-600 hover:bg-brand-700 text-brand-foreground'} font-semibold text-sm rounded-full px-8 py-3 transition-colors min-h-[44px] w-full sm:w-auto justify-center ${submitState !== 'idle' ? 'opacity-75 cursor-not-allowed' : ''}`}
                   whileHover={submitState === 'idle' ? { scale: 1.01 } : {}}
                   whileTap={submitState === 'idle' ? { scale: 0.98 } : {}}
                 >
@@ -714,13 +717,13 @@ export const OrgRegistrationPage: React.FC = () => {
 
               {/* Fallback payment link if auto-redirect doesn't work */}
               {submitState === 'redirecting' && paymentUrl && (
-                <div className="mt-4 p-4 bg-[#0057B8]/5 rounded-2xl text-center">
+                <div className="mt-4 p-4 bg-brand-600/5 rounded-2xl text-center">
                   <p className="text-sm text-neutral-600 mb-2">
                     Registration complete! If you are not automatically redirected:
                   </p>
                   <a
                     href={paymentUrl}
-                    className="inline-flex items-center gap-2 text-[#0057B8] font-semibold text-sm hover:underline"
+                    className="inline-flex items-center gap-2 text-brand-600 font-semibold text-sm hover:underline"
                   >
                     <DollarSign className="w-4 h-4" />
                     Tap here to proceed to payment
@@ -743,20 +746,20 @@ export const OrgRegistrationPage: React.FC = () => {
 
                 <div className="space-y-3 mb-6">
                   <div className="flex items-start gap-3">
-                    <Trophy className="w-5 h-5 mt-0.5 shrink-0 text-[#0057B8]" strokeWidth={1.5} />
+                    <Trophy className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
                     <div>
                       <p className="font-medium text-neutral-900 text-sm">{tournament.name}</p>
                     </div>
                   </div>
                   {tournament.event_date && (
                     <div className="flex items-center gap-3">
-                      <Calendar className="w-5 h-5 shrink-0 text-[#0057B8]" strokeWidth={1.5} />
+                      <Calendar className="w-5 h-5 shrink-0 text-brand-600" strokeWidth={1.5} />
                       <p className="text-sm text-neutral-600">{formatEventDate(tournament.event_date)}</p>
                     </div>
                   )}
                   {tournament.location_name && (
                     <div className="flex items-center gap-3">
-                      <MapPin className="w-5 h-5 shrink-0 text-[#0057B8]" strokeWidth={1.5} />
+                      <MapPin className="w-5 h-5 shrink-0 text-brand-600" strokeWidth={1.5} />
                       <p className="text-sm text-neutral-600">{tournament.location_name}</p>
                     </div>
                   )}
@@ -804,9 +807,9 @@ export const OrgRegistrationPage: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div className="bg-[#0057B8]/5 rounded-2xl p-3">
+                  <div className="bg-brand-600/5 rounded-2xl p-3">
                     <p className="text-xs text-neutral-600">
-                      Payment processed via Bank of Guam SwipeSimple. You will be redirected after submitting.
+                      You will be redirected to complete payment securely after submitting.
                     </p>
                   </div>
                 )}

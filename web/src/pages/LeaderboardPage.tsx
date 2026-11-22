@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { useOrganization } from '../components/OrganizationProvider';
+import { resolveTournamentBranding } from '../utils/branding';
+import { getDefaultOrgSlug } from '../utils/tenant';
 import { motion, AnimatePresence, MotionConfig, useInView } from 'framer-motion';
 import {
   Trophy,
@@ -225,7 +228,8 @@ function EmptyState() {
 
 export const LeaderboardPage: React.FC = () => {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
-  const orgSlug = 'make-a-wish-guam';
+  const { organization } = useOrganization();
+  const orgSlug = organization?.slug || getDefaultOrgSlug();
   const [data, setData] = useState<LeaderboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -285,7 +289,7 @@ export const LeaderboardPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [autoRefresh, fetchLeaderboard]);
 
-  const primaryColor = orgInfo.primary_color || '#0057B8';
+  const primaryColor = resolveTournamentBranding(orgInfo.primary_color ? orgInfo : organization).primaryColor;
 
   const formatTime = (date: Date) =>
     date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });

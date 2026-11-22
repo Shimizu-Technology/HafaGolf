@@ -24,8 +24,8 @@ export function PublicHero({
   const resolvedImageUrl = imageUrl ?? undefined;
 
   return (
-    <section className={`relative overflow-hidden text-white ${containerClassName}`.trim()}>
-      <div className="absolute inset-0 bg-gradient-to-br from-[#0057B8] via-[#00408a] to-[#002d63]" />
+    <section className={`relative overflow-hidden text-brand-foreground ${containerClassName}`.trim()}>
+      <div className="absolute inset-0 bg-gradient-to-br from-brand-600 via-brand-700 to-brand-900" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(255,255,255,0.08),transparent_28%)]" />
 
       {hasBackgroundImage ? (
@@ -34,7 +34,7 @@ export function PublicHero({
             className="absolute inset-0 hidden md:block bg-cover bg-center bg-no-repeat"
             style={{ backgroundImage: `url("${imageUrl}")` }}
           />
-          <div className="absolute inset-0 hidden md:block bg-[linear-gradient(90deg,rgba(0,37,77,0.94)_0%,rgba(0,64,138,0.78)_48%,rgba(0,87,184,0.72)_100%)]" />
+          <div className="absolute inset-0 hidden md:block bg-[linear-gradient(90deg,rgb(var(--brand-900-rgb)/0.94)_0%,rgb(var(--brand-700-rgb)/0.78)_48%,rgb(var(--brand-600-rgb)/0.72)_100%)]" />
           <div className="absolute inset-0 hidden md:block bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.16),transparent_34%)]" />
         </>
       ) : null}

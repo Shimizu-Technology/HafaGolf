@@ -89,7 +89,7 @@ module Api
       end
 
       # GET /api/v1/admin/organizations
-      # Returns organizations the current user can access (single-org: MAW only)
+      # Returns organizations the current user can access
       def index
         organizations = current_user.accessible_organizations.order(:name)
         render json: organizations.map { |org| organization_response(org) }

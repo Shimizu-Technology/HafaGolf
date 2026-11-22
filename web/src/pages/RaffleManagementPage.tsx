@@ -1077,7 +1077,7 @@ export const RaffleManagementPage: React.FC = () => {
         <div className="max-w-6xl mx-auto px-4 py-3 sm:py-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
             <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4 flex items-center gap-2.5 sm:gap-3">
-              <Gift className="w-6 h-6 sm:w-8 sm:h-8 text-[#F5A800] flex-shrink-0" />
+              <Gift className="w-6 h-6 sm:w-8 sm:h-8 text-accent-500 flex-shrink-0" />
               <div className="min-w-0">
                 <p className="text-xs sm:text-sm text-gray-500">Prizes</p>
                 <p className="text-lg sm:text-xl font-bold">{prizes.length}</p>

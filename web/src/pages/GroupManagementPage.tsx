@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '@clerk/clerk-react';
 import { useOrganization } from '../components/OrganizationProvider';
+import { getDefaultOrgSlug } from '../utils/tenant';
 import {
   DndContext,
   DragEndEvent,
@@ -356,7 +357,7 @@ export const GroupManagementPage: React.FC = () => {
   const [overId, setOverId] = useState<string | null>(null);
   const [collapsedCourseKeys, setCollapsedCourseKeys] = useState<string[]>([]);
 
-  const orgSlug = organization?.slug || 'make-a-wish-guam';
+  const orgSlug = organization?.slug || getDefaultOrgSlug();
   const multiCourseSetup = courseConfigs.length > 1;
 
   const sensors = useSensors(

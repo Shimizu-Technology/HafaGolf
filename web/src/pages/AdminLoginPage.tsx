@@ -51,7 +51,7 @@ export const AdminLoginPage: React.FC = () => {
             Admin Portal
           </h1>
           <p className="text-gray-600">
-            {tournamentName || 'Make-A-Wish Guam & CNMI'}
+            {tournamentName || 'HafaGolf'}
           </p>
         </div>
 

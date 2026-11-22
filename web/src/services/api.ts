@@ -9,10 +9,19 @@ export interface Organization {
   description?: string;
   logo_url?: string;
   primary_color?: string;
+  secondary_color?: string;
+  accent_color?: string;
   banner_url?: string;
   contact_email?: string;
   contact_phone?: string;
   website_url?: string;
+  brand_kit?: {
+    primary_color?: string;
+    secondary_color?: string;
+    accent_color?: string;
+    logo_url?: string;
+    banner_url?: string;
+  };
   subscription_status?: string;
   tournament_count?: number;
   admin_count?: number;
@@ -132,6 +141,11 @@ export interface Tournament {
   allow_check?: boolean;
   allow_card?: boolean;
   banner_url_override?: string | null;
+  logo_url_override?: string | null;
+  primary_color_override?: string | null;
+  accent_color_override?: string | null;
+  signature_image_url_override?: string | null;
+  theme_preset?: 'classic' | 'premium' | 'minimal' | 'event';
   use_org_branding?: boolean;
   
   // Schedule

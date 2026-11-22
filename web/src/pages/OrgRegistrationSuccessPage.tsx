@@ -6,19 +6,20 @@ import { Button, Card } from '../components/ui';
 import confetti from 'canvas-confetti';
 import { formatEventDate } from '../utils/dates';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
+import { useApplyBranding } from '../utils/branding';
+import { getDefaultOrgSlug } from '../utils/tenant';
 
 export function OrgRegistrationSuccessPage() {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
-  const orgSlug = organization?.slug || 'make-a-wish-guam';
+  const orgSlug = organization?.slug || getDefaultOrgSlug();
   const location = useLocation();
   const navigate = useNavigate();
   
   const { golfer, tournament, paymentPending, paymentComplete, swipeSimpleRedirect, waitlisted } = location.state || {};
+  useApplyBranding(organization, tournament);
 
-  const SWIPE_SIMPLE_URL = 'https://swipesimple.com/links/lnk_e1c8f45f9c401c93552781ef3d52fdfc';
-  
-  const primaryColor = organization?.primary_color || '#0057B8';
+  const externalPaymentUrl: string | undefined = tournament?.swipe_simple_url;
 
   useEffect(() => {
     if (waitlisted) return;
@@ -43,14 +44,9 @@ export function OrgRegistrationSuccessPage() {
     <div className="min-h-screen bg-white flex flex-col">
       <SignedInAdminBar />
 
-      {/* Hero header — same blue gradient as public pages */}
-      <header className="relative text-white overflow-hidden">
-        <div
-          className="absolute inset-0"
-          style={{
-            background: `linear-gradient(135deg, ${primaryColor} 0%, #001a3d 100%)`,
-          }}
-        />
+      {/* Hero header — branded gradient matching public pages */}
+      <header className="relative text-brand-foreground overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-brand-600 via-brand-700 to-brand-900" />
         <div className="relative max-w-2xl mx-auto px-4 py-10 sm:py-14 text-center">
           {waitlisted ? (
             <>
@@ -86,7 +82,7 @@ export function OrgRegistrationSuccessPage() {
             <div className="bg-neutral-50 rounded-xl p-4 mb-5">
               {(golfer.team_name || golfer.partner_name) && (
                 <div className="flex items-center gap-2 mb-3 pb-3 border-b border-neutral-200">
-                  <Users size={16} className="text-[#0057B8]" />
+                  <Users size={16} className="text-brand-600" />
                   <p className="font-semibold text-neutral-900">
                     {golfer.team_name || `${golfer.name} & ${golfer.partner_name}`}
                   </p>
@@ -145,8 +141,8 @@ export function OrgRegistrationSuccessPage() {
           <>
             {/* Waitlist Info Card */}
             <Card className="p-5 sm:p-6 mb-5">
-              <div className="bg-[#0057B8]/5 border border-[#0057B8]/15 rounded-xl p-4">
-                <h3 className="font-semibold text-[#0057B8] mb-2">What does this mean?</h3>
+              <div className="bg-brand-600/5 border border-brand-600/15 rounded-xl p-4">
+                <h3 className="font-semibold text-brand-600 mb-2">What does this mean?</h3>
                 <p className="text-sm text-neutral-600 leading-relaxed">
                   The event is currently at capacity. Your team has been added to the waitlist.
                   If a spot opens up, we'll notify you by email with a link to complete your registration and payment.
@@ -160,15 +156,15 @@ export function OrgRegistrationSuccessPage() {
               <h3 className="font-bold mb-4 text-neutral-900">What's Next?</h3>
               <ul className="space-y-3 text-neutral-600">
                 <li className="flex items-start gap-3">
-                  <span className="bg-[#0057B8]/10 text-[#0057B8] rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">1</span>
+                  <span className="bg-brand-600/10 text-brand-600 rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">1</span>
                   <span>Check your email for a waitlist confirmation</span>
                 </li>
                 <li className="flex items-start gap-3">
-                  <span className="bg-[#0057B8]/10 text-[#0057B8] rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">2</span>
+                  <span className="bg-brand-600/10 text-brand-600 rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">2</span>
                   <span>We'll email you if a spot opens up</span>
                 </li>
                 <li className="flex items-start gap-3">
-                  <span className="bg-[#0057B8]/10 text-[#0057B8] rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">3</span>
+                  <span className="bg-brand-600/10 text-brand-600 rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">3</span>
                   <span>If promoted, you'll receive a payment link to confirm your spot</span>
                 </li>
               </ul>
@@ -184,11 +180,13 @@ export function OrgRegistrationSuccessPage() {
                   <h3 className="font-bold mb-2 text-neutral-900">Payment Status</h3>
                   
                   {swipeSimpleRedirect ? (
-                    <div className="bg-[#0057B8]/5 text-neutral-700 p-3 rounded-lg">
-                      <p className="font-medium">Registration submitted! You were redirected to Bank of Guam SwipeSimple to complete payment.</p>
-                      <p className="text-sm mt-2">
-                        If the payment window did not open, <a href={SWIPE_SIMPLE_URL} target="_blank" rel="noopener noreferrer" className="underline font-medium text-[#0057B8]">click here to pay</a>.
-                      </p>
+                    <div className="bg-brand-600/5 text-neutral-700 p-3 rounded-lg">
+                      <p className="font-medium">Registration submitted! Complete your payment using the checkout link.</p>
+                      {externalPaymentUrl && (
+                        <p className="text-sm mt-2">
+                          If the payment window did not open, <a href={externalPaymentUrl} target="_blank" rel="noopener noreferrer" className="underline font-medium text-brand-600">click here to pay</a>.
+                        </p>
+                      )}
                     </div>
                   ) : paymentComplete ? (
                     <div className="bg-green-50 text-green-800 p-3 rounded-lg">
@@ -226,15 +224,15 @@ export function OrgRegistrationSuccessPage() {
               <h3 className="font-bold mb-4 text-neutral-900">What's Next?</h3>
               <ul className="space-y-3 text-neutral-600">
                 <li className="flex items-start gap-3">
-                  <span className="bg-[#0057B8]/10 text-[#0057B8] rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">1</span>
+                  <span className="bg-brand-600/10 text-brand-600 rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">1</span>
                   <span>Check your email for a confirmation message</span>
                 </li>
                 <li className="flex items-start gap-3">
-                  <span className="bg-[#0057B8]/10 text-[#0057B8] rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">2</span>
+                  <span className="bg-brand-600/10 text-brand-600 rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">2</span>
                   <span>Mark your calendar for {formatEventDate(tournament.event_date)}</span>
                 </li>
                 <li className="flex items-start gap-3">
-                  <span className="bg-[#0057B8]/10 text-[#0057B8] rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">3</span>
+                  <span className="bg-brand-600/10 text-brand-600 rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold flex-shrink-0">3</span>
                   <span>
                     Arrive at {tournament.location_name || 'the venue'} by {tournament.registration_time || 'the registration time'}
                   </span>

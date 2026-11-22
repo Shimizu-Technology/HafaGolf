@@ -9,7 +9,7 @@ class RaffleSmsService
       ticket_numbers = tickets.map(&:display_number).join(", ")
       total_cents = tickets.sum(&:price_cents)
       total_dollars = "$#{'%.2f' % (total_cents / 100.0)}"
-      org_name = tournament.organization&.name || "HafaGolf"
+      org_name = tournament.organization&.name.presence || "HafaGolf"
 
       body = "#{org_name} — #{tournament.name}\n\n" \
              "Hi #{buyer_name}! Your #{tickets.size} raffle ticket#{'s' if tickets.size != 1}:\n" \
@@ -48,7 +48,7 @@ class RaffleSmsService
       return skip_delivery!(delivery, "ClickSend is not configured") unless ClicksendClient.configured?
 
       tournament = raffle_prize.tournament
-      org_name = tournament.organization&.name || "HafaGolf"
+      org_name = tournament.organization&.name.presence || "HafaGolf"
 
       body = "#{org_name} — #{tournament.name}\n\n" \
              "Congratulations #{raffle_prize.winner_name}! " \

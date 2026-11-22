@@ -3,6 +3,63 @@
 @tailwind utilities;
 
 @layer base {
+  /* Neutral HafaGolf default brand & accent palettes (overridden at runtime per tenant/tournament) */
+  :root {
+    --brand-50: #ecf4f3;
+    --brand-50-rgb: 236 244 243;
+    --brand-100: #d4e6e5;
+    --brand-100-rgb: 212 230 229;
+    --brand-200: #abcfcc;
+    --brand-200-rgb: 171 207 204;
+    --brand-300: #7bb4af;
+    --brand-300-rgb: 123 180 175;
+    --brand-400: #4b9892;
+    --brand-400-rgb: 75 152 146;
+    --brand-500: #27847d;
+    --brand-500-rgb: 39 132 125;
+    --brand-600: #0f766e;
+    --brand-600-rgb: 15 118 110;
+    --brand-700: #0d635c;
+    --brand-700-rgb: 13 99 92;
+    --brand-800: #0a504b;
+    --brand-800-rgb: 10 80 75;
+    --brand-900: #083d39;
+    --brand-900-rgb: 8 61 57;
+    --brand-950: #052825;
+    --brand-950-rgb: 5 40 37;
+    --brand-DEFAULT: #0f766e;
+    --brand-DEFAULT-rgb: 15 118 110;
+    --brand-foreground: #ffffff;
+    --brand-foreground-rgb: 255 255 255;
+
+    --accent-50: #f9f1eb;
+    --accent-50-rgb: 249 241 235;
+    --accent-100: #f1e0d3;
+    --accent-100-rgb: 241 224 211;
+    --accent-200: #e5c3a9;
+    --accent-200-rgb: 229 195 169;
+    --accent-300: #d6a279;
+    --accent-300-rgb: 214 162 121;
+    --accent-400: #c77e47;
+    --accent-400-rgb: 199 126 71;
+    --accent-500: #bc6422;
+    --accent-500-rgb: 188 100 34;
+    --accent-600: #b45309;
+    --accent-600-rgb: 180 83 9;
+    --accent-700: #974608;
+    --accent-700-rgb: 151 70 8;
+    --accent-800: #7a3806;
+    --accent-800-rgb: 122 56 6;
+    --accent-900: #5e2b05;
+    --accent-900-rgb: 94 43 5;
+    --accent-950: #3d1c03;
+    --accent-950-rgb: 61 28 3;
+    --accent-DEFAULT: #b45309;
+    --accent-DEFAULT-rgb: 180 83 9;
+    --accent-foreground: #ffffff;
+    --accent-foreground-rgb: 255 255 255;
+  }
+
   /* Apply fonts globally */
   html {
     font-family: 'DM Sans', system-ui, -apple-system, sans-serif;

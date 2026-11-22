@@ -101,8 +101,9 @@ module Api
             contact_phone: tournament.contact_phone
           },
           organization: {
-            name: org&.name || 'Make-A-Wish Guam & CNMI',
-            primary_color: org&.primary_color || '#0057B8'
+            name: org&.name.presence || 'HafaGolf',
+            primary_color: org&.primary_color.presence || '#0f766e',
+            logo_url: org&.logo_url
           },
           session_token: session_token
         }

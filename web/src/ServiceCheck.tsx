@@ -13,10 +13,10 @@ export function ServiceCheck() {
 
   if (status === 'checking') {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-blue-50 px-6 text-center" role="status">
+      <main className="flex min-h-screen items-center justify-center bg-brand-50 px-6 text-center" role="status">
         <div>
-          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-blue-100 border-t-[#0057B8]" />
-          <p className="mt-4 font-semibold text-[#0057B8]">Checking event services…</p>
+          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
+          <p className="mt-4 font-semibold text-brand-600">Checking event services…</p>
         </div>
       </main>
     );

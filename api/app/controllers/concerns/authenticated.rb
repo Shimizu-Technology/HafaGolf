@@ -35,8 +35,7 @@ module Authenticated
       return
     end
 
-    # When the default session token omits email, resolve it via the
-    # Clerk Backend API (same pattern used in Marianas Open / GIAA).
+    # When the default session token omits email, resolve it via the Clerk Backend API.
     if email.blank? && clerk_id.present?
       clerk_user = fetch_clerk_user(clerk_id)
       if clerk_user
@@ -115,8 +114,7 @@ module Authenticated
     render json: { error: 'Forbidden: You do not have access to this feature' }, status: :forbidden
   end
 
-  # Resolve user details via the Clerk Backend API when the session
-  # token doesn't include email (same approach as Marianas Open / GIAA).
+  # Resolve user details via the Clerk Backend API when the session token omits email.
   def fetch_clerk_user(clerk_id)
     secret = ENV['CLERK_SECRET_KEY']
     return nil if secret.blank?

@@ -1,5 +1,5 @@
 <%
-  brand = @primary_color || '#0057B8'
+  brand = @primary_color || '#0f766e'
   dark_brand = brand.gsub('#', '').tap { |hex|
     break '#000000' unless hex.length == 6 && hex.match?(/\A[0-9A-Fa-f]{6}\z/)
     r = [hex[0..1].to_i(16) * 75 / 100, 0].max

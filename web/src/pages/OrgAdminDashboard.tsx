@@ -449,7 +449,7 @@ export const OrgAdminDashboard: React.FC = () => {
             <section className="rounded-[28px] bg-white shadow-sm">
               <div className="border-b border-neutral-200 px-5 sm:px-6 py-4 sm:py-5">
                 <h2 className="text-base sm:text-lg font-semibold text-neutral-900">Org management</h2>
-                <p className="mt-0.5 sm:mt-1 text-sm text-neutral-500">Tasks that stay true even as MAW adds more event types.</p>
+                <p className="mt-0.5 sm:mt-1 text-sm text-neutral-500">Organization-wide tools across all your events.</p>
               </div>
               <div className="space-y-3 p-4 sm:p-6">
                 {[
