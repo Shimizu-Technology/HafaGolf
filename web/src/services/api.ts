@@ -2,6 +2,15 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 // Organization types
+export interface OrganizationDomain {
+  id: string;
+  hostname: string;
+  is_primary: boolean;
+  verified_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Organization {
   id: string;
   name: string;
@@ -22,11 +31,24 @@ export interface Organization {
     logo_url?: string;
     banner_url?: string;
   };
+  primary_host?: string | null;
+  domains?: OrganizationDomain[];
+  offseason_enabled?: boolean;
+  offseason_title?: string | null;
+  offseason_message?: string | null;
+  offseason_cta_label?: string | null;
+  offseason_cta_url?: string | null;
   subscription_status?: string;
   tournament_count?: number;
   admin_count?: number;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface ResolvedTenant {
+  host: string | null;
+  resolved_by: 'domain' | 'slug' | 'local_default';
+  organization: Organization;
 }
 
 // Sponsor types
@@ -610,6 +632,10 @@ export class ApiClient {
       'Content-Type': 'application/json',
     };
 
+    if (typeof window !== 'undefined' && window.location?.hostname) {
+      headers['X-Tenant-Host'] = window.location.hostname;
+    }
+
     if (authenticated && this.getAuthToken) {
       const token = await this.getAuthToken();
       if (token) {
@@ -803,10 +829,17 @@ export class ApiClient {
     return this.requestWithToken('/api/v1/admin/organizations', token);
   }
 
-  async createOrganization(data: Partial<Organization>): Promise<Organization> {
+  async createOrganization(
+    data: Partial<Organization> & { primary_domain?: string; admin_email?: string }
+  ): Promise<Organization> {
+    const { primary_domain, admin_email, ...orgFields } = data;
     return this.request('/api/v1/admin/organizations', {
       method: 'POST',
-      body: JSON.stringify({ organization: data }),
+      body: JSON.stringify({
+        organization: orgFields,
+        primary_domain,
+        admin_email,
+      }),
     });
   }
 
@@ -1262,6 +1295,57 @@ export class ApiClient {
 
   async getGolferActivityHistory(golferId: number): Promise<{ activity_logs: ActivityLog[]; golfer_id: number; golfer_name: string }> {
     return this.request(`/api/v1/activity_logs/golfer/${golferId}`);
+  }
+
+  // Tenant resolution & Super Admin Organization / Domain CRUD
+  async resolveTenant(slug?: string): Promise<ResolvedTenant> {
+    const query = slug ? `?slug=${encodeURIComponent(slug)}` : '';
+    return this.request(`/api/v1/tenant${query}`, {}, false);
+  }
+
+  async getAdminOrganizations(): Promise<Organization[]> {
+    return this.request('/api/v1/admin/organizations');
+  }
+
+  async deleteOrganization(slug: string): Promise<void> {
+    await this.request(`/api/v1/admin/organizations/${encodeURIComponent(slug)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getOrganizationDomains(slug: string): Promise<{ domains: OrganizationDomain[] }> {
+    return this.request(`/api/v1/admin/organizations/${encodeURIComponent(slug)}/domains`);
+  }
+
+  async createOrganizationDomain(
+    slug: string,
+    data: { hostname: string; is_primary?: boolean }
+  ): Promise<{ domain: OrganizationDomain }> {
+    return this.request(`/api/v1/admin/organizations/${encodeURIComponent(slug)}/domains`, {
+      method: 'POST',
+      body: JSON.stringify({ domain: data }),
+    });
+  }
+
+  async updateOrganizationDomain(
+    slug: string,
+    domainId: string,
+    data: { hostname?: string; is_primary?: boolean; verified_at?: string | null }
+  ): Promise<{ domain: OrganizationDomain }> {
+    return this.request(
+      `/api/v1/admin/organizations/${encodeURIComponent(slug)}/domains/${encodeURIComponent(domainId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ domain: data }),
+      }
+    );
+  }
+
+  async deleteOrganizationDomain(slug: string, domainId: string): Promise<void> {
+    await this.request(
+      `/api/v1/admin/organizations/${encodeURIComponent(slug)}/domains/${encodeURIComponent(domainId)}`,
+      { method: 'DELETE' }
+    );
   }
 
 }

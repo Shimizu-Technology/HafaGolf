@@ -4,6 +4,7 @@ class Organization < ApplicationRecord
   # Associations
   has_many :tournaments, dependent: :restrict_with_error
   has_many :organization_memberships, dependent: :destroy
+  has_many :organization_domains, dependent: :destroy
   has_many :users, through: :organization_memberships
   has_many :message_deliveries, dependent: :nullify
 
@@ -16,6 +17,8 @@ class Organization < ApplicationRecord
   validates :contact_email, format: { with: URI::MailTo::EMAIL_REGEXP }, allow_blank: true
   validates :sms_sender_id, length: { maximum: 11 }, allow_blank: true
   validates :subscription_status, inclusion: { in: %w[active past_due canceled trialing] }
+  validates :website_url, format: { with: /\Ahttps?:\/\/.+\z/i, message: 'must start with http:// or https://' }, allow_blank: true
+  validates :offseason_cta_url, format: { with: /\Ahttps?:\/\/.+\z/i, message: 'must start with http:// or https://' }, allow_blank: true
 
   # Callbacks
   before_validation :generate_slug, on: :create
@@ -39,6 +42,14 @@ class Organization < ApplicationRecord
 
   def admin_count
     organization_memberships.where(role: 'admin').count
+  end
+
+  def primary_domain
+    organization_domains.primary_first.first
+  end
+
+  def primary_host
+    primary_domain&.hostname
   end
 
   def add_admin(user)

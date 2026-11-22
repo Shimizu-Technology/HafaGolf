@@ -77,8 +77,8 @@ class UserInviteEmailService
       ENV["RESEND_FROM_EMAIL"].presence || ENV["MAILER_FROM_EMAIL"].presence
     end
 
-    def frontend_url
-      ENV["FRONTEND_URL"].presence || "http://localhost:5173"
+    def login_portal_url
+      OrgUrlBuilder.admin_url("/admin/login")
     end
 
     def escape(value)
@@ -98,7 +98,7 @@ class UserInviteEmailService
 
     def invite_html(user:, invited_by:, role_label: 'admin', org_name: 'HafaGolf', brand_color: '#0f172a')
       inviter = escape(invited_by&.name.presence || invited_by&.email.presence || "an administrator")
-      login_url = escape("#{frontend_url}/admin/login")
+      login_url = escape(login_portal_url)
       safe_org_name = escape(org_name)
       safe_color = accessible_brand_color(brand_color)
 

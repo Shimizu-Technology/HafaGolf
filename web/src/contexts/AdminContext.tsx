@@ -6,6 +6,7 @@ interface AdminContextValue {
   setCurrentAdmin: (admin: Admin | null) => void;
   isVolunteer: boolean;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
 }
 
 const AdminContext = createContext<AdminContextValue>({
@@ -13,6 +14,7 @@ const AdminContext = createContext<AdminContextValue>({
   setCurrentAdmin: () => {},
   isVolunteer: false,
   isAdmin: false,
+  isSuperAdmin: false,
 });
 
 export const useAdmin = () => useContext(AdminContext);
@@ -21,6 +23,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [currentAdmin, setCurrentAdmin] = useState<Admin | null>(null);
 
   const isVolunteer = currentAdmin?.org_role === 'volunteer';
+  const isSuperAdmin = Boolean(currentAdmin?.is_super_admin || currentAdmin?.role === 'super_admin');
   const isAdmin = !isVolunteer && currentAdmin != null;
 
   const handleSet = useCallback((admin: Admin | null) => {
@@ -28,7 +31,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   return (
-    <AdminContext.Provider value={{ currentAdmin, setCurrentAdmin: handleSet, isVolunteer, isAdmin }}>
+    <AdminContext.Provider value={{ currentAdmin, setCurrentAdmin: handleSet, isVolunteer, isAdmin, isSuperAdmin }}>
       {children}
     </AdminContext.Provider>
   );

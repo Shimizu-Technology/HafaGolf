@@ -4,7 +4,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AdminLayout } from './components/AdminLayout';
 import { AdminOnlyRoute } from './components/AdminRouteGuard';
-import { OrganizationProvider } from './components/OrganizationProvider';
+import { OrganizationProvider, useOrganization } from './components/OrganizationProvider';
 import { TournamentProvider, AdminProvider } from './contexts';
 import { GolferAuthProvider } from './contexts';
 import {
@@ -36,27 +36,34 @@ import {
 } from './pages';
 import { PaymentReconciliationPage } from './pages/PaymentReconciliationPage';
 import { ActivityLogPage } from './pages/ActivityLogPage';
+import { SuperAdminDashboard } from './pages/SuperAdminDashboard';
 import { PostHogPageView } from './providers/PostHogProvider';
-import { getDefaultOrgSlug } from './utils/tenant';
 
-const DEFAULT_ORG_SLUG = getDefaultOrgSlug();
-
-function OrganizationRouteWrapper({ children }: { children: React.ReactNode }) {
-  return <OrganizationProvider orgSlug={DEFAULT_ORG_SLUG}>{children}</OrganizationProvider>;
+function TenantPublicWrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <OrganizationProvider isPublicRoute fallbackPath="">
+      {children}
+    </OrganizationProvider>
+  );
 }
 
 function AdminShellPage({ children }: { children: React.ReactNode }) {
   return (
     <AdminProvider>
       <ProtectedRoute>
-        <TournamentProvider orgSlug={DEFAULT_ORG_SLUG}>
-          <OrganizationRouteWrapper>
+        <OrganizationProvider mode="admin" fallbackPath="">
+          <AdminTournamentShell>
             <AdminLayout>{children}</AdminLayout>
-          </OrganizationRouteWrapper>
-        </TournamentProvider>
+          </AdminTournamentShell>
+        </OrganizationProvider>
       </ProtectedRoute>
     </AdminProvider>
   );
+}
+
+function AdminTournamentShell({ children }: { children: React.ReactNode }) {
+  const { organization } = useOrganization();
+  return <TournamentProvider orgSlug={organization?.slug}>{children}</TournamentProvider>;
 }
 
 function LegacyTournamentRedirect({ suffix = '' }: { suffix?: string }) {
@@ -72,13 +79,14 @@ function App() {
         <div className="min-h-screen flex flex-col">
           <Toaster position="top-right" />
           <Routes>
-            <Route path="/" element={<OrganizationRouteWrapper><OrganizationLandingPage /></OrganizationRouteWrapper>} />
+            <Route path="/" element={<TenantPublicWrapper><OrganizationLandingPage /></TenantPublicWrapper>} />
 
-            <Route path="/sponsor-portal" element={<OrganizationRouteWrapper><SponsorPortalPage /></OrganizationRouteWrapper>} />
-            <Route path="/sponsor-portal/login" element={<OrganizationRouteWrapper><SponsorPortalPage /></OrganizationRouteWrapper>} />
+            <Route path="/sponsor-portal" element={<TenantPublicWrapper><SponsorPortalPage /></TenantPublicWrapper>} />
+            <Route path="/sponsor-portal/login" element={<TenantPublicWrapper><SponsorPortalPage /></TenantPublicWrapper>} />
 
             <Route path="/admin/login" element={<AdminLoginPage />} />
             <Route path="/admin" element={<AdminShellPage><OrgAdminDashboard /></AdminShellPage>} />
+            <Route path="/admin/organizations" element={<AdminShellPage><AdminOnlyRoute><SuperAdminDashboard /></AdminOnlyRoute></AdminShellPage>} />
             <Route path="/admin/events" element={<AdminShellPage><AdminOnlyRoute><EventsManagementPage /></AdminOnlyRoute></AdminShellPage>} />
             <Route path="/admin/events/new" element={<AdminShellPage><AdminOnlyRoute><CreateTournamentPage /></AdminOnlyRoute></AdminShellPage>} />
             <Route path="/admin/events/:tournamentSlug" element={<AdminShellPage><AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute></AdminShellPage>} />
@@ -110,11 +118,11 @@ function App() {
             <Route path="/golfer/dashboard" element={<GolferAuthProvider><GolferDashboardPage /></GolferAuthProvider>} />
             <Route path="/golfer/scorecard" element={<GolferAuthProvider><ScorecardPage /></GolferAuthProvider>} />
 
-            <Route path="/:tournamentSlug" element={<OrganizationRouteWrapper><OrgTournamentPage /></OrganizationRouteWrapper>} />
-            <Route path="/:tournamentSlug/register" element={<OrganizationRouteWrapper><OrgRegistrationPage /></OrganizationRouteWrapper>} />
-            <Route path="/:tournamentSlug/success" element={<OrganizationRouteWrapper><OrgRegistrationSuccessPage /></OrganizationRouteWrapper>} />
-            <Route path="/:tournamentSlug/leaderboard" element={<OrganizationRouteWrapper><LeaderboardPage /></OrganizationRouteWrapper>} />
-            <Route path="/:tournamentSlug/raffle" element={<OrganizationRouteWrapper><RaffleBoardPage /></OrganizationRouteWrapper>} />
+            <Route path="/:tournamentSlug" element={<TenantPublicWrapper><OrgTournamentPage /></TenantPublicWrapper>} />
+            <Route path="/:tournamentSlug/register" element={<TenantPublicWrapper><OrgRegistrationPage /></TenantPublicWrapper>} />
+            <Route path="/:tournamentSlug/success" element={<TenantPublicWrapper><OrgRegistrationSuccessPage /></TenantPublicWrapper>} />
+            <Route path="/:tournamentSlug/leaderboard" element={<TenantPublicWrapper><LeaderboardPage /></TenantPublicWrapper>} />
+            <Route path="/:tournamentSlug/raffle" element={<TenantPublicWrapper><RaffleBoardPage /></TenantPublicWrapper>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

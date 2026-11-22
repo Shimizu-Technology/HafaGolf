@@ -21,6 +21,12 @@ module Api
           contact_email: organization.contact_email,
           contact_phone: organization.contact_phone,
           website_url: organization.website_url,
+          primary_host: organization.primary_host,
+          offseason_enabled: organization.offseason_enabled,
+          offseason_title: organization.offseason_title,
+          offseason_message: organization.offseason_message,
+          offseason_cta_label: organization.offseason_cta_label,
+          offseason_cta_url: organization.offseason_cta_url,
           settings: organization.settings || {},
           tournament_count: organization.tournament_count
         }
@@ -91,8 +97,153 @@ module Api
       # GET /api/v1/admin/organizations
       # Returns organizations the current user can access
       def index
-        organizations = current_user.accessible_organizations.order(:name)
+        organizations = current_user.accessible_organizations.includes(:organization_domains).order(:name)
         render json: organizations.map { |org| organization_response(org) }
+      end
+
+      # POST /api/v1/admin/organizations
+      # Super-admin endpoint - create a new organization (with optional primary domain & initial admin)
+      def create
+        require_super_admin!
+        return if performed?
+
+        organization = Organization.new(organization_params)
+        primary_domain_host = params.dig(:organization, :primary_domain).presence || params[:primary_domain].presence
+        initial_admin_email = (params.dig(:organization, :admin_email).presence || params[:admin_email].presence)&.strip&.downcase
+
+        ActiveRecord::Base.transaction do
+          organization.save!
+
+          if primary_domain_host.present?
+            organization.organization_domains.create!(
+              hostname: primary_domain_host,
+              is_primary: true
+            )
+          end
+
+          if initial_admin_email.present?
+            user = User.find_by("LOWER(email) = ?", initial_admin_email) || User.create!(
+              email: initial_admin_email,
+              clerk_id: "pending_#{Digest::SHA256.hexdigest(initial_admin_email)[0..23]}",
+              role: "org_admin"
+            )
+            organization.add_admin(user)
+          end
+        end
+
+        render json: organization_response(organization.reload), status: :created
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { errors: e.record.errors.full_messages }, status: :unprocessable_entity
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Organization slug, domain, or admin email is already taken."] }, status: :unprocessable_entity
+      end
+
+      # DELETE /api/v1/admin/organizations/:slug
+      # Super-admin endpoint - delete an organization (blocked if tournaments exist)
+      def destroy
+        require_super_admin!
+        return if performed?
+
+        organization = Organization.find_by_slug!(params[:slug])
+        if organization.destroy
+          head :no_content
+        else
+          render json: { errors: organization.errors.full_messages }, status: :unprocessable_entity
+        end
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Organization not found' }, status: :not_found
+      end
+
+      # GET /api/v1/admin/organizations/:slug/domains
+      def domains
+        organization = Organization.find_by_slug!(params[:slug])
+        require_org_admin!(organization)
+        return if performed?
+
+        render json: {
+          domains: organization.organization_domains.primary_first.map { |d| domain_response(d) }
+        }
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Organization not found' }, status: :not_found
+      end
+
+      # POST /api/v1/admin/organizations/:slug/domains
+      def create_domain
+        require_super_admin!
+        return if performed?
+
+        organization = Organization.find_by_slug!(params[:slug])
+        domain = nil
+
+        organization.with_lock do
+          domain = organization.organization_domains.build(domain_params)
+          domain.is_primary = true if organization.organization_domains.empty?
+
+          unless domain.save
+            return render json: { errors: domain.errors.full_messages }, status: :unprocessable_entity
+          end
+        end
+
+        render json: { domain: domain_response(domain) }, status: :created
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Organization not found' }, status: :not_found
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Domain hostname or primary domain conflict. Please try again."] }, status: :unprocessable_entity
+      end
+
+      # PATCH /api/v1/admin/organizations/:slug/domains/:domain_id
+      def update_domain
+        require_super_admin!
+        return if performed?
+
+        organization = Organization.find_by_slug!(params[:slug])
+        domain = nil
+
+        organization.with_lock do
+          domain = organization.organization_domains.find(params[:domain_id])
+          permitted = domain_params
+
+          if domain.is_primary? && permitted.key?(:is_primary) && !ActiveModel::Type::Boolean.new.cast(permitted[:is_primary])
+            return render json: {
+              errors: ["Cannot unset the primary domain. Promote another domain to primary first."]
+            }, status: :unprocessable_entity
+          end
+
+          unless domain.update(permitted)
+            return render json: { errors: domain.errors.full_messages }, status: :unprocessable_entity
+          end
+        end
+
+        render json: { domain: domain_response(domain) }
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Domain not found' }, status: :not_found
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Domain hostname or primary domain conflict. Please try again."] }, status: :unprocessable_entity
+      end
+
+      # DELETE /api/v1/admin/organizations/:slug/domains/:domain_id
+      def destroy_domain
+        require_super_admin!
+        return if performed?
+
+        organization = Organization.find_by_slug!(params[:slug])
+
+        organization.with_lock do
+          domain = organization.organization_domains.find(params[:domain_id])
+          was_primary = domain.is_primary?
+          domain.destroy!
+
+          if was_primary
+            next_primary = organization.organization_domains.order(created_at: :asc).first
+            next_primary&.update!(is_primary: true)
+          end
+        end
+
+        head :no_content
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Domain not found' }, status: :not_found
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Domain update conflicted with another request. Please try again."] }, status: :unprocessable_entity
       end
 
       # PATCH /api/v1/admin/organizations/:slug
@@ -760,11 +911,29 @@ module Api
           :name, :slug, :description, :logo_url, :primary_color,
           :banner_url, :contact_email, :contact_phone, :website_url,
           :sms_sender_id,
+          :offseason_enabled, :offseason_title, :offseason_message,
+          :offseason_cta_label, :offseason_cta_url,
           settings: {}
         )
       end
 
+      def domain_params
+        params.require(:domain).permit(:hostname, :is_primary, :verified_at)
+      end
+
+      def domain_response(domain)
+        {
+          id: domain.id,
+          hostname: domain.hostname,
+          is_primary: domain.is_primary,
+          verified_at: domain.verified_at,
+          created_at: domain.created_at,
+          updated_at: domain.updated_at
+        }
+      end
+
       def organization_response(org)
+        domains = org.organization_domains.primary_first
         {
           id: org.id,
           name: org.name,
@@ -777,6 +946,13 @@ module Api
           contact_phone: org.contact_phone,
           website_url: org.website_url,
           sms_sender_id: org.sms_sender_id,
+          primary_host: domains.first&.hostname,
+          domains: domains.map { |d| domain_response(d) },
+          offseason_enabled: org.offseason_enabled,
+          offseason_title: org.offseason_title,
+          offseason_message: org.offseason_message,
+          offseason_cta_label: org.offseason_cta_label,
+          offseason_cta_url: org.offseason_cta_url,
           settings: org.settings || {},
           subscription_status: org.subscription_status,
           tournament_count: org.tournament_count,

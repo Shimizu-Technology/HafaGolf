@@ -40,11 +40,34 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useUser();
-  const { organization } = useOrganization();
+  const { organization, accessibleOrganizations, setOrganization } = useOrganization();
   const { tournaments, currentTournament, setCurrentTournament, isLoading } = useTournament();
-  const { isVolunteer } = useAdmin();
+  const { isVolunteer, isSuperAdmin } = useAdmin();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  const showOrgSwitcher = accessibleOrganizations.length > 1 || (isSuperAdmin && accessibleOrganizations.length > 0);
+
+  const handleOrganizationSelect = (orgSlugValue: string) => {
+    const nextOrg = accessibleOrganizations.find((org) => org.slug === orgSlugValue);
+    if (!nextOrg || nextOrg.slug === organization?.slug) return;
+
+    setOrganization(nextOrg);
+    setCurrentTournament(null);
+    if (isEventWorkspaceRoute) {
+      navigate(adminOrgRoutes.dashboard);
+    }
+    setMobileMenuOpen(false);
+  };
+
+  const handleOpenPublicSite = () => {
+    if (organization?.primary_host && window.location.hostname !== organization.primary_host) {
+      window.open(`https://${organization.primary_host}`, '_blank', 'noopener,noreferrer');
+      setMobileMenuOpen(false);
+      return;
+    }
+    handleNavigate('/');
+  };
 
   const routeTournamentSlug = getAdminEventSlug(location.pathname);
   const routeSection = getAdminEventSection(location.pathname) ?? 'overview';
@@ -114,6 +137,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       icon: Clock,
       match: (pathname) => pathname === '/admin/activity',
     },
+    ...(isSuperAdmin
+      ? [
+          {
+            label: 'Organizations',
+            path: '/admin/organizations',
+            icon: ShieldCheck,
+            match: (pathname: string) => pathname === '/admin/organizations',
+          },
+        ]
+      : []),
     {
       label: 'Settings',
       path: adminOrgRoutes.settings,
@@ -303,7 +336,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => navigate('/')}
+              onClick={handleOpenPublicSite}
               className="hidden items-center gap-2 rounded-xl px-3 py-2 text-sm text-brand-100 transition hover:bg-white/10 lg:inline-flex"
             >
               <Home className="h-4 w-4" />
@@ -371,7 +404,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
           {/* Public site link - mobile only */}
           <button
-            onClick={() => handleNavigate('/')}
+            onClick={handleOpenPublicSite}
             className="mt-3 flex w-full items-center gap-3 rounded-2xl bg-brand-50 px-3 py-3 text-left text-sm text-brand-700 transition hover:bg-brand-100 lg:hidden"
           >
             <Home className="h-5 w-5" />
@@ -403,6 +436,29 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           ) : (
             /* Expanded view: full sidebar */
             <div className="mt-4 space-y-6 lg:mt-0">
+              {showOrgSwitcher && (
+                <div className="rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">
+                    <Building2 className="h-3.5 w-3.5" />
+                    <span>Organization</span>
+                  </div>
+                  <div className="mt-2">
+                    <select
+                      aria-label="Active organization"
+                      value={organization?.slug ?? ''}
+                      onChange={(event) => handleOrganizationSelect(event.target.value)}
+                      className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-medium text-neutral-900 shadow-sm outline-none transition focus:border-brand-400"
+                    >
+                      {accessibleOrganizations.map((org) => (
+                        <option key={org.id} value={org.slug}>
+                          {org.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
               <div className="rounded-3xl border border-neutral-200 bg-neutral-50 p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Current event</p>
                 <p className="mt-1 text-sm font-semibold text-neutral-900">
