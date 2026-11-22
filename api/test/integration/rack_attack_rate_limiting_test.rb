@@ -1,16 +1,22 @@
 require "test_helper"
 
 class RackAttackRateLimitingTest < ActionDispatch::IntegrationTest
+  FROZEN_MID_PERIOD_TIME = Time.utc(2026, 6, 1, 12, 0, 30)
+
   setup do
+    travel_to FROZEN_MID_PERIOD_TIME
     @original_enabled = Rack::Attack.enabled
+    @original_store = Rack::Attack.cache.store
     Rack::Attack.enabled = true
     Rack::Attack.cache.store = ActiveSupport::Cache::MemoryStore.new
     Rack::Attack.reset!
   end
 
   teardown do
-    Rack::Attack.enabled = @original_enabled
     Rack::Attack.reset!
+    Rack::Attack.cache.store = @original_store
+    Rack::Attack.enabled = @original_enabled
+    travel_back
   end
 
   test "throttles repeated public registration attempts per IP" do
