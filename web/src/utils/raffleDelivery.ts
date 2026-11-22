@@ -20,7 +20,7 @@ export interface TicketDeliveryStatus {
   sms: ChannelDeliveryStatus;
   email: ChannelDeliveryStatus;
   needs_attention: boolean;
-  attention_reason: 'failed' | 'unconfirmed' | 'no_contact' | null;
+  attention_reason: 'failed' | 'unconfirmed' | 'no_contact' | 'missing_name' | null;
 }
 
 export type DeliveryBadgeTone = 'delivered' | 'pending' | 'failed' | 'neutral';

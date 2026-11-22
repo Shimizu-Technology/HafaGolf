@@ -45,7 +45,17 @@ module Api
         require_org_admin!(organization)
         return if performed?
 
-        attrs = tournament_params.except(:organization_id, :course_configs, :teams_per_start_position, :start_positions_per_hole)
+        attrs = tournament_params.except(:organization_id, :course_configs, :teams_per_start_position, :start_positions_per_hole, :raffle_include_with_registration, :raffle_hold_winner_on_screen)
+        if params[:tournament]&.key?(:raffle_include_with_registration)
+          attrs[:config] = (attrs[:config] || {}).merge(
+            'raffle_include_with_registration' => ActiveModel::Type::Boolean.new.cast(params[:tournament][:raffle_include_with_registration])
+          )
+        end
+        if params[:tournament]&.key?(:raffle_hold_winner_on_screen)
+          attrs[:config] = (attrs[:config] || {}).merge(
+            'raffle_hold_winner_on_screen' => ActiveModel::Type::Boolean.new.cast(params[:tournament][:raffle_hold_winner_on_screen])
+          )
+        end
         if params[:tournament]&.key?(:course_configs)
           courses = Array(tournament_params[:course_configs]).map(&:to_h)
           attrs[:config] = (attrs[:config] || {}).merge('course_configs' => courses)
@@ -82,7 +92,7 @@ module Api
       def update
         raffle_snapshot_before = raffle_settings_snapshot(@tournament)
         attrs = tournament_params.except(:organization_id, :sponsor_tiers,
-                                         :raffle_include_with_registration, :raffle_bundles,
+                                         :raffle_include_with_registration, :raffle_hold_winner_on_screen, :raffle_bundles,
                                          :course_configs, :teams_per_start_position, :start_positions_per_hole)
 
         merged_config = (@tournament.config || {}).deep_dup
@@ -95,6 +105,11 @@ module Api
         if params[:tournament].key?(:raffle_include_with_registration)
           merged_config['raffle_include_with_registration'] =
             ActiveModel::Type::Boolean.new.cast(params[:tournament][:raffle_include_with_registration])
+        end
+
+        if params[:tournament].key?(:raffle_hold_winner_on_screen)
+          merged_config['raffle_hold_winner_on_screen'] =
+            ActiveModel::Type::Boolean.new.cast(params[:tournament][:raffle_hold_winner_on_screen])
         end
 
         if params.dig(:tournament, :raffle_bundles).present?
@@ -266,6 +281,7 @@ module Api
           raffle_max_tickets_per_person: tournament.raffle_max_tickets_per_person,
           raffle_tickets_per_purchase: tournament.raffle_tickets_per_purchase,
           raffle_include_with_registration: config['raffle_include_with_registration'],
+          raffle_hold_winner_on_screen: tournament.raffle_hold_winner_on_screen?,
           raffle_bundles: config['raffle_bundles']
         }
       end
@@ -314,7 +330,7 @@ module Api
           :banner_url_override, :logo_url_override,
           :primary_color_override, :accent_color_override, :signature_image_url_override,
           :theme_preset, :use_org_branding,
-          :raffle_include_with_registration,
+          :raffle_include_with_registration, :raffle_hold_winner_on_screen,
           config: {},
           course_configs: [:key, :name, :hole_count],
           sponsor_tiers: [:key, :label, :sort_order],
