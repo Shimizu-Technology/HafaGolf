@@ -4,6 +4,7 @@
 # Used for multi-tenancy and auth context
 class Current < ActiveSupport::CurrentAttributes
   attribute :organization
+  attribute :tenant_host
   attribute :user
   attribute :tournament
 

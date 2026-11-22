@@ -15,6 +15,9 @@ Rails.application.routes.draw do
       # PUBLIC ENDPOINTS (no auth required)
       # ===========================================
 
+      # Tenant resolution (public - resolves custom domain / host to organization)
+      get 'tenant' => 'tenant#show'
+
       # Organizations (public)
       get 'organizations/:slug' => 'organizations#show'
       get 'organizations/:slug/tournaments' => 'organizations#tournaments'
@@ -65,7 +68,13 @@ Rails.application.routes.draw do
 
       # Admin organizations
       get 'admin/organizations' => 'organizations#index'
+      post 'admin/organizations' => 'organizations#create'
       patch 'admin/organizations/:slug' => 'organizations#update'
+      delete 'admin/organizations/:slug' => 'organizations#destroy'
+      get 'admin/organizations/:slug/domains' => 'organizations#domains'
+      post 'admin/organizations/:slug/domains' => 'organizations#create_domain'
+      patch 'admin/organizations/:slug/domains/:domain_id' => 'organizations#update_domain'
+      delete 'admin/organizations/:slug/domains/:domain_id' => 'organizations#destroy_domain'
       get 'admin/organizations/:slug/members' => 'organizations#members'
       post 'admin/organizations/:slug/members' => 'organizations#add_member'
       patch 'admin/organizations/:slug/members/:member_id' => 'organizations#update_member'

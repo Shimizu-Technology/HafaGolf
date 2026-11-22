@@ -7,8 +7,7 @@ class SponsorMailer < ApplicationMailer
     @primary_color = @org&.primary_color.presence || '#0f766e'
     @org_name = @org&.name.presence || 'HafaGolf'
 
-    frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
-    @access_url = "#{frontend_url}/sponsor-portal?token=#{token}"
+    @access_url = OrgUrlBuilder.sponsor_portal_url(sponsor, token)
 
     mail(
       to: sponsor.login_email,

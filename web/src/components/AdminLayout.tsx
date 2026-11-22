@@ -42,7 +42,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const { user } = useUser();
   const { organization } = useOrganization();
   const { tournaments, currentTournament, setCurrentTournament, isLoading } = useTournament();
-  const { isVolunteer } = useAdmin();
+  const { isVolunteer, isSuperAdmin } = useAdmin();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -114,6 +114,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       icon: Clock,
       match: (pathname) => pathname === '/admin/activity',
     },
+    ...(isSuperAdmin
+      ? [
+          {
+            label: 'Organizations',
+            path: '/admin/organizations',
+            icon: ShieldCheck,
+            match: (pathname: string) => pathname === '/admin/organizations',
+          },
+        ]
+      : []),
     {
       label: 'Settings',
       path: adminOrgRoutes.settings,

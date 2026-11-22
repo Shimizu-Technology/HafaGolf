@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_22_151700) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_22_160100) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -172,6 +172,18 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_151700) do
     t.index ["tournament_id"], name: "index_message_deliveries_on_tournament_id"
   end
 
+  create_table "organization_domains", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.string "hostname", null: false
+    t.boolean "is_primary", default: false, null: false
+    t.datetime "verified_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index "lower((hostname)::text)", name: "index_organization_domains_on_lower_hostname", unique: true
+    t.index ["organization_id"], name: "index_organization_domains_on_org_primary", unique: true, where: "(is_primary = true)"
+    t.index ["organization_id"], name: "index_organization_domains_on_organization_id"
+  end
+
   create_table "organization_memberships", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.datetime "created_at", null: false
     t.uuid "organization_id", null: false
@@ -198,6 +210,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_151700) do
     t.datetime "updated_at", null: false
     t.string "website_url"
     t.string "sms_sender_id", limit: 11
+    t.boolean "offseason_enabled", default: false, null: false
+    t.string "offseason_title"
+    t.text "offseason_message"
+    t.string "offseason_cta_label"
+    t.string "offseason_cta_url"
     t.index ["slug"], name: "index_organizations_on_slug", unique: true
   end
 
@@ -484,6 +501,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_151700) do
     t.string "name"
     t.string "role", default: "org_admin"
     t.datetime "updated_at", null: false
+    t.index "lower((email)::text)", name: "index_users_on_lower_email", unique: true, where: "(email IS NOT NULL)"
   end
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
@@ -497,6 +515,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_151700) do
   add_foreign_key "groups", "tournaments"
   add_foreign_key "message_deliveries", "organizations", on_delete: :nullify
   add_foreign_key "message_deliveries", "tournaments", on_delete: :nullify
+  add_foreign_key "organization_domains", "organizations"
   add_foreign_key "organization_memberships", "organizations"
   add_foreign_key "organization_memberships", "users"
   add_foreign_key "raffle_prizes", "raffle_tickets", column: "winning_ticket_id"

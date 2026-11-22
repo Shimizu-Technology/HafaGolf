@@ -151,9 +151,7 @@ class Golfer < ApplicationRecord
   end
 
   def magic_link_url
-    return nil unless magic_link_token.present?
-    frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
-    "#{frontend_url}/score/verify?token=#{magic_link_token}"
+    OrgUrlBuilder.golfer_magic_link_url(self)
   end
 
   # Find golfer by magic link token (class method)
@@ -398,8 +396,7 @@ class Golfer < ApplicationRecord
         t.swipe_simple_url
       end
     elsif payment_token.present?
-      frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
-      "#{frontend_url}/pay/#{payment_token}"
+      OrgUrlBuilder.payment_link_url(self)
     end
   end
 

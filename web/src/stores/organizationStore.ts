@@ -35,6 +35,12 @@ export interface Organization {
     logo_url?: string;
     banner_url?: string;
   };
+  primary_host?: string | null;
+  offseason_enabled?: boolean;
+  offseason_title?: string | null;
+  offseason_message?: string | null;
+  offseason_cta_label?: string | null;
+  offseason_cta_url?: string | null;
   settings?: OrganizationSettings;
   tournament_count?: number;
 }

@@ -3,66 +3,78 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useOrganizationStore } from '../stores/organizationStore';
 import { api } from '../services/api';
 import type { Organization } from '../stores/organizationStore';
+import { OffseasonPage } from '../pages/OffseasonPage';
 import { AlertTriangle } from 'lucide-react';
 import { useApplyBranding } from '../utils/branding';
-import { getDefaultOrgSlug } from '../utils/tenant';
 
 interface OrganizationProviderProps {
   children: React.ReactNode;
   fallbackPath?: string;
-  orgSlug?: string; // If provided, use this instead of URL param
+  orgSlug?: string;
+  isPublicRoute?: boolean;
 }
 
 /**
- * OrganizationProvider fetches and provides organization context based on URL slug.
- * Wraps routes that need organization context.
+ * OrganizationProvider resolves organization context from:
+ * 1. Explicit orgSlug prop (admin org context)
+ * 2. URL :orgSlug parameter (path-based routes)
+ * 3. Current host via GET /api/v1/tenant (custom domain routing via X-Tenant-Host)
  */
 export function OrganizationProvider({
   children,
   fallbackPath = '/admin/login',
   orgSlug: propOrgSlug,
+  isPublicRoute = false,
 }: OrganizationProviderProps) {
   const { orgSlug: paramOrgSlug } = useParams<{ orgSlug: string }>();
-  const orgSlug = propOrgSlug || paramOrgSlug || getDefaultOrgSlug();
+  const explicitSlug = propOrgSlug || paramOrgSlug || null;
   const navigate = useNavigate();
   const { organization, setOrganization, setLoading, setError, isLoading, error } = useOrganizationStore();
 
   useApplyBranding(organization);
 
   useEffect(() => {
-    async function fetchOrganization() {
-      if (!orgSlug) {
-        setError('Organization not specified');
-        return;
-      }
+    let cancelled = false;
 
-      // Only show loading spinner on first load (no cached data)
-      if (!organization || organization.slug !== orgSlug) {
+    async function fetchOrganization() {
+      const needsLoad = !organization || (explicitSlug && organization.slug !== explicitSlug);
+      if (needsLoad) {
         setLoading(true);
       }
 
       try {
-        const response = await api.get<Organization>(`/organizations/${orgSlug}`);
-        setOrganization(response.data);
+        if (explicitSlug) {
+          const response = await api.get<Organization>(`/organizations/${explicitSlug}`);
+          if (!cancelled) setOrganization(response.data);
+        } else {
+          const tenant = await api.resolveTenant();
+          if (!cancelled) setOrganization(tenant.organization as Organization);
+        }
       } catch (err: unknown) {
+        if (cancelled) return;
         console.error('Failed to fetch organization:', err);
         const message = err instanceof Error ? err.message : 'Failed to load organization';
         if (message.includes('not found') || message.includes('404')) {
           setError('Organization not found');
-          navigate(fallbackPath, { replace: true });
+          if (fallbackPath) {
+            navigate(fallbackPath, { replace: true });
+          }
         } else {
           setError(message);
         }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     fetchOrganization();
-  }, [fallbackPath, navigate, orgSlug, organization?.slug, setError, setLoading, setOrganization]);
 
-  // Show loading state
-  if (isLoading) {
+    return () => {
+      cancelled = true;
+    };
+  }, [explicitSlug, fallbackPath, navigate, organization?.slug, setError, setLoading, setOrganization]);
+
+  if (isLoading && !organization) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
@@ -73,7 +85,6 @@ export function OrganizationProvider({
     );
   }
 
-  // Show error state
   if (error && !organization) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
@@ -83,17 +94,21 @@ export function OrganizationProvider({
           </div>
           <h1 className="text-2xl font-bold text-gray-900 mb-3">Organization Not Found</h1>
           <p className="text-gray-500 mb-8 leading-relaxed">
-            We couldn't find the organization you're looking for. It may have been moved or the URL might be incorrect.
+            We could not find an organization configured for this address. Check the URL or contact your event organizer.
           </p>
           <button
             onClick={() => navigate('/')}
-            className="px-6 py-3 bg-brand-600 text-white rounded-xl font-semibold hover:bg-brand-700 transition-all shadow-lg shadow-brand/25 hover:shadow-brand/40"
+            className="px-6 py-3 bg-brand-600 text-white rounded-xl font-semibold hover:bg-brand-700 transition-all shadow-lg"
           >
             Go Home
           </button>
         </div>
       </div>
     );
+  }
+
+  if (isPublicRoute && organization?.offseason_enabled) {
+    return <OffseasonPage organization={organization} />;
   }
 
   return <>{children}</>;
