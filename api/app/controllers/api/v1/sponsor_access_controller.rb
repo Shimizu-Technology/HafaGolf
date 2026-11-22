@@ -16,23 +16,15 @@ module Api
           sponsors = sponsors.joins(:tournament).where(tournaments: { organization_id: Current.organization.id })
         end
 
-        if sponsors.empty?
-          if Current.organization.present? && Features.for(Current.organization).disabled?(:sponsors)
-            require_feature!(:sponsors, organization: Current.organization)
-            return
-          end
-
-          render json: { message: "If that email is associated with a sponsor account, you will receive an access link." }
-          return
-        end
-
+        # Filter to sponsors on tournaments where the sponsors feature is enabled.
+        # Always return the same generic 200 message when no enabled sponsors match
+        # so request_link never acts as an email-enumeration oracle.
         enabled_sponsors = sponsors.select do |sponsor|
           Features.for(sponsor.tournament&.organization, sponsor.tournament).enabled?(:sponsors)
         end
 
         if enabled_sponsors.empty?
-          first_tournament = sponsors.first.tournament
-          require_feature!(:sponsors, organization: first_tournament&.organization, tournament: first_tournament)
+          render json: { message: "If that email is associated with a sponsor account, you will receive an access link." }
           return
         end
 

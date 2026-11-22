@@ -341,13 +341,10 @@ module Api
             tournament_updates = { config: config }
 
             if tournament_input.key?('raffle')
-              if tournament_input['raffle'].nil?
-                # Inherit from org default when tournament override is cleared
-                org_raffle = Features.for(organization).enabled?(:raffle)
-                tournament_updates[:raffle_enabled] = org_raffle
-              else
-                tournament_updates[:raffle_enabled] = tournament_input['raffle']
-              end
+              # When clearing a tournament override to nil ("inherit"), set legacy raffle_enabled = true
+              # so Features#compute_resolved defers cleanly to the organization setting even if the org
+              # later re-enables raffle.
+              tournament_updates[:raffle_enabled] = tournament_input['raffle'].nil? ? true : tournament_input['raffle']
             end
 
             tournament.update!(tournament_updates)
@@ -373,20 +370,22 @@ module Api
         attrs = organization_params.to_h
         if attrs.key?('settings') && attrs['settings'].is_a?(Hash)
           incoming_settings = attrs['settings'].deep_stringify_keys
-          if incoming_settings.key?('features')
-            normalized_features = normalize_feature_input(incoming_settings['features'])
-            if normalized_features == :invalid
-              return render json: { errors: ['Features payload must be an object'] }, status: :unprocessable_entity
-            end
-            feature_errors = GolfFeaturesCatalog.validate_overrides(normalized_features, scope: :organization)
-            if feature_errors.any?
-              return render json: { errors: feature_errors }, status: :unprocessable_entity
-            end
-            incoming_settings['features'] = normalized_features.compact
-          elsif organization.settings.is_a?(Hash) && organization.settings.key?('features')
+          # /admin/organizations/:slug/features is the sole owner of settings["features"];
+          # strip incoming features so generic settings saves cannot clobber concurrent feature edits.
+          incoming_settings.delete('features')
+          if organization.settings.is_a?(Hash) && organization.settings.key?('features')
             incoming_settings['features'] = organization.settings['features']
           end
           attrs['settings'] = incoming_settings
+        end
+
+        if attrs.key?('offseason_enabled')
+          offseason_value = ActiveModel::Type::Boolean.new.cast(attrs['offseason_enabled'])
+          current_settings = (attrs['settings'] || organization.settings || {}).deep_dup.deep_stringify_keys
+          if current_settings['features'].is_a?(Hash) && current_settings['features'].key?('offseason_mode')
+            current_settings['features'] = current_settings['features'].merge('offseason_mode' => offseason_value)
+            attrs['settings'] = current_settings
+          end
         end
 
         if organization.update(attrs)

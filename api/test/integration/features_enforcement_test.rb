@@ -178,9 +178,23 @@ class FeaturesEnforcementTest < ActionDispatch::IntegrationTest
          headers: @admin_headers
     assert_feature_disabled_response("sponsors")
 
-    post "/api/v1/sponsor_access/request_link",
-         params: { email: @sponsor.login_email }
-    assert_feature_disabled_response("sponsors")
+    # request_link returns generic 200 without sending email or rotating token (no email-enumeration oracle)
+    original_token = @sponsor.reload.access_token
+    sent_count = 0
+    stub = ->(sponsor:, token:) { sent_count += 1; { success: true } }
+    original_send = SponsorAccessEmailService.method(:send_access_link)
+    SponsorAccessEmailService.define_singleton_method(:send_access_link, stub)
+    begin
+      post "/api/v1/sponsor_access/request_link",
+           params: { email: @sponsor.login_email }
+    ensure
+      SponsorAccessEmailService.define_singleton_method(:send_access_link, original_send)
+    end
+    assert_response :success
+    assert_equal "If that email is associated with a sponsor account, you will receive an access link.",
+                 JSON.parse(response.body)["message"]
+    assert_equal 0, sent_count
+    assert_equal original_token, @sponsor.reload.access_token
 
     get "/api/v1/sponsor_access/verify",
         params: { token: @sponsor_access_token }
@@ -246,16 +260,30 @@ class FeaturesEnforcementTest < ActionDispatch::IntegrationTest
     assert_equal true, admin_t.dig("features", "raffle")
     assert_equal false, admin_t.dig("features", "live_scoring")
 
-    # Updating unrelated org settings preserves settings["features"]
+    # Updating org settings preserves server settings["features"] even if stale features are sent,
+    # and syncs offseason_mode when offseason_enabled changes
     patch "/api/v1/admin/organizations/#{@org.slug}",
-          params: { organization: { name: "Features Club Updated", settings: { homepage_tagline: "Welcome" } } },
+          params: {
+            organization: {
+              name: "Features Club Updated",
+              offseason_enabled: false,
+              settings: {
+                homepage_tagline: "Welcome",
+                features: { raffle: true, donations: false }
+              }
+            }
+          },
           headers: @admin_headers,
           as: :json
     assert_response :success
     assert_equal false, @org.reload.settings.dig("features", "raffle")
     assert_equal true, @org.settings.dig("features", "donations")
+    assert_equal false, @org.offseason_enabled
+    assert_equal false, @org.settings.dig("features", "offseason_mode")
+    assert_equal false, Features.for(@org).enabled?(:offseason_mode)
 
-    # Clearing tournament override with null reverts to org default
+    # Clearing tournament override with null reverts to org default (false), and later re-enabling
+    # raffle at the org level allows the tournament to inherit true cleanly (P1 regression)
     patch "/api/v1/admin/organizations/#{@org.slug}/features",
           params: { tournament_id: @tournament.id, tournament_features: { raffle: nil } },
           headers: @admin_headers,
@@ -264,10 +292,33 @@ class FeaturesEnforcementTest < ActionDispatch::IntegrationTest
     cleared_t = JSON.parse(response.body)["tournaments"].find { |t| t["id"] == @tournament.id }
     assert_equal false, cleared_t.dig("features", "raffle")
     assert_not cleared_t.fetch("feature_overrides").key?("raffle")
+    assert_equal false, Features.for(@org.reload, @tournament.reload).enabled?(:raffle)
+
+    patch "/api/v1/admin/organizations/#{@org.slug}/features",
+          params: { organization_features: { raffle: true } },
+          headers: @admin_headers,
+          as: :json
+    assert_response :success
+    assert_equal true, Features.for(@org.reload, @tournament.reload).enabled?(:raffle)
+    get "/api/v1/tournaments/#{@tournament.id}/raffle/board"
+    assert_response :success
 
     # Reject unknown feature key
     patch "/api/v1/admin/organizations/#{@org.slug}/features",
           params: { organization_features: { bogus_feature: true } },
+          headers: @admin_headers,
+          as: :json
+    assert_response :unprocessable_entity
+
+    # Reject non-boolean feature values
+    patch "/api/v1/admin/organizations/#{@org.slug}/features",
+          params: { organization_features: { raffle: "definitely" } },
+          headers: @admin_headers,
+          as: :json
+    assert_response :unprocessable_entity
+
+    patch "/api/v1/admin/organizations/#{@org.slug}/features",
+          params: { tournament_id: @tournament.id, tournament_features: { live_scoring: 123 } },
           headers: @admin_headers,
           as: :json
     assert_response :unprocessable_entity

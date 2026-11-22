@@ -778,6 +778,9 @@ export const OrgSettingsPage: React.FC = () => {
       const token = await getToken();
       if (!token) throw new Error('Not authenticated');
 
+      const restOrgSettings = { ...(organization.settings || {}) };
+      delete restOrgSettings.features;
+
       const orgRes = await fetch(
         `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}`,
         {
@@ -791,7 +794,7 @@ export const OrgSettingsPage: React.FC = () => {
               contact_phone: formData.contact_phone,
               website_url: formData.website_url,
               settings: {
-                ...(organization.settings || {}),
+                ...restOrgSettings,
                 homepage_tagline: formData.homepage_tagline,
                 homepage_mission: formData.homepage_mission,
                 homepage_stats: formData.homepage_stats.filter(s => s.value || s.label),

@@ -10,7 +10,7 @@ import {
   Sliders,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useAuthToken } from '../hooks/useAuthToken';
+import { api } from '../services/api';
 import { useOrganizationStore } from '../stores/organizationStore';
 import {
   getUnmetDependencies,
@@ -26,8 +26,6 @@ interface OrgFeaturesPanelProps {
   onFeaturesUpdated?: (data: OrganizationFeaturesResponse) => void;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-
 const CATEGORY_ICONS: Record<FeatureCategory, React.ComponentType<{ className?: string }>> = {
   fundraising: HandCoins,
   event_day: Flag,
@@ -39,7 +37,6 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
   organizationSlug,
   onFeaturesUpdated,
 }) => {
-  const { getToken } = useAuthToken();
   const [data, setData] = useState<OrganizationFeaturesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,16 +49,7 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const token = await getToken();
-      const res = await fetch(
-        `${API_BASE_URL}/api/v1/admin/organizations/${encodeURIComponent(organizationSlug)}/features`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || 'Failed to load platform features');
-      }
-      const payload: OrganizationFeaturesResponse = await res.json();
+      const payload = await api.getOrganizationFeatures(organizationSlug);
       setData(payload);
       setSelectedTournamentId((prev) => {
         if (prev && payload.tournaments.some((t) => t.id === prev)) return prev;
@@ -73,7 +61,7 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [getToken, organizationSlug]);
+  }, [organizationSlug]);
 
   useEffect(() => {
     fetchFeatures();
@@ -123,23 +111,7 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
   ) => {
     setSavingKey(key);
     try {
-      const token = await getToken();
-      const res = await fetch(
-        `${API_BASE_URL}/api/v1/admin/organizations/${encodeURIComponent(organizationSlug)}/features`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        }
-      );
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(body.error || body.errors?.[0] || 'Failed to update feature');
-      }
-      const updated = body as OrganizationFeaturesResponse;
+      const updated = await api.updateOrganizationFeatures(organizationSlug, payload);
       setData(updated);
       syncStores(updated);
       toast.success(successMessage);
