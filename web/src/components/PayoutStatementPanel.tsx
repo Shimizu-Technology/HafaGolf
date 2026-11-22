@@ -48,6 +48,7 @@ export function PayoutStatementPanel({ tournamentId }: PayoutStatementPanelProps
   const [payoutBank, setPayoutBank] = useState('');
   const [payoutNotes, setPayoutNotes] = useState('');
   const [payoutMarkPaid, setPayoutMarkPaid] = useState(true);
+  const [payoutIdempotencyKey, setPayoutIdempotencyKey] = useState<string | null>(null);
 
   const [voidingId, setVoidingId] = useState<string | null>(null);
   const [voidReason, setVoidReason] = useState('');
@@ -124,9 +125,13 @@ export function PayoutStatementPanel({ tournamentId }: PayoutStatementPanelProps
     setMessage(null);
     try {
       const key =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        payoutIdempotencyKey ||
+        (typeof crypto !== 'undefined' && 'randomUUID' in crypto
           ? crypto.randomUUID()
-          : `payout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          : `payout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+      if (!payoutIdempotencyKey) {
+        setPayoutIdempotencyKey(key);
+      }
       const res = await api.createTournamentPayout(tournamentId, {
         amount_cents: Math.round(parsed * 100),
         provider: payoutProvider,
@@ -139,6 +144,7 @@ export function PayoutStatementPanel({ tournamentId }: PayoutStatementPanelProps
       });
       setData(res);
       setShowPayoutForm(false);
+      setPayoutIdempotencyKey(null);
       setPayoutDollars('');
       setPayoutRef('');
       setPayoutNotes('');
@@ -372,12 +378,16 @@ export function PayoutStatementPanel({ tournamentId }: PayoutStatementPanelProps
                   Finalize v{data.settlement.version}
                 </button>
               )}
-              {data.settlement && remainingCapacity > 0 && (
+              {data.settlement &&
+                data.settlement.status === 'finalized' &&
+                !data.settlement.ledger_changed_since_calculation &&
+                remainingCapacity > 0 && (
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => {
                     setPayoutDollars((remainingCapacity / 100).toFixed(2));
+                    setPayoutIdempotencyKey(null);
                     setShowPayoutForm((prev) => !prev);
                   }}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-gray-800 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg disabled:opacity-50"
@@ -403,7 +413,10 @@ export function PayoutStatementPanel({ tournamentId }: PayoutStatementPanelProps
                     min="0.01"
                     required
                     value={payoutDollars}
-                    onChange={(e) => setPayoutDollars(e.target.value)}
+                    onChange={(e) => {
+                      setPayoutDollars(e.target.value);
+                      setPayoutIdempotencyKey(null);
+                    }}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white"
                   />
                 </div>
@@ -411,7 +424,10 @@ export function PayoutStatementPanel({ tournamentId }: PayoutStatementPanelProps
                   <label className="block text-xs font-medium text-gray-700 mb-1">Method</label>
                   <select
                     value={payoutProvider}
-                    onChange={(e) => setPayoutProvider(e.target.value as 'check' | 'manual' | 'ach')}
+                    onChange={(e) => {
+                      setPayoutProvider(e.target.value as 'check' | 'manual' | 'ach');
+                      setPayoutIdempotencyKey(null);
+                    }}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white"
                   >
                     <option value="check">Check</option>
@@ -471,7 +487,10 @@ export function PayoutStatementPanel({ tournamentId }: PayoutStatementPanelProps
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowPayoutForm(false)}
+                    onClick={() => {
+                      setShowPayoutForm(false);
+                      setPayoutIdempotencyKey(null);
+                    }}
                     className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded-lg"
                   >
                     Cancel

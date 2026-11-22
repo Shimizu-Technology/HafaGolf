@@ -68,8 +68,8 @@ module Settlements
             safe_cell(item[:label]),
             safe_cell(item[:email]),
             item[:payment_status],
-            item[:payment_method],
-            item[:stripe_account_origin],
+            safe_cell(item[:payment_method]),
+            safe_cell(item[:stripe_account_origin]),
             dollars(item[:gross_cents]),
             dollars(item[:refund_cents]),
             dollars(item[:processing_fee_cents]),
@@ -90,7 +90,8 @@ module Settlements
       str = value.to_s
       return "" if str.empty?
 
-      if FORMULA_PREFIXES.include?(str[0]) || str.start_with?("\t", "\r")
+      stripped = str.lstrip
+      if FORMULA_PREFIXES.include?(str[0]) || FORMULA_PREFIXES.include?(stripped[0]) || str.start_with?("\t", "\r")
         "'#{str}"
       else
         str

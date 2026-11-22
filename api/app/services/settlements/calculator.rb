@@ -101,39 +101,50 @@ module Settlements
 
       platform_raffle_charges = []
       direct_raffle_totals = { count: 0, gross_cents: 0 }
+      raffle_by_intent = {}
 
       raffle_tickets.each do |ticket|
         price = ticket.price_cents.to_i
         next if price <= 0
 
         if platform_collected_raffle_ticket?(ticket)
-          fee_cents = estimate_stripe_fee_cents(price)
-          platform_raffle_charges << {
-            id: ticket.id,
-            amount_cents: price,
-            refund_cents: 0,
-            fee_cents: fee_cents,
-            fee_source: "estimated"
-          }
-          line_items << {
-            source_type: "raffle",
-            source_id: ticket.id,
-            label: "Raffle #{ticket.display_number} (#{ticket.purchaser_display})",
-            email: ticket.purchaser_email,
-            payment_status: ticket.payment_status,
-            payment_method: ticket.payment_method,
-            stripe_account_origin: nil,
-            gross_cents: price,
-            refund_cents: 0,
-            processing_fee_cents: fee_cents,
-            fee_source: "estimated",
-            paid_at: ticket.purchased_at&.iso8601,
-            refunded_at: nil
-          }
-          digest_rows << ["raffle_ticket", ticket.id, ticket.payment_status, price, ticket.payment_method]
+          intent_key = ticket.stripe_payment_intent_id.to_s
+          raffle_by_intent[intent_key] ||= []
+          raffle_by_intent[intent_key] << ticket
         elsif ticket.payment_status == "paid"
           direct_raffle_totals[:count] += 1
           direct_raffle_totals[:gross_cents] += price
+        end
+      end
+
+      raffle_by_intent.each do |intent_id, tickets|
+        batch_gross = tickets.sum { |t| t.price_cents.to_i }
+        batch_refund = tickets.sum { |t| t.payment_status == "refunded" ? t.price_cents.to_i : 0 }
+        batch_fee = estimate_stripe_fee_cents(batch_gross)
+        platform_raffle_charges << {
+          id: intent_id,
+          amount_cents: batch_gross,
+          refund_cents: batch_refund,
+          fee_cents: batch_fee,
+          fee_source: "estimated"
+        }
+        line_items << {
+          source_type: "raffle",
+          source_id: tickets.first.id,
+          label: tickets.size == 1 ? "Raffle #{tickets.first.display_number} (#{tickets.first.purchaser_display})" : "Raffle x#{tickets.size} (#{tickets.first.purchaser_display})",
+          email: tickets.first.purchaser_email,
+          payment_status: batch_refund == batch_gross ? "refunded" : "paid",
+          payment_method: "stripe",
+          stripe_account_origin: "platform_live",
+          gross_cents: batch_gross,
+          refund_cents: batch_refund,
+          processing_fee_cents: batch_fee,
+          fee_source: "estimated",
+          paid_at: tickets.first.purchased_at&.iso8601,
+          refunded_at: nil
+        }
+        tickets.each do |t|
+          digest_rows << ["raffle_ticket", t.id, t.payment_status, t.price_cents.to_i, t.stripe_payment_intent_id]
         end
       end
 
@@ -141,10 +152,11 @@ module Settlements
       reg_refunds = platform_reg_charges.sum { |c| c[:refund_cents] }
       reg_fees = platform_reg_charges.sum { |c| c[:fee_cents] }
       raffle_gross = platform_raffle_charges.sum { |c| c[:amount_cents] }
+      raffle_refunds = platform_raffle_charges.sum { |c| c[:refund_cents] }
       raffle_fees = platform_raffle_charges.sum { |c| c[:fee_cents] }
 
       gross_cents = reg_gross + raffle_gross
-      refund_cents = reg_refunds
+      refund_cents = reg_refunds + raffle_refunds
       processing_fee_cents = reg_fees + raffle_fees
 
       billable_registrant_count = platform_reg_charges.count { |c| c[:active_paid] }
@@ -239,14 +251,15 @@ module Settlements
       return false if origin.start_with?("client_processor:") || origin.start_with?("legacy_")
       return true if origin.start_with?("platform_")
 
-      # Legacy/pre-tag Stripe charges on an org configured for platform_collect
-      @payment_config.platform_collect? && golfer.payment_method == "stripe"
+      # Never count admin-entered payment_method == "stripe" without proof of a Stripe charge.
+      # Require a verified Stripe payment_intent_id when origin tag is absent on a platform_collect org.
+      @payment_config.platform_collect? && golfer.stripe_payment_intent_id.present?
     end
 
     def platform_collected_raffle_ticket?(ticket)
-      return false unless ticket.payment_status == "paid"
+      return false unless ticket.payment_status.in?(%w[paid refunded])
 
-      @payment_config.platform_collect? && ticket.payment_method == "stripe"
+      @payment_config.platform_collect? && ticket.stripe_payment_intent_id.present?
     end
 
     def registration_charge_cents(golfer)

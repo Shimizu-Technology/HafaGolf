@@ -371,6 +371,181 @@ class SettlementsAndPayoutsTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "CHK-1042"
   end
 
+  test "excludes admin-entered stripe records without payment_intent and groups raffle fees by intent" do
+    @org_a.organization_payment_config.update!(
+      platform_fee_flat_cents: 0,
+      platform_fee_per_registrant_cents: 0,
+      platform_fee_cap_cents: nil
+    )
+
+    # Admin manually typed payment_method='stripe' with NO stripe_account_origin and NO stripe_payment_intent_id
+    Golfer.create!(
+      tournament: @tournament_a,
+      name: "  =CMD() Spoofed Stripe",
+      email: "spoof@example.com",
+      phone: "671-555-0301",
+      team_category: "Co-Ed",
+      payment_type: "pay_on_day",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 15_000,
+      registration_status: "confirmed",
+      waiver_accepted_at: Time.current,
+      paid_at: Time.current
+    )
+
+    # Admin manually created raffle ticket with payment_method='stripe' and NO payment_intent_id
+    @tournament_a.raffle_tickets.create!(
+      ticket_number: "TST-0001",
+      sequence_number: 1,
+      purchaser_name: "Manual Raffle",
+      purchaser_phone: "+16715550301",
+      price_cents: 1_000,
+      payment_status: "paid",
+      payment_method: "stripe",
+      purchased_at: Time.current
+    )
+
+    # Real platform-collected raffle batch: 3 x $10 tickets sharing ONE stripe_payment_intent_id (one refunded)
+    3.times do |i|
+      @tournament_a.raffle_tickets.create!(
+        ticket_number: "TST-001#{i}",
+        sequence_number: 10 + i,
+        purchaser_name: "Real Raffle Buyer",
+        purchaser_phone: "+16715550302",
+        price_cents: 1_000,
+        payment_status: i == 2 ? "refunded" : "paid",
+        payment_method: "stripe",
+        stripe_payment_intent_id: "pi_raffle_batch_1",
+        purchased_at: Time.current
+      )
+    end
+
+    result = Settlements::Calculator.call(@tournament_a)
+
+    # Only the 3 real raffle tickets ($30) count as platform-collected; manual stripe golfer & ticket excluded!
+    assert_equal 3_000, result.gross_cents
+    assert_equal 1_000, result.refund_cents
+    assert_equal 2_000, result.net_cents
+    # Grouped Stripe fee on ONE $30 charge: round(3000 * 0.029) + 30 = 87 + 30 = 117c (NOT 3 * 59 = 177c)
+    assert_equal 117, result.processing_fee_cents
+    assert_equal 15_000, result.breakdown_json.dig("direct_collected", "registrations", "gross_cents")
+    assert_equal 1_000, result.breakdown_json.dig("direct_collected", "raffle", "gross_cents")
+
+    # CSV neutralizes leading whitespace before formula trigger
+    Golfer.create!(
+      tournament: @tournament_a,
+      name: "  =CMD() Whitespace",
+      email: "ws@example.com",
+      phone: "671-555-0309",
+      team_category: "Co-Ed",
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 1_000,
+      stripe_account_origin: "platform_live",
+      registration_status: "confirmed",
+      waiver_accepted_at: Time.current,
+      paid_at: Time.current
+    )
+    get "/api/v1/tournaments/#{@tournament_a.id}/settlement/export", headers: auth_headers_for(@org_a_admin)
+    assert_response :success
+    assert_includes response.body, "'  =CMD() Whitespace"
+  end
+
+  test "blocks payouts on drafts or stale finalized statements, rejects mismatched replay, and enforces strict base-10 integers" do
+    @org_a.organization_payment_config.update!(
+      platform_fee_flat_cents: 0,
+      platform_fee_per_registrant_cents: 0,
+      platform_fee_cap_cents: nil
+    )
+
+    g1 = Golfer.create!(
+      tournament: @tournament_a,
+      name: "Guard Golfer",
+      email: "guard@example.com",
+      phone: "671-555-0401",
+      team_category: "Co-Ed",
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 20_000,
+      stripe_fee_cents: 600,
+      stripe_account_origin: "platform_live",
+      registration_status: "confirmed",
+      waiver_accepted_at: Time.current,
+      paid_at: Time.current
+    )
+
+    # Reject non-base-10 / float / overflow adjustment_cents
+    %w[100.5 0x10 12abc 999999999999].each do |bad|
+      post "/api/v1/tournaments/#{@tournament_a.id}/settlement/calculate",
+           params: { adjustment_cents: bad },
+           headers: auth_headers_for(@super_admin)
+      assert_response :unprocessable_entity, "Expected 422 for adjustment_cents=#{bad.inspect}"
+    end
+
+    # Leading-zero string parses strictly as base-10 (10), NOT octal (8)
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/calculate",
+         params: { adjustment_cents: "010" },
+         headers: auth_headers_for(@super_admin)
+    assert_response :success
+    assert_equal 10, JSON.parse(response.body).dig("settlement", "adjustment_cents")
+
+    # Calculate v1 draft
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/calculate",
+         params: { adjustment_cents: 0 },
+         headers: auth_headers_for(@super_admin)
+    assert_response :success
+
+    # Cannot record payout while statement is still draft
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/payouts",
+         params: { amount_cents: 5_000, provider: "check" },
+         headers: auth_headers_for(@super_admin)
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Finalize settlement"
+
+    # Mutate ledger before finalizing -> finalize MUST reject stale draft with 409 Conflict
+    g1.update!(refund_amount_cents: 2_000, refunded_at: Time.current)
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/finalize",
+         headers: auth_headers_for(@super_admin)
+    assert_response :conflict
+
+    # Recalculate and finalize cleanly
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/calculate",
+         params: { adjustment_cents: 0 },
+         headers: auth_headers_for(@super_admin)
+    assert_response :success
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/finalize",
+         headers: auth_headers_for(@super_admin)
+    assert_response :success
+
+    # Record payout with idempotency key
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/payouts",
+         params: { amount_cents: 5_000, provider: "check", idempotency_key: "key-strict-1" },
+         headers: auth_headers_for(@super_admin)
+    assert_response :created
+
+    # Replaying SAME idempotency_key with DIFFERENT amount or provider returns 422
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/payouts",
+         params: { amount_cents: 6_000, provider: "check", idempotency_key: "key-strict-1" },
+         headers: auth_headers_for(@super_admin)
+    assert_response :unprocessable_entity
+
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/payouts",
+         params: { amount_cents: 5_000, provider: "ach", idempotency_key: "key-strict-1" },
+         headers: auth_headers_for(@super_admin)
+    assert_response :unprocessable_entity
+
+    # Late refund invalidates finalized statement -> new payout MUST fail with 409 Conflict
+    g1.update!(refund_amount_cents: 10_000, refunded_at: Time.current)
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/payouts",
+         params: { amount_cents: 5_000, provider: "check", idempotency_key: "key-strict-2" },
+         headers: auth_headers_for(@super_admin)
+    assert_response :conflict
+    assert_includes response.body, "recalculate and finalize"
+  end
+
   private
 
   def auth_headers_for(user)

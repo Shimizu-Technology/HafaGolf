@@ -33,10 +33,13 @@ module Api
                   disposition: "attachment"
       end
 
+      MAX_INT32 = 2_147_483_647
+      MIN_INT32 = -2_147_483_648
+
       # POST /api/v1/tournaments/:tournament_id/settlement/calculate
       def calculate
         adjustment_cents = if params.key?(:adjustment_cents)
-          Integer(params[:adjustment_cents])
+          parse_strict_integer(params[:adjustment_cents], field: "adjustment_cents")
         else
           latest_existing = @tournament.tournament_settlements.latest_first.first
           latest_existing&.draft? ? latest_existing.adjustment_cents : 0
@@ -122,6 +125,14 @@ module Api
             raise ActiveRecord::Rollback
           end
 
+          live_calc = Settlements::Calculator.call(@tournament, adjustment_cents: settlement.adjustment_cents)
+          if settlement.source_digest.present? && live_calc.source_digest != settlement.source_digest
+            render json: {
+              error: "Ledger changed since draft v#{settlement.version} was calculated; recalculate before finalizing"
+            }, status: :conflict
+            raise ActiveRecord::Rollback
+          end
+
           settlement.finalize!(user: current_user)
           log_activity(
             action: "settlement_finalized",
@@ -137,10 +148,7 @@ module Api
 
       # POST /api/v1/tournaments/:tournament_id/settlement/payouts
       def create_payout
-        amount_cents = Integer(params[:amount_cents])
-        if amount_cents <= 0
-          return render json: { error: "amount_cents must be greater than zero" }, status: :unprocessable_entity
-        end
+        amount_cents = parse_strict_integer(params[:amount_cents], field: "amount_cents", min: 1)
 
         provider = params[:provider].to_s.strip.downcase.presence || "check"
         unless TournamentPayout::PROVIDERS.include?(provider)
@@ -161,6 +169,12 @@ module Api
           if idempotency_key.present?
             existing = @tournament.tournament_payouts.find_by(idempotency_key: idempotency_key)
             if existing.present?
+              if existing.amount_cents != amount_cents || existing.provider != provider
+                render json: {
+                  error: "Idempotency key already used with different payout amount or provider"
+                }, status: :unprocessable_entity
+                raise ActiveRecord::Rollback
+              end
               payout = existing
               replayed = true
               next
@@ -169,11 +183,25 @@ module Api
 
           settlement = @tournament.tournament_settlements.latest_first.first
           if settlement.nil?
-            render json: { error: "Calculate a settlement statement before recording payouts" }, status: :unprocessable_entity
+            render json: { error: "Calculate and finalize a settlement statement before recording payouts" }, status: :unprocessable_entity
             raise ActiveRecord::Rollback
           end
 
-          remaining = settlement.remaining_payout_capacity_cents
+          unless settlement.finalized?
+            render json: { error: "Finalize settlement v#{settlement.version} before recording payouts" }, status: :unprocessable_entity
+            raise ActiveRecord::Rollback
+          end
+
+          live_calc = Settlements::Calculator.call(@tournament, adjustment_cents: settlement.adjustment_cents)
+          if settlement.source_digest.present? && live_calc.source_digest != settlement.source_digest
+            render json: {
+              error: "Ledger changed since statement v#{settlement.version} was finalized; recalculate and finalize a new version before recording payouts"
+            }, status: :conflict
+            raise ActiveRecord::Rollback
+          end
+
+          effective_proceeds = [settlement.organizer_proceeds_cents, live_calc.organizer_proceeds_cents].min
+          remaining = [effective_proceeds - settlement.committed_payout_cents, 0].max
           if amount_cents > remaining
             render json: {
               error: "Payout amount (#{format_cents(amount_cents)}) exceeds remaining payable capacity (#{format_cents(remaining)})"
@@ -396,6 +424,26 @@ module Api
         )
       end
 
+      def parse_strict_integer(raw, field:, min: MIN_INT32, max: MAX_INT32)
+        val = case raw
+              when Integer
+                raw
+              when String
+                trimmed = raw.strip
+                raise ArgumentError, "#{field} must be a base-10 integer" unless trimmed.match?(/\A[+-]?\d+\z/)
+
+                Integer(trimmed, 10)
+              else
+                raise ArgumentError, "#{field} must be an integer"
+              end
+
+        if val < min || val > max
+          raise ArgumentError, "#{field} is out of allowed range"
+        end
+
+        val
+      end
+
       def parse_timestamp(raw)
         return nil if raw.blank?
 
@@ -409,16 +457,18 @@ module Api
       end
 
       def log_activity(action:, target:, details:)
-        ActivityLog.create!(
-          organization_id: @tournament.organization_id,
-          tournament_id: @tournament.id,
-          admin_id: current_user&.id,
-          action: action,
-          target_type: target.class.name,
-          target_id: nil,
-          target_name: "#{@tournament.name} (v#{target.respond_to?(:version) ? target.version : target.provider_payout_id.presence || target.provider})",
-          details: details
-        )
+        ActiveRecord::Base.transaction(requires_new: true) do
+          ActivityLog.create!(
+            organization_id: @tournament.organization_id,
+            tournament_id: @tournament.id,
+            admin_id: current_user&.id,
+            action: action,
+            target_type: target.class.name,
+            target_id: nil,
+            target_name: "#{@tournament.name} (v#{target.respond_to?(:version) ? target.version : target.provider_payout_id.presence || target.provider})",
+            details: details
+          )
+        end
       rescue StandardError => e
         Rails.logger.warn("Failed to write settlement ActivityLog: #{e.message}")
       end
