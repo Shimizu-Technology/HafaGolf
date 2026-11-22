@@ -141,6 +141,8 @@ Rails.application.routes.draw do
         get 'raffle/tickets' => 'raffle#tickets'
 
         # Raffle (admin)
+        get 'raffle/draw_readiness' => 'raffle#draw_readiness'
+        post 'raffle/board/clear_spotlight' => 'raffle#clear_spotlight'
         post 'raffle/prizes' => 'raffle#create_prize'
         patch 'raffle/prizes/:id' => 'raffle#update_prize'
         delete 'raffle/prizes/:id' => 'raffle#destroy_prize'

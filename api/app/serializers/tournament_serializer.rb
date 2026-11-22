@@ -33,7 +33,7 @@ class TournamentSerializer < ActiveModel::Serializer
              :raffle_enabled, :raffle_ticket_price_cents, :raffle_draw_time,
              :raffle_description, :raffle_auto_draw,
              :raffle_max_tickets_per_person, :raffle_tickets_per_purchase,
-             :raffle_include_with_registration, :raffle_bundles,
+             :raffle_include_with_registration, :raffle_hold_winner_on_screen, :raffle_bundles,
              # Walk-in
              :walkin_fee, :walkin_registration_open,
              # Sponsor
@@ -139,6 +139,10 @@ class TournamentSerializer < ActiveModel::Serializer
 
   def raffle_include_with_registration
     object.raffle_include_with_registration?
+  end
+
+  def raffle_hold_winner_on_screen
+    object.raffle_hold_winner_on_screen?
   end
 
   def raffle_bundles

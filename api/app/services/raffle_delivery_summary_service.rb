@@ -3,6 +3,20 @@
 class RaffleDeliverySummaryService
   FAILED_STATUSES = %w[failed bounced complained].freeze
   UNCONFIRMED_STATUSES = %w[pending accepted delayed skipped].freeze
+  PLACEHOLDER_NAMES = [
+    "walk-up buyer",
+    "walkup buyer",
+    "unknown"
+  ].freeze
+
+  def self.missing_buyer_name?(purchaser_name, golfer_name = nil)
+    return false if golfer_name.to_s.strip.present?
+
+    cleaned_purchaser = purchaser_name.to_s.strip
+    return true if cleaned_purchaser.blank?
+
+    PLACEHOLDER_NAMES.include?(cleaned_purchaser.downcase)
+  end
 
   def initialize(tournament)
     @tournament = tournament
@@ -18,11 +32,14 @@ class RaffleDeliverySummaryService
       purchaser_email: ticket.purchaser_email,
       purchaser_phone: ticket.purchaser_phone,
       price_cents: ticket.price_cents,
-      payment_status: ticket.payment_status
+      payment_status: ticket.payment_status,
+      purchaser_name: ticket.purchaser_name,
+      golfer_name: ticket.golfer&.name,
+      check_name: true
     )
   end
 
-  def summary_for_attributes(ticket_id:, batch_id:, purchaser_email:, purchaser_phone:, price_cents:, payment_status:)
+  def summary_for_attributes(ticket_id:, batch_id:, purchaser_email:, purchaser_phone:, price_cents:, payment_status:, purchaser_name: nil, golfer_name: nil, check_name: false)
     sms_delivery = latest_delivery_for(ticket_id: ticket_id, batch_id: batch_id, channel: "sms")
     email_delivery = latest_delivery_for(ticket_id: ticket_id, batch_id: batch_id, channel: "email")
 
@@ -34,7 +51,10 @@ class RaffleDeliverySummaryService
       purchaser_email: purchaser_email,
       purchaser_phone: purchaser_phone,
       price_cents: price_cents,
-      payment_status: payment_status
+      payment_status: payment_status,
+      purchaser_name: purchaser_name,
+      golfer_name: golfer_name,
+      check_name: check_name
     )
 
     {
@@ -47,23 +67,31 @@ class RaffleDeliverySummaryService
 
   def needs_attention_ticket_ids
     @needs_attention_ticket_ids ||= begin
-      rows = @tournament.raffle_tickets.active.pluck(
-        :id,
-        :raffle_sale_batch_id,
-        :purchaser_email,
-        :purchaser_phone,
-        :price_cents,
-        :payment_status
-      )
+      rows = @tournament.raffle_tickets
+        .active
+        .left_outer_joins(:golfer)
+        .pluck(
+          "raffle_tickets.id",
+          "raffle_tickets.raffle_sale_batch_id",
+          "raffle_tickets.purchaser_email",
+          "raffle_tickets.purchaser_phone",
+          "raffle_tickets.price_cents",
+          "raffle_tickets.payment_status",
+          "raffle_tickets.purchaser_name",
+          "golfers.name"
+        )
 
-      rows.each_with_object([]) do |(id, batch_id, email, phone, price_cents, payment_status), ids|
+      rows.each_with_object([]) do |(id, batch_id, email, phone, price_cents, payment_status, purchaser_name, golfer_name), ids|
         summary = summary_for_attributes(
           ticket_id: id,
           batch_id: batch_id,
           purchaser_email: email,
           purchaser_phone: phone,
           price_cents: price_cents,
-          payment_status: payment_status
+          payment_status: payment_status,
+          purchaser_name: purchaser_name,
+          golfer_name: golfer_name,
+          check_name: true
         )
         ids << id if summary[:needs_attention]
       end
@@ -145,8 +173,12 @@ class RaffleDeliverySummaryService
     }
   end
 
-  def compute_attention(sms_status:, email_status:, purchaser_email:, purchaser_phone:, price_cents:, payment_status:)
+  def compute_attention(sms_status:, email_status:, purchaser_email:, purchaser_phone:, price_cents:, payment_status:, purchaser_name: nil, golfer_name: nil, check_name: false)
     return [ false, nil ] if payment_status == "voided"
+
+    if check_name && self.class.missing_buyer_name?(purchaser_name, golfer_name)
+      return [ true, "missing_name" ]
+    end
 
     if purchaser_email.blank? && purchaser_phone.blank?
       return [ true, "no_contact" ]
