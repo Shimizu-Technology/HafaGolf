@@ -23,6 +23,7 @@ class OrganizationPaymentConfig < ApplicationRecord
 
   validate :validate_external_https_urls
   validate :reject_platform_secrets_in_tenant_row
+  validate :reject_test_mode_in_production
 
   before_validation :normalize_fields
   before_validation :ensure_webhook_endpoint_token, if: :client_processor?
@@ -173,5 +174,11 @@ class OrganizationPaymentConfig < ApplicationRecord
        )
       errors.add(:encrypted_secret_key, "cannot duplicate platform Stripe credentials")
     end
+  end
+
+  def reject_test_mode_in_production
+    return unless Rails.env.production? && test_mode?
+
+    errors.add(:test_mode, "cannot be enabled in production")
   end
 end

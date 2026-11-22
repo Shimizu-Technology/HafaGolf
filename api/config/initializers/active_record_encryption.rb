@@ -16,8 +16,16 @@ Rails.application.configure do
       ENV["ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT"].presence ||
       "hafagolf_local_dev_test_salt_value_32b"
   else
-    config.active_record.encryption.primary_key = ENV["ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY"]
-    config.active_record.encryption.deterministic_key = ENV["ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY"]
-    config.active_record.encryption.key_derivation_salt = ENV["ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT"]
+    primary = ENV["ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY"].presence
+    deterministic = ENV["ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY"].presence
+    salt = ENV["ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT"].presence
+
+    if ENV["SECRET_KEY_BASE_DUMMY"].blank? && (primary.nil? || deterministic.nil? || salt.nil?)
+      raise "Missing required ACTIVE_RECORD_ENCRYPTION_* environment variables in #{Rails.env}"
+    end
+
+    config.active_record.encryption.primary_key = primary
+    config.active_record.encryption.deterministic_key = deterministic
+    config.active_record.encryption.key_derivation_salt = salt
   end
 end

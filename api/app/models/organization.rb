@@ -79,9 +79,9 @@ class Organization < ApplicationRecord
 
   def effective_payment_config
     organization_payment_config || build_organization_payment_config(
-      payment_mode: "platform_collect",
-      processor_provider: "stripe",
-      test_mode: Rails.env.local? && StripeConfig.platform_secret_key.blank?
+      payment_mode: "offline",
+      processor_provider: "none",
+      test_mode: false
     )
   end
 

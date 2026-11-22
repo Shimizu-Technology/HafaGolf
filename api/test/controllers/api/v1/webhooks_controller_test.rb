@@ -86,14 +86,21 @@ class Api::V1::WebhooksControllerTest < ActionDispatch::IntegrationTest
 
   test "checkout completed webhook marks golfer paid with stripe_account_origin" do
     golfer = golfers(:confirmed_unpaid)
+    golfer.tournament.organization.create_organization_payment_config!(
+      payment_mode: "platform_collect",
+      processor_provider: "stripe",
+      test_mode: false
+    )
     assert_equal "unpaid", golfer.payment_status
 
     payload = {
       id: "evt_checkout_completed",
       type: "checkout.session.completed",
+      livemode: true,
       data: {
         object: {
           id: "cs_completed_123",
+          payment_status: "paid",
           payment_intent: "pi_completed_123",
           amount_total: 12500,
           metadata: { golfer_id: golfer.id.to_s }
@@ -115,13 +122,20 @@ class Api::V1::WebhooksControllerTest < ActionDispatch::IntegrationTest
 
   test "checkout completed webhook confirms pending registration when payment succeeds" do
     golfer = create_pending_golfer
+    golfer.tournament.organization.create_organization_payment_config!(
+      payment_mode: "platform_collect",
+      processor_provider: "stripe",
+      test_mode: false
+    )
 
     payload = {
       id: "evt_pending_checkout_completed",
       type: "checkout.session.completed",
+      livemode: true,
       data: {
         object: {
           id: "cs_pending_123",
+          payment_status: "paid",
           payment_intent: "pi_pending_123",
           metadata: { golfer_id: golfer.id.to_s }
         }
@@ -142,13 +156,20 @@ class Api::V1::WebhooksControllerTest < ActionDispatch::IntegrationTest
 
   test "duplicate checkout completed delivery is idempotent for already paid golfer" do
     golfer = golfers(:confirmed_unpaid)
+    golfer.tournament.organization.create_organization_payment_config!(
+      payment_mode: "platform_collect",
+      processor_provider: "stripe",
+      test_mode: false
+    )
 
     payload = {
       id: "evt_duplicate_delivery",
       type: "checkout.session.completed",
+      livemode: true,
       data: {
         object: {
           id: "cs_duplicate_123",
+          payment_status: "paid",
           payment_intent: "pi_duplicate_123",
           metadata: { golfer_id: golfer.id.to_s }
         }

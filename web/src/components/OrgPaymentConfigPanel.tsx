@@ -139,6 +139,17 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (
+      config?.payment_mode === 'client_processor' &&
+      paymentMode !== 'client_processor' &&
+      (config.has_secret_key || config.has_webhook_secret || config.has_public_key)
+    ) {
+      const confirmed = window.confirm(
+        'Switching away from Client Processor will permanently delete stored Stripe keys and disable the client webhook URL. Continue?'
+      );
+      if (!confirmed) return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -146,7 +157,6 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
       const payload: UpdateOrganizationPaymentConfigInput = {
         payment_mode: paymentMode,
         processor_provider: provider,
-        test_mode: testMode,
         external_checkout_url: externalCheckoutUrl.trim() || null,
         external_walkin_url: externalWalkinUrl.trim() || null,
         external_donation_url: externalDonationUrl.trim() || null,
@@ -154,6 +164,9 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
         payout_bank_name: payoutBankName.trim() || null,
         payout_notes: payoutNotes.trim() || null,
       };
+      if (canEditFees) {
+        payload.test_mode = testMode;
+      }
 
       if (paymentMode === 'client_processor') {
         if (publicKey.trim()) payload.public_key = publicKey.trim();
@@ -181,6 +194,11 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
   };
 
   const handleRotateWebhook = async () => {
+    const confirmed = window.confirm(
+      'Rotating the webhook token immediately invalidates the current Stripe webhook URL until updated in Stripe. Continue?'
+    );
+    if (!confirmed) return;
+
     setRotating(true);
     try {
       const res = await api.rotateOrganizationWebhookToken(organizationSlug);
@@ -371,6 +389,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={secretKey}
                   onChange={(e) => setSecretKey(e.target.value)}
                   placeholder={config?.has_secret_key ? '•••••••• (saved)' : 'sk_live_...'}
@@ -383,6 +402,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={webhookSecret}
                   onChange={(e) => setWebhookSecret(e.target.value)}
                   placeholder={config?.has_webhook_secret ? '•••••••• (saved)' : 'whsec_...'}

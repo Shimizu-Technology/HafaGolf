@@ -225,10 +225,35 @@ module Api
             return
           end
 
-          golfer = existing_golfer || TenantContext.with_platform_access { create_golfer_from_session(session) }
+          golfer = if existing_golfer.present?
+                     existing_golfer
+                   else
+                     unless org_for_adapter.present?
+                       render json: { error: "Session not found" }, status: :not_found
+                       return
+                     end
+
+                     metadata_org_id = session_metadata_value(session.metadata, :organization_id)
+                     if metadata_org_id.blank? || metadata_org_id.to_s != org_for_adapter.id.to_s
+                       Rails.logger.warn(
+                         "Blocked cross-tenant checkout confirm: adapter org=#{org_for_adapter.id} metadata org=#{metadata_org_id.inspect}"
+                       )
+                       render json: { error: "Session not found" }, status: :not_found
+                       return
+                     end
+
+                     TenantContext.with_organization(org_for_adapter.id) do
+                       create_golfer_from_session(session, organization: org_for_adapter)
+                     end
+                   end
 
           unless golfer
             render json: { error: "Could not find or create golfer for this session" }, status: :unprocessable_entity
+            return
+          end
+
+          if org_for_adapter.present? && golfer.tournament.organization_id != org_for_adapter.id
+            render json: { error: "Session not found" }, status: :not_found
             return
           end
 
@@ -367,7 +392,6 @@ module Api
                         tournament.swipe_simple_url.presence ||
                           org_config.external_checkout_url.presence
                       end
-        payment_url ||= ENV["SWIPE_SIMPLE_PAYMENT_URL"].presence
 
         if payment_url.blank?
           render json: { error: "External checkout URL is not configured for this event." }, status: :unprocessable_entity
@@ -446,16 +470,29 @@ module Api
         golfer
       end
 
-      def create_golfer_from_session(session)
-        metadata = session.metadata
-        return nil unless metadata.tournament_id.present? && metadata.golfer_email.present?
+      def session_metadata_value(metadata, key)
+        return nil unless metadata
 
-        tournament = Tournament.find_by(id: metadata.tournament_id)
-        return nil unless tournament
-        if metadata.respond_to?(:organization_id) && metadata.organization_id.present? &&
-           metadata.organization_id.to_s != tournament.organization_id.to_s
-          return nil
+        if metadata.respond_to?(:[])
+          metadata[key] || metadata[key.to_s]
+        elsif metadata.respond_to?(key)
+          metadata.public_send(key)
         end
+      end
+
+      def create_golfer_from_session(session, organization:)
+        return nil unless organization
+
+        metadata = session.metadata
+        tournament_id = session_metadata_value(metadata, :tournament_id)
+        golfer_email = session_metadata_value(metadata, :golfer_email)
+        metadata_org_id = session_metadata_value(metadata, :organization_id)
+        return nil unless tournament_id.present? && golfer_email.present?
+        return nil unless metadata_org_id.present? && metadata_org_id.to_s == organization.id.to_s
+
+        # Strictly scope tournament lookup to the adapter's owning organization
+        tournament = organization.tournaments.find_by(id: tournament_id)
+        return nil unless tournament
 
         golfer = nil
 
@@ -463,7 +500,7 @@ module Api
           tournament.lock!
 
           existing = tournament.golfers.lock
-            .where(email: metadata.golfer_email)
+            .where(email: golfer_email)
             .where.not(registration_status: "cancelled")
             .where.not(registration_source: "admin")
             .first
@@ -473,12 +510,12 @@ module Api
           end
 
           golfer = tournament.golfers.create!(
-            name: metadata.golfer_name,
-            email: metadata.golfer_email,
-            phone: metadata.golfer_phone,
-            mobile: metadata.golfer_mobile.presence,
-            company: metadata.golfer_company.presence,
-            address: metadata.golfer_address.presence,
+            name: session_metadata_value(metadata, :golfer_name),
+            email: golfer_email,
+            phone: session_metadata_value(metadata, :golfer_phone),
+            mobile: session_metadata_value(metadata, :golfer_mobile).presence,
+            company: session_metadata_value(metadata, :golfer_company).presence,
+            address: session_metadata_value(metadata, :golfer_address).presence,
             payment_type: "stripe",
             payment_status: "unpaid",
             waiver_accepted_at: Time.current,

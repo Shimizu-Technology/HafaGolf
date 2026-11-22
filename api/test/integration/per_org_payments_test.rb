@@ -327,6 +327,93 @@ class PerOrgPaymentsTest < ActionDispatch::IntegrationTest
     assert_equal "paid", @golfer_a.reload.payment_status
   end
 
+  test "checkout confirm blocks cross-tenant session forged from Org A client_processor targeting Org B tournament" do
+    @org_a.create_organization_payment_config!(
+      payment_mode: "client_processor",
+      processor_provider: "stripe",
+      test_mode: false,
+      encrypted_public_key: "pk_test_attacker_a",
+      encrypted_secret_key: "sk_test_attacker_a",
+      encrypted_webhook_secret: "whsec_attacker_a"
+    )
+
+    forged_session = Struct.new(:id, :payment_status, :payment_intent, :amount_total, :metadata).new(
+      "cs_forged_cross_org_1",
+      "paid",
+      "pi_forged_1",
+      12_500,
+      {
+        organization_id: @org_b.id.to_s,
+        tournament_id: @tournament_b.id.to_s,
+        golfer_name: "Forged Intruder",
+        golfer_email: "intruder@example.com",
+        golfer_phone: "671-555-9999"
+      }
+    )
+
+    before_count_b = @tournament_b.golfers.count
+
+    with_singleton_method(Stripe::Checkout::Session, :retrieve, ->(_sid, _opts = {}) { forged_session }) do
+      post "/api/v1/checkout/confirm",
+           params: { session_id: "cs_forged_cross_org_1", organization_slug: @org_a.slug },
+           headers: { "X-Tenant-Host" => "unmapped-host.example.com" }
+    end
+
+    assert_response :not_found
+    assert_equal before_count_b, @tournament_b.golfers.reload.count, "Must NEVER create golfer in Org B from Org A session"
+  end
+
+  test "org without payment config defaults fail-closed to offline and org_admin cannot enable platform_collect or test_mode" do
+    fresh_org = Organization.create!(
+      name: "Default Offline Club",
+      slug: "default-offline-#{SecureRandom.hex(3)}"
+    )
+    assert_equal "offline", fresh_org.effective_payment_config.payment_mode
+    assert_equal "none", fresh_org.effective_payment_config.processor_provider
+
+    authenticate_as(@admin_a)
+    patch "/api/v1/admin/organizations/#{@org_a.slug}/payment_config",
+          params: { payment_config: { payment_mode: "platform_collect" } },
+          headers: auth_headers
+    assert_response :forbidden
+
+    patch "/api/v1/admin/organizations/#{@org_a.slug}/payment_config",
+          params: { payment_config: { payment_mode: "offline", test_mode: true } },
+          headers: auth_headers
+    assert_response :forbidden
+  end
+
+  test "unpaid checkout.session.completed webhook does not mark golfer paid" do
+    @org_a.create_organization_payment_config!(
+      payment_mode: "platform_collect",
+      processor_provider: "stripe",
+      test_mode: false
+    )
+    @golfer_a.update!(stripe_checkout_session_id: "cs_unpaid_async_1")
+
+    payload = {
+      id: "evt_unpaid_async_1",
+      type: "checkout.session.completed",
+      livemode: true,
+      data: {
+        object: {
+          id: "cs_unpaid_async_1",
+          payment_status: "unpaid",
+          payment_intent: "pi_async_pending",
+          amount_total: 12_500,
+          metadata: { organization_id: @org_a.id.to_s, golfer_id: @golfer_a.id.to_s }
+        }
+      }
+    }.to_json
+
+    post "/api/v1/webhooks/stripe",
+         params: payload,
+         headers: signed_stripe_headers(payload, ENV["PLATFORM_STRIPE_WEBHOOK_SECRET"])
+
+    assert_response :ok
+    assert_equal "unpaid", @golfer_a.reload.payment_status
+  end
+
   private
 
   def signed_stripe_headers(payload, secret)

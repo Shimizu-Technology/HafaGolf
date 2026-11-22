@@ -118,11 +118,15 @@ module Api
       def dispatch_stripe_event(event, scope_organization_id:, expected_mode:, account_origin: nil)
         case event.type
         when "checkout.session.completed"
+          resolved_origin = account_origin
+          if resolved_origin.nil? && expected_mode == "platform_collect" && event.respond_to?(:livemode) && !event.livemode.nil?
+            resolved_origin = event.livemode ? "platform_live" : "platform_test"
+          end
           handle_checkout_session_completed(
             event.data.object,
             scope_organization_id: scope_organization_id,
             expected_mode: expected_mode,
-            account_origin: account_origin
+            account_origin: resolved_origin
           )
         when "checkout.session.expired"
           handle_checkout_session_expired(event.data.object, scope_organization_id: scope_organization_id)
@@ -155,6 +159,11 @@ module Api
 
       def handle_checkout_session_completed(session, scope_organization_id:, expected_mode:, account_origin:)
         Rails.logger.info("Checkout session completed: #{session.id}")
+
+        if session.respond_to?(:payment_status) && session.payment_status.present? && session.payment_status != "paid"
+          Rails.logger.info("Ignoring checkout.session.completed #{session.id} with payment_status=#{session.payment_status}")
+          return
+        end
 
         scope = scoped_golfer_relation(scope_organization_id)
         golfer = scope.find_by(stripe_checkout_session_id: session.id)

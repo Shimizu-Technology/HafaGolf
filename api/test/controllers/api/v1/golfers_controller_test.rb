@@ -235,6 +235,11 @@ class Api::V1::GolfersControllerTest < ActionDispatch::IntegrationTest
 
   test "refund leaves golfer assigned when Stripe refund fails" do
     tournament = tournaments(:tournament_one)
+    tournament.organization.create_organization_payment_config!(
+      payment_mode: "platform_collect",
+      processor_provider: "stripe",
+      test_mode: false
+    )
     group = groups(:group_two)
     golfer = tournament.golfers.create!(
       name: "Legacy Stripe Refund Failure",

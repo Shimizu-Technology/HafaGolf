@@ -294,12 +294,23 @@ module Api
         end
 
         config = organization.organization_payment_config || organization.build_organization_payment_config
+
+        if !current_user.super_admin?
+          requested_mode = raw[:payment_mode].to_s.strip.downcase
+          if requested_mode == "platform_collect" && config.payment_mode != "platform_collect"
+            return render json: { error: "Only platform super admins can enable platform_collect mode" }, status: :forbidden
+          end
+          if raw.key?(:test_mode) && ActiveModel::Type::Boolean.new.cast(raw[:test_mode]) != config.test_mode
+            return render json: { error: "Only platform super admins can modify test_mode" }, status: :forbidden
+          end
+        end
+
         allowed = %i[
-          payment_mode processor_provider test_mode
+          payment_mode processor_provider
           external_checkout_url external_walkin_url external_donation_url
           payout_payee_name payout_bank_name payout_notes
         ]
-        allowed += %i[platform_fee_flat_cents platform_fee_per_registrant_cents platform_fee_cap_cents] if current_user.super_admin?
+        allowed += %i[test_mode platform_fee_flat_cents platform_fee_per_registrant_cents platform_fee_cap_cents] if current_user.super_admin?
         attrs = raw.permit(*allowed).to_h
 
         target_mode = (attrs["payment_mode"].presence || config.payment_mode || "offline").to_s.strip.downcase
