@@ -31,7 +31,15 @@ class UserInviteEmailService
         from: from_email,
         to: user.email,
         subject: subject,
-        html: invite_html(user: user, invited_by: invited_by, role_label: role_label, org_name: org_name, brand_color: brand_color)
+        html: invite_html(
+          user: user,
+          invited_by: invited_by,
+          role_label: role_label,
+          org_name: org_name,
+          brand_color: brand_color,
+          org_slug: org&.slug,
+          logo_url: org&.logo_url
+        )
       }
       email_payload[:tags] = [ { name: "delivery_id", value: delivery.id.to_s } ] if delivery.present?
 
@@ -77,8 +85,18 @@ class UserInviteEmailService
       ENV["RESEND_FROM_EMAIL"].presence || ENV["MAILER_FROM_EMAIL"].presence
     end
 
-    def login_portal_url
-      OrgUrlBuilder.admin_url("/admin/login")
+    def login_portal_url(org_slug: nil)
+      path = org_slug.present? ? "/admin/login?org=#{CGI.escape(org_slug.to_s)}" : "/admin/login"
+      OrgUrlBuilder.admin_url(path)
+    end
+
+    def safe_https_url(url)
+      return nil if url.blank?
+
+      parsed = URI.parse(url.to_s.strip)
+      parsed.scheme == "https" && parsed.host.present? ? parsed.to_s : nil
+    rescue URI::InvalidURIError
+      nil
     end
 
     def escape(value)
@@ -96,11 +114,17 @@ class UserInviteEmailService
       contrast_with_white >= 4.5 ? hex : "#0f172a"
     end
 
-    def invite_html(user:, invited_by:, role_label: 'admin', org_name: 'HafaGolf', brand_color: '#0f172a')
+    def invite_html(user:, invited_by:, role_label: 'admin', org_name: 'HafaGolf', brand_color: '#0f172a', org_slug: nil, logo_url: nil)
       inviter = escape(invited_by&.name.presence || invited_by&.email.presence || "an administrator")
-      login_url = escape(login_portal_url)
+      login_url = escape(login_portal_url(org_slug: org_slug))
       safe_org_name = escape(org_name)
       safe_color = accessible_brand_color(brand_color)
+      safe_logo = safe_https_url(logo_url)
+      logo_markup = if safe_logo
+        %(<img src="#{escape(safe_logo)}" alt="#{safe_org_name}" style="max-height: 48px; max-width: 180px; margin: 0 auto 12px auto; display: block;" />)
+      else
+        ""
+      end
 
       <<~HTML
         <!doctype html>
@@ -118,6 +142,7 @@ class UserInviteEmailService
                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 600px;">
                     <tr>
                       <td style="background: #{safe_color}; border-radius: 16px 16px 0 0; padding: 24px; text-align: center;">
+                        #{logo_markup}
                         <p style="margin: 0 0 4px 0; color: #ffffff; font-size: 24px; font-weight: 800;">
                           #{safe_org_name}
                         </p>

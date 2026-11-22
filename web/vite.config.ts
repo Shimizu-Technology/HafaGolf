@@ -46,6 +46,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+        globIgnores: ['**/AdminRoutesApp-*.js', '**/admin-*.js'],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/.*\.onrender\.com\/api\/.*/i,
@@ -65,6 +66,18 @@ export default defineConfig({
       }
     })
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/@clerk/')) {
+            return 'admin-clerk';
+          }
+          return undefined;
+        },
+      },
+    },
+  },
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
