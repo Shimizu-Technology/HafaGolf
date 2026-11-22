@@ -267,4 +267,27 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
     assert_equal 30_000, tournament.entry_fee
     assert_equal "volunteer", membership.role
   end
+
+  test "SourceReader encodes libpq read-only options with %20 (never +) and opens a real read-only PG session" do
+    reader = HafagolfMigrations::SourceReader.from_database_url("postgresql://localhost/#{@current_db}")
+    encoded = reader.send(:readonly_connection_url, "postgresql://localhost/#{@current_db}")
+    assert_includes encoded, "options=-c%20default_transaction_read_only%3Don"
+    assert_not_includes encoded, "+"
+
+    # Verify real libpq connection succeeds and enforces read-only transaction mode
+    cfg = ActiveRecord::Base.connection_db_config.configuration_hash
+    host = cfg[:host].presence || "localhost"
+    port = cfg[:port].presence || 5432
+    user_part = cfg[:username].present? ? "#{cfg[:username]}#{cfg[:password].present? ? ":#{cfg[:password]}" : ''}@" : ""
+    live_url = "postgresql://#{user_part}#{host}:#{port}/#{@current_db}"
+
+    live_reader = HafagolfMigrations::SourceReader.from_database_url(live_url)
+    begin
+      assert_equal @current_db, live_reader.database_name
+      ro_setting = live_reader.send(:pg_connection).exec("SHOW default_transaction_read_only").getvalue(0, 0)
+      assert_equal "on", ro_setting
+    ensure
+      live_reader.close
+    end
+  end
 end

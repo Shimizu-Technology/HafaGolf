@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "erb"
 require "uri"
 
 module HafagolfMigrations
@@ -98,7 +99,8 @@ module HafagolfMigrations
       else
         params << ["options", "-c default_transaction_read_only=on"]
       end
-      uri.query = URI.encode_www_form(params)
+      # libpq percent-decodes URI query params and treats literal '+' as '+' rather than space
+      uri.query = params.map { |k, v| "#{ERB::Util.url_encode(k.to_s)}=#{ERB::Util.url_encode(v.to_s)}" }.join("&")
       uri.to_s
     rescue URI::InvalidURIError
       url
