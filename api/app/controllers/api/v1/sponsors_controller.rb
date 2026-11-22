@@ -208,7 +208,13 @@ module Api
           display_label: sponsor.display_label,
           slot_count: sponsor.slot_count,
           login_email: sponsor.login_email,
-          slots_filled: sponsor.sponsor_slots.where.not(player_name: [nil, '']).count
+          slots_filled: sponsor.sponsor_slots.where.not(player_name: [nil, '']).count,
+          sponsor_tier_id: sponsor.sponsor_tier_id,
+          payment_type: sponsor.payment_type,
+          payment_status: sponsor.payment_status,
+          payment_method: sponsor.payment_method,
+          payment_amount_cents: sponsor.payment_amount_cents,
+          paid_at: sponsor.paid_at&.iso8601
         }
       end
     end

@@ -3,6 +3,7 @@
 class Sponsor < ApplicationRecord
   # Associations
   belongs_to :tournament
+  belongs_to :sponsor_tier, optional: true
   has_many :sponsor_slots, dependent: :destroy
   has_many :golfers, dependent: :nullify
   has_many :registrations, dependent: :nullify
@@ -12,18 +13,24 @@ class Sponsor < ApplicationRecord
   # Legacy constant kept for backwards compatibility with scopes/seeds.
   DEFAULT_TIERS = %w[title platinum gold silver bronze hole].freeze
   TIERS = DEFAULT_TIERS
+  PAYMENT_STATUSES = %w[unpaid pending paid refunded expired cancelled].freeze
 
   # Validations
   validates :name, presence: true
   validate :tier_must_be_valid
+  validate :sponsor_tier_matches_tournament
   validate :course_key_must_exist_in_tournament, if: :hole_sponsor?
   validate :hole_number_within_course_range, if: :hole_sponsor?
   validates :hole_number,
             numericality: { only_integer: true, greater_than: 0 },
             allow_nil: true
-  validates :hole_number, presence: true, if: -> { tier == 'hole' }
-  validates :course_key, presence: true, if: -> { tier == 'hole' }
+  validates :hole_number, presence: true, if: -> { tier == 'hole' && sponsor_tier_id.nil? }
+  validates :course_key, presence: true, if: -> { tier == 'hole' && sponsor_tier_id.nil? }
   validates :position, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
+  validates :payment_status, inclusion: { in: PAYMENT_STATUSES }, allow_nil: true
+  validates :payment_amount_cents, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
+  validates :stripe_fee_cents, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
+  validates :refund_amount_cents, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
 
   before_validation :normalize_hole_assignment
 
@@ -36,6 +43,8 @@ class Sponsor < ApplicationRecord
   scope :hole_sponsors, -> { where(tier: 'hole').order(:course_key, :hole_number, :position, :name) }
 
   def tier_display
+    return sponsor_tier.label if sponsor_tier.present?
+
     tier_def = tournament&.sponsor_tier_list&.find { |t| t['key'] == tier }
     return tier_def['label'] if tier_def
 
@@ -70,6 +79,17 @@ class Sponsor < ApplicationRecord
 
   # Auto-sync SponsorSlot records when slot_count changes
   after_save :sync_sponsor_slots
+
+  # Idempotently ensures SponsorSlot rows 1..slot_count exist for this sponsor.
+  def provision_sponsor_slots!
+    target_count = slot_count.to_i
+    return [] if target_count <= 0
+
+    tournament_record = tournament
+    (1..target_count).map do |num|
+      sponsor_slots.find_or_create_by!(slot_number: num, tournament: tournament_record)
+    end
+  end
 
   # Magic link authentication
   ACCESS_TOKEN_EXPIRY = 7.days
@@ -147,9 +167,19 @@ class Sponsor < ApplicationRecord
 
   def tier_must_be_valid
     return if tier.blank?
-    allowed = tournament&.sponsor_tier_keys || DEFAULT_TIERS
-    return if allowed.include?(tier)
+    return if sponsor_tier.present? && sponsor_tier.key.to_s.downcase == tier.to_s.downcase
+
+    allowed = (tournament&.sponsor_tier_keys || DEFAULT_TIERS).map { |k| k.to_s.downcase }
+    return if allowed.include?(tier.to_s.downcase)
+
     errors.add(:tier, "must be one of: #{allowed.join(', ')}")
+  end
+
+  def sponsor_tier_matches_tournament
+    return if sponsor_tier.blank? || tournament_id.blank?
+    return if sponsor_tier.tournament_id == tournament_id
+
+    errors.add(:sponsor_tier_id, "must belong to the same tournament")
   end
 
   def course_key_must_exist_in_tournament
@@ -175,15 +205,14 @@ class Sponsor < ApplicationRecord
 
   def sync_sponsor_slots
     return unless saved_change_to_slot_count?
+    return if payment_status == "pending" && !active?
+
     current_count = sponsor_slots.count
     target_count = slot_count.to_i
 
     if target_count > current_count
       # Add new slots
-      tournament_record = self.tournament
-      (current_count + 1..target_count).each do |num|
-        sponsor_slots.find_or_create_by!(slot_number: num, tournament: tournament_record)
-      end
+      provision_sponsor_slots!
     elsif target_count < current_count
       # Remove extra slots (remove unfilled ones first, then filled ones)
       to_remove = sponsor_slots.order(player_name: :asc).last(current_count - target_count)

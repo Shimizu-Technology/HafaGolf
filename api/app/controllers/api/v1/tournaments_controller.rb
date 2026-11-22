@@ -401,6 +401,8 @@ module Api
           :raffle_max_tickets_per_person, :raffle_tickets_per_purchase,
           :walkin_fee, :walkin_registration_open,
           :sponsor_edit_deadline,
+          :tax_receipt_enabled, :tax_org_name, :tax_org_ein,
+          :fmv_per_player_cents, :tax_receipt_disclaimer,
           :event_schedule, :tournament_info, :payment_instructions,
           :check_in_time,
           :banner_url_override, :logo_url_override,

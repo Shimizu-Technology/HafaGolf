@@ -65,6 +65,7 @@ class ActivityLog < ApplicationRecord
     payout_recorded
     payout_marked_paid
     payout_voided
+    donation_recorded
   ].freeze
 
   validates :action, presence: true, inclusion: { in: ACTIONS }

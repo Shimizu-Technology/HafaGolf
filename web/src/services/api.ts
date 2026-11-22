@@ -343,6 +343,11 @@ export interface Tournament {
   raffle_bundles?: { quantity: number; price_cents: number; label: string }[];
   course_configs?: CourseConfig[];
   sponsor_tiers?: SponsorTier[];
+  tax_receipt_enabled?: boolean;
+  tax_org_name?: string | null;
+  tax_org_ein?: string | null;
+  fmv_per_player_cents?: number;
+  tax_receipt_disclaimer?: string | null;
   features?: FeatureMap;
   feature_overrides?: FeatureMap;
 
@@ -1764,6 +1769,244 @@ export class ApiClient {
     }
     return res.blob();
   }
+
+  // Priced Sponsor Tiers & Online Sponsor Checkout
+  async getSponsorTiers(tournamentId: number): Promise<SponsorTiersListResponse> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/sponsor_tiers`);
+  }
+
+  async createSponsorTier(
+    tournamentId: number,
+    payload: SponsorTierInput
+  ): Promise<{ sponsor_tier: PricedSponsorTier; message: string }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/sponsor_tiers`, {
+      method: 'POST',
+      body: JSON.stringify({ sponsor_tier: payload }),
+    });
+  }
+
+  async updateSponsorTier(
+    tournamentId: number,
+    tierId: number,
+    payload: Partial<SponsorTierInput>
+  ): Promise<{ sponsor_tier: PricedSponsorTier; message: string }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/sponsor_tiers/${tierId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ sponsor_tier: payload }),
+    });
+  }
+
+  async deleteSponsorTier(tournamentId: number, tierId: number): Promise<{ message: string }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/sponsor_tiers/${tierId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async checkoutSponsorTier(
+    tournamentId: number,
+    tierId: number,
+    payload: {
+      name: string;
+      email: string;
+      website_url?: string;
+      description?: string;
+    }
+  ): Promise<SponsorTierCheckoutResponse> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/sponsor_tiers/${tierId}/checkout`, {
+      method: 'POST',
+      body: JSON.stringify({ sponsor: payload }),
+    });
+  }
+
+  // Standalone Donations
+  async getDonationsSummary(tournamentId: number): Promise<DonationSummaryResponse> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/donations/summary`);
+  }
+
+  async checkoutDonation(
+    tournamentId: number,
+    payload: {
+      donor_name: string;
+      donor_email?: string;
+      donor_phone?: string;
+      amount_cents: number;
+      anonymous?: boolean;
+      message?: string;
+    }
+  ): Promise<DonationCheckoutResponse> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/donations/checkout`, {
+      method: 'POST',
+      body: JSON.stringify({ donation: payload }),
+    });
+  }
+
+  async getAdminDonations(tournamentId: number): Promise<AdminDonationsResponse> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/donations`);
+  }
+
+  async createOfflineDonation(
+    tournamentId: number,
+    payload: {
+      donor_name: string;
+      donor_email?: string;
+      donor_phone?: string;
+      amount_cents: number;
+      payment_type?: 'cash' | 'check' | 'offline';
+      payment_method?: string;
+      anonymous?: boolean;
+      message?: string;
+    }
+  ): Promise<{ donation: AdminDonationRecord; tax_receipt: TaxReceiptPayload | null; message: string }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/donations`, {
+      method: 'POST',
+      body: JSON.stringify({ donation: payload }),
+    });
+  }
+}
+
+export interface TaxReceiptPayload {
+  enabled: boolean;
+  applicable: boolean;
+  item_type: 'registration' | 'sponsorship' | 'donation';
+  amount_cents: number;
+  player_count: number;
+  fmv_per_player_cents: number;
+  fmv_cents: number;
+  deductible_cents: number;
+  tax_org_name: string | null;
+  tax_org_ein: string | null;
+  disclaimer: string | null;
+  receipt_copy: string | null;
+}
+
+export interface PricedSponsorTier {
+  id: number;
+  organization_id: string;
+  tournament_id: number;
+  key: string;
+  label: string;
+  description: string | null;
+  price_cents: number;
+  included_player_slots: number;
+  max_quantity: number | null;
+  claimed_count: number;
+  sold_count: number;
+  remaining_quantity: number | null;
+  sold_out: boolean;
+  benefits: string[];
+  online_checkout_enabled: boolean;
+  sort_order: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SponsorTierInput {
+  key: string;
+  label: string;
+  description?: string | null;
+  price_cents: number;
+  included_player_slots: number;
+  max_quantity?: number | null;
+  benefits?: string[];
+  online_checkout_enabled?: boolean;
+  sort_order?: number;
+}
+
+export interface SponsorTiersListResponse {
+  sponsor_tiers: PricedSponsorTier[];
+  payment_mode: string;
+  external_checkout_url: string | null;
+  tax_receipt_enabled: boolean;
+  fmv_per_player_cents: number;
+  tax_org_name: string | null;
+  tax_org_ein: string | null;
+}
+
+export interface SponsorTierCheckoutResponse {
+  checkout_url: string;
+  session_id?: string;
+  payment_mode?: string;
+  external_link?: boolean;
+  test_mode?: boolean;
+  sponsor: {
+    id: number;
+    name: string;
+    tier: string;
+    tier_display: string;
+    sponsor_tier_id: number | null;
+    login_email: string | null;
+    slot_count: number;
+    payment_type: string | null;
+    payment_status: string;
+    payment_amount_cents: number | null;
+  };
+  tax_receipt: TaxReceiptPayload | null;
+}
+
+export interface PublicDonationItem {
+  id: number;
+  display_name: string;
+  anonymous: boolean;
+  amount_cents: number;
+  message: string | null;
+  paid_at: string | null;
+}
+
+export interface DonationSummaryResponse {
+  total_raised_cents: number;
+  donor_count: number;
+  recent_donations: PublicDonationItem[];
+  payment_mode: string;
+  external_donation_url: string | null;
+  tax_receipt_enabled: boolean;
+  tax_org_name: string | null;
+  tax_org_ein: string | null;
+}
+
+export interface DonationCheckoutResponse {
+  checkout_url: string;
+  session_id?: string;
+  payment_mode?: string;
+  external_link?: boolean;
+  test_mode?: boolean;
+  donation: PublicDonationItem;
+  tax_receipt: TaxReceiptPayload | null;
+}
+
+export interface AdminDonationRecord {
+  id: number;
+  organization_id: string;
+  tournament_id: number | null;
+  donor_name: string;
+  donor_email: string | null;
+  donor_phone: string | null;
+  amount_cents: number;
+  tax_deductible_cents: number;
+  payment_type: string;
+  payment_status: string;
+  payment_method: string | null;
+  stripe_account_origin: string | null;
+  stripe_fee_cents: number | null;
+  refund_amount_cents: number;
+  refunded_at: string | null;
+  anonymous: boolean;
+  message: string | null;
+  paid_at: string | null;
+  tax_receipt_sent_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AdminDonationsResponse {
+  donations: AdminDonationRecord[];
+  totals: {
+    total_raised_cents: number;
+    paid_count: number;
+    pending_count: number;
+    refunded_cents: number;
+    stripe_cents: number;
+    offline_cents: number;
+  };
 }
 
 export interface SettlementSummaryNumbers {

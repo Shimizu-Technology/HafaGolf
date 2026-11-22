@@ -6,7 +6,7 @@ import { RevealOnScroll } from '../components/RevealOnScroll';
 import { api, Tournament, Sponsor, SponsorTier } from '../services/api';
 import {
   Calendar, MapPin, Users, DollarSign, Clock,
-  Trophy, AlertCircle, ChevronLeft, ChevronRight, Star, Building2, ExternalLink, Check, Flag, Gift, Ticket
+  Trophy, AlertCircle, ChevronLeft, ChevronRight, Star, Building2, ExternalLink, Check, Flag, Gift, Ticket, Award, Heart
 } from 'lucide-react';
 import { formatDate, formatEventDate } from '../utils/dates';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
@@ -478,6 +478,50 @@ export function OrgTournamentPage() {
                 <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
                   <Ticket className="w-4 h-4" strokeWidth={1.5} />
                   View Raffle Board
+                  <ChevronRight className="w-4 h-4" />
+                </span>
+              </Link>
+            )}
+
+            {/* Sponsor Checkout CTA — only when sponsor_checkout feature is enabled */}
+            {tournament.features?.sponsor_checkout && (
+              <Link
+                to={`/${orgSlug}/tournaments/${tournament.slug}/sponsor`}
+                className={`block ${pack.surfaces.cardClass} p-6 group`}
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl bg-brand-600/10 flex items-center justify-center">
+                    <Award className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
+                  </div>
+                  <h3 className={`${pack.typography.cardTitleClass} text-lg`}>Become a Sponsor</h3>
+                </div>
+                <p className="text-neutral-500 text-sm mb-4">
+                  View sponsorship tiers, included player slots, and reserve your package online.
+                </p>
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
+                  View Sponsor Tiers
+                  <ChevronRight className="w-4 h-4" />
+                </span>
+              </Link>
+            )}
+
+            {/* Donations CTA — only when donations feature is enabled */}
+            {tournament.features?.donations && (
+              <Link
+                to={`/${orgSlug}/tournaments/${tournament.slug}/donate`}
+                className={`block ${pack.surfaces.cardClass} p-6 group`}
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
+                    <Heart className="w-5 h-5 text-accent-600" strokeWidth={1.5} />
+                  </div>
+                  <h3 className={`${pack.typography.cardTitleClass} text-lg`}>Make a Donation</h3>
+                </div>
+                <p className="text-neutral-500 text-sm mb-4">
+                  Can&apos;t play this year? Support the cause directly with an online donation.
+                </p>
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
+                  Donate Now
                   <ChevronRight className="w-4 h-4" />
                 </span>
               </Link>

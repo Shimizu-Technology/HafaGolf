@@ -329,7 +329,7 @@ class Registration < ApplicationRecord
       errors.add(:team_members, "must have unique player positions")
     end
 
-    allow_partial = tournament.allow_partial_teams? || registration_source == "admin" || sponsored?
+    allow_partial = tournament.allow_partial_teams? || registration_source == "admin" || sponsored? || legacy_source.present?
     if !allow_partial && members.size < max_size
       errors.add(:team_members, "must include exactly #{max_size} #{'player'.pluralize(max_size)} (partial teams are not enabled)")
     end
