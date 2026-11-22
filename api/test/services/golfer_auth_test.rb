@@ -25,6 +25,7 @@ class GolferAuthTest < ActiveSupport::TestCase
       name: "John Doe",
       email: "john@example.com",
       phone: "671-555-1234",
+      team_category: "Co-Ed",
       payment_type: "pay_on_day",
       payment_status: "unpaid",
       registration_status: "confirmed",

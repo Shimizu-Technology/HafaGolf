@@ -150,7 +150,8 @@ class ActivityLogTest < ActiveSupport::TestCase
       group_created group_updated group_deleted
       golfer_assigned_to_group golfer_removed_from_group
       settings_updated admin_created admin_deleted
-      payment_link_sent payment_completed employee_status_changed
+      payment_link_sent payment_completed
+      tournament_created raffle_tickets_sold
     ]
     
     expected_actions.each do |action|
@@ -174,10 +175,10 @@ class ActivityLogTest < ActiveSupport::TestCase
     assert log.valid?
   end
 
-  test "employee_status_changed is a valid action" do
+  test "raffle_tickets_sold is a valid action" do
     log = ActivityLog.new(
       admin: admins(:admin_one),
-      action: "employee_status_changed"
+      action: "raffle_tickets_sold"
     )
     assert log.valid?
   end
