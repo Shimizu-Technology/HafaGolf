@@ -29,9 +29,9 @@ No step in Sections 3–6 below may be executed without Leon's explicit confirma
 1. **Gate A — Staging Activation:** Create Neon staging branch, Render staging API (optional/suspendable), Netlify branch deploy, and Clerk Dev keys.
 2. **Gate B — Read-Only DB Snapshots for Rehearsal:** Export read-only `pg_dump` snapshots of MAW (`make-a-wish-guam`) and/or GIAA (`giaa-tournament-api`) into isolated staging source databases (original production DBs are never mutated or queried by HafaGolf).
 3. **Gate C — Production Hosting Provisioning:** Create Render `hafagolf-api`, Neon production database + `hafagolf_app` role, Clerk Production app on `golf.shimizu-technology.com`, Netlify production site + Domain Aliases, S3 credentials, Resend/ClickSend webhooks, and Stripe platform live webhook.
-4. **Gate D — Per-Client DNS Cutover:**
+4. **Gate D — Per-Client DNS Cutover & Real Data Move:**
    - `golf.shimizu-technology.com` & `fd-golf.shimizu-technology.com` (Cloudflare DNS) — target Mar 8, 2027 Go/No-Go for Mar 15 FD launch.
-   - `golfforwishes.com` (Square DNS) — target Feb 22, 2027 Go/No-Go for Mar 1 MAW cutover.
+   - `golfforwishes.com` & `www.golfforwishes.com` (Square DNS) — **MAW runs its 2027 event (date unconfirmed, likely Thu Apr 29 or Fri Apr 30, 2027) on HafaGolf** (Leon decision, Nov 22, 2026). Keep **Feb 22, 2027 hard Go/No-Go** for cutover ahead of the event (target Mar 1, 2027). Path: staging rehearsal with a copy of MAW data (Gate B) → raffle draw rehearsal with Mr. Eric's team → production switch (Gate C hosting + Gate D real data move & DNS switch). **Fallback if Go/No-Go fails:** paper raffle tickets at the event on MAW's current app (`make-a-wish-guam` stays untouched — do not modify or backport raffle code to it).
    - `giaa-tournament.com` — post-GIAA 2027 event (or only after full GIAA staging sign-off).
 5. **Gate E — Legacy Retirement (60 days post-event):** Archive legacy DB dumps/S3 backups, suspend old Render API/DB instances, and archive legacy repos only after Leon's explicit OK.
 
@@ -126,13 +126,23 @@ Validate the core Render + Netlify variables before any staging or production de
    RAILS_ENV=production DATABASE_APP_URL="" EXPECTED_DB_NAME="<prod_db_name>" bundle exec rails hafagolf:seed:fd_alumni
    ```
 
-### 5.3 Square DNS (`golfforwishes.com`) — Make-A-Wish Cutover (Feb 22 Go/No-Go → Mar 1 Target)
-1. **Pre-check:** Inspect Square DNS for all existing **MX / TXT / SPF / DKIM** records — **never alter or delete email records**. Check if HSTS is active on `golfforwishes.com`.
-2. **T-48h:** Lower TTL on `@` and `www` to `300s`. Confirm `golfforwishes.com` and `www.golfforwishes.com` are registered in `organization_domains` (with `golfforwishes.com` primary).
-3. **Cutover window (off-peak Guam time, zero active registrations):**
+### 5.3 Square DNS (`golfforwishes.com`) — Make-A-Wish Cutover (Feb 22, 2027 Go/No-Go → Before Late-April 2027 Event)
+
+> **Leon Decision (Nov 22, 2026):** MAW runs its 2027 event (date still unconfirmed, likely **Thu Apr 29 or Fri Apr 30, 2027**) on **HafaGolf**, not on `make-a-wish-guam`. All raffle fixes stay in **HafaGolf only** — do **not** modify `make-a-wish-guam`.
+>
+> **Required Pre-Cutover Path (every production step requires Leon's explicit OK at the time — list only, never run without approval):**
+> 1. **Staging rehearsal with a copy of MAW data (Leon Gate B):** Read-only `pg_dump` → isolated staging source DB → idempotent `hafagolf:migrate:maw` + 100% count/financial verification + S3 media copy + 2026→2027 clone check (see `docs/MIGRATION_REHEARSAL_PLAN.md`).
+> 2. **Raffle draw rehearsal with Mr. Eric's team (on HafaGolf staging):** Live Guam SMS carrier test (IT&E, Docomo Pacific, GTA) + full admin QA & walkthrough of POS sale, double-entry phone confirmation, delivery status + edit/resend, pre-draw readiness check, and projector draw screen showing the winner's name.
+> 3. **Production switch (Leon Gate C hosting + Gate D real data move & DNS):** Provision HafaGolf production hosting (Section 3–5.2), execute the final data move below, and point `golfforwishes.com` (+ `www`) at HafaGolf before the event (target **Mar 1, 2027**, gated on **Feb 22, 2027 Go/No-Go**).
+>
+> **Fallback if Feb 22, 2027 Go/No-Go fails:** Run the 2027 event on MAW's existing `make-a-wish-guam` app using **paper raffle tickets at the event**. Do **not** build or backport raffle changes into `make-a-wish-guam`.
+
+1. **Pre-check (before Gate D cutover):** Inspect Square DNS for all existing **MX / TXT / SPF / DKIM** records — **never alter or delete email records**. Check if HSTS is active on `golfforwishes.com`.
+2. **T-48h (Leon Gate D approved):** Lower TTL on `@` and `www` to `300s`. Confirm `golfforwishes.com` and `www.golfforwishes.com` are registered in `organization_domains` (with `golfforwishes.com` primary).
+3. **Production switch window (off-peak Guam time, zero active registrations, Leon Gate C + D approved):**
    - Put the legacy MAW deployment in maintenance/read-only mode.
-   - Take the final read-only `pg_dump` snapshot.
-   - Run the idempotent MAW importer + JSON verification report (100% row-count & cent-exact financial match required — see `docs/MIGRATION_REHEARSAL_PLAN.md`).
+   - Take the final read-only `pg_dump` snapshot (real data move — never mutate source).
+   - Run the idempotent MAW importer + JSON verification report (100% row-count & cent-exact financial match required — see `docs/MIGRATION_REHEARSAL_PLAN.md`) and copy Active Storage S3 blobs.
    - Add `golfforwishes.com` and `www.golfforwishes.com` as Domain Aliases on the HafaGolf Netlify site.
    - Update Square DNS: `@` `A` → `75.2.60.5` (Netlify load balancer), `www` `CNAME` → `<hafagolf-site>.netlify.app`.
    - Wait for Let's Encrypt TLS certificate issuance (typically 2–15 minutes).
