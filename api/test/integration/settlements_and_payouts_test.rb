@@ -639,7 +639,7 @@ class SettlementsAndPayoutsTest < ActionDispatch::IntegrationTest
     assert_equal 1, result.breakdown_json.dig("direct_collected", "registrations", "count")
     assert_equal 30_000, result.breakdown_json.dig("direct_collected", "registrations", "gross_cents")
 
-    reg_item = result.line_items.find { |li| li[:source_type] == "registration" && li[:source_id] == reg.id }
+    reg_item = result.line_items.find { |li| li[:source_type] == "team_registration" && li[:source_id] == reg.id }
     assert_not_nil reg_item
     assert_equal "Pacific Foursome", reg_item[:label]
     assert_equal 60_000, reg_item[:gross_cents]
@@ -685,12 +685,153 @@ class SettlementsAndPayoutsTest < ActionDispatch::IntegrationTest
     get "/api/v1/tournaments/#{@tournament_a.id}/settlement/export", headers: auth_headers_for(@org_a_admin)
     assert_response :success
     csv_body = response.body
+    assert_includes csv_body, "team_registration"
     assert_includes csv_body, "Pacific Foursome"
     assert_includes csv_body, "Island Marine Co"
     assert_includes csv_body, "Generous Donor"
     assert_includes csv_body, "3300.00"
     assert_includes csv_body, "96.90"
     assert_includes csv_body, "2888.10"
+
+    # 5. Roster change after draft calculation changes source_digest so finalize returns 409 Conflict
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/calculate", headers: auth_headers_for(@super_admin)
+    assert_response :success
+    reg.team_members.order(:position).last.destroy!
+
+    post "/api/v1/tournaments/#{@tournament_a.id}/settlement/finalize", headers: auth_headers_for(@super_admin)
+    assert_response :conflict
+    assert_includes response.body, "recalculate"
+  end
+
+  test "calculator handles registration edge cases (cancelled, full/partial refunds, sponsor, unpaid, zero members)" do
+    @tournament_a.update!(team_size: 4, allow_partial_teams: true, capacity_unit: "players", entry_fee: 15_000)
+
+    # Cancelled paid registration: gross counted, NOT a billable registrant
+    @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Cancelled Team",
+      contact_name: "Cancelled Cap",
+      contact_email: "cancelled@example.com",
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 15_000,
+      stripe_payment_intent_id: "pi_reg_cancelled",
+      stripe_account_origin: "platform_live",
+      registration_status: "cancelled",
+      paid_at: Time.current,
+      team_members_attributes: [
+        { organization: @org_a, tournament: @tournament_a, position: 1, is_captain: true, name: "Cancelled Cap" }
+      ]
+    )
+
+    # Fully refunded registration: gross + refund counted, NOT a billable registrant
+    @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Refunded Team",
+      contact_name: "Refunded Cap",
+      contact_email: "refunded@example.com",
+      payment_type: "stripe",
+      payment_status: "refunded",
+      payment_method: "stripe",
+      payment_amount_cents: 15_000,
+      refund_amount_cents: 15_000,
+      stripe_payment_intent_id: "pi_reg_refunded",
+      stripe_account_origin: "platform_live",
+      registration_status: "cancelled",
+      paid_at: 2.days.ago,
+      refunded_at: 1.day.ago,
+      team_members_attributes: [
+        { organization: @org_a, tournament: @tournament_a, position: 1, is_captain: true, name: "Refunded Cap" }
+      ]
+    )
+
+    # Partially refunded registration (2 players): still active_paid -> 2 billable registrants, $50 refund
+    @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Partial Refund Team",
+      contact_name: "Partial Cap",
+      contact_email: "partial@example.com",
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 30_000,
+      refund_amount_cents: 5_000,
+      stripe_payment_intent_id: "pi_reg_partial",
+      stripe_account_origin: "platform_live",
+      registration_status: "confirmed",
+      paid_at: 2.days.ago,
+      refunded_at: 1.day.ago,
+      team_members_attributes: [
+        { organization: @org_a, tournament: @tournament_a, position: 1, is_captain: true, name: "Partial Cap" },
+        { organization: @org_a, tournament: @tournament_a, position: 2, is_captain: false, name: "Partial Mate" }
+      ]
+    )
+
+    # Registration with 0 team_members (e.g. legacy/orphaned row): clamped to 1 billable registrant
+    no_members_reg = @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "No Members Yet",
+      contact_name: "Solo Contact",
+      contact_email: "solo@example.com",
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 15_000,
+      stripe_payment_intent_id: "pi_reg_nomembers",
+      stripe_account_origin: "platform_live",
+      registration_status: "confirmed",
+      paid_at: Time.current,
+      team_members_attributes: [
+        { organization: @org_a, tournament: @tournament_a, position: 1, is_captain: true, name: "Solo Contact" }
+      ]
+    )
+    no_members_reg.team_members.delete_all
+
+    # Sponsor registration: skipped completely (counted via Sponsor model)
+    @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Sponsor Foursome",
+      contact_name: "Sponsor Cap",
+      contact_email: "sponsorcap@example.com",
+      payment_type: "sponsor",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 60_000,
+      stripe_payment_intent_id: "pi_reg_sponsor",
+      stripe_account_origin: "platform_live",
+      registration_status: "confirmed",
+      paid_at: Time.current,
+      team_members_attributes: [
+        { organization: @org_a, tournament: @tournament_a, position: 1, is_captain: true, name: "Sponsor Cap" }
+      ]
+    )
+
+    # Unpaid / zero-amount registration: skipped completely
+    @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Unpaid Zero",
+      contact_name: "Unpaid Cap",
+      contact_email: "unpaid@example.com",
+      payment_type: "stripe",
+      payment_status: "unpaid",
+      payment_amount_cents: 0,
+      registration_status: "confirmed",
+      team_members_attributes: [
+        { organization: @org_a, tournament: @tournament_a, position: 1, is_captain: true, name: "Unpaid Cap" }
+      ]
+    )
+
+    result = Settlements::Calculator.call(@tournament_a)
+
+    # Gross = 15_000 (cancelled) + 15_000 (refunded) + 30_000 (partial) + 15_000 (no members) = 75_000
+    assert_equal 75_000, result.gross_cents
+    # Refunds = 15_000 (full) + 5_000 (partial) = 20_000
+    assert_equal 20_000, result.refund_cents
+    assert_equal 55_000, result.net_cents
+    # Billable registrants = 2 (partial refund team) + 1 (no-members clamped min 1) = 3
+    assert_equal 3, result.breakdown_json.dig("registrations", "billable_registrant_count")
+    assert_equal 4, result.breakdown_json.dig("registrations", "charge_count")
   end
 
   private

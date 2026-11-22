@@ -74,7 +74,7 @@ module Settlements
             active_paid: registration.payment_status == "paid" && registration.registration_status != "cancelled" && refund < amount
           }
           line_items << {
-            source_type: "registration",
+            source_type: "team_registration",
             source_id: registration.id,
             label: registration.team_name.presence || registration.contact_name.presence || "Registration ##{registration.id}",
             email: registration.contact_email,
@@ -89,10 +89,11 @@ module Settlements
             refunded_at: registration.refunded_at&.iso8601
           }
           digest_rows << [
-            "registration",
+            "team_registration",
             registration.id,
             registration.payment_status,
             registration.registration_status,
+            player_count,
             amount,
             refund,
             recorded_fee,
