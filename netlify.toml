@@ -1,9 +1,18 @@
+# HafaGolf — root Netlify configuration
+# Production deploys are intentionally manual/gated until staging acceptance passes.
 [build]
   base = "web"
   command = "npm run build"
   publish = "web/dist"
+  ignore = "bash scripts/netlify-ignore-build.sh"
 
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

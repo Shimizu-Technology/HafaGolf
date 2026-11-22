@@ -1,8 +1,8 @@
 {
-  "name": "make-a-wish-guam",
+  "name": "hafagolf",
   "version": "1.0.0",
   "private": true,
-  "description": "Event registration and management for Make-A-Wish Guam & CNMI charity events",
+  "description": "HafaGolf — multi-client golf tournament management platform by Shimizu Technology",
   "scripts": {
     "api:dev": "cd api && bin/rails server",
     "web:dev": "cd web && npm run dev",
