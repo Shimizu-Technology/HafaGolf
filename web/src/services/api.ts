@@ -1458,6 +1458,179 @@ export class ApiClient {
     });
   }
 
+  // Payout Settlements & Disbursements
+  async getTournamentSettlement(tournamentId?: number): Promise<TournamentSettlementResponse> {
+    const id = tournamentId || this.currentTournamentId;
+    if (!id) throw new Error('Tournament ID is required');
+    return this.request(`/api/v1/tournaments/${id}/settlement`);
+  }
+
+  async calculateTournamentSettlement(
+    tournamentId: number,
+    payload?: { adjustment_cents?: number; adjustment_notes?: string }
+  ): Promise<TournamentSettlementResponse> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/settlement/calculate`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
+  async finalizeTournamentSettlement(tournamentId: number): Promise<TournamentSettlementResponse> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/settlement/finalize`, {
+      method: 'POST',
+    });
+  }
+
+  async createTournamentPayout(
+    tournamentId: number,
+    payload: {
+      amount_cents: number;
+      provider: 'check' | 'manual' | 'ach';
+      provider_payout_id?: string;
+      payee_name?: string;
+      bank_name?: string;
+      notes?: string;
+      mark_paid?: boolean;
+      paid_at?: string;
+      idempotency_key?: string;
+    }
+  ): Promise<TournamentSettlementResponse & { payout: TournamentPayoutRecord; idempotent_replay?: boolean }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/settlement/payouts`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async markTournamentPayoutPaid(
+    tournamentId: number,
+    payoutId: string,
+    payload?: { provider_payout_id?: string; notes?: string; paid_at?: string }
+  ): Promise<TournamentSettlementResponse & { payout: TournamentPayoutRecord }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/settlement/payouts/${encodeURIComponent(payoutId)}/mark_paid`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
+  async voidTournamentPayout(
+    tournamentId: number,
+    payoutId: string,
+    voidReason: string
+  ): Promise<TournamentSettlementResponse & { payout: TournamentPayoutRecord }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/settlement/payouts/${encodeURIComponent(payoutId)}/void`, {
+      method: 'POST',
+      body: JSON.stringify({ void_reason: voidReason }),
+    });
+  }
+
+  async downloadTournamentSettlementCsv(tournamentId: number): Promise<Blob> {
+    const token = await this.getAuthToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${API_URL}/api/v1/tournaments/${tournamentId}/settlement/export`, {
+      headers,
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to export statement CSV (${res.status})`);
+    }
+    return res.blob();
+  }
+
+}
+
+export interface SettlementSummaryNumbers {
+  gross_cents: number;
+  refund_cents: number;
+  processing_fee_cents: number;
+  platform_fee_cents: number;
+  adjustment_cents: number;
+  net_cents: number;
+  organizer_proceeds_cents: number;
+  paid_cents: number;
+  pending_payout_cents: number;
+  payable_cents: number;
+  breakdown: Record<string, unknown>;
+  source_digest: string | null;
+}
+
+export interface TournamentSettlementRecord extends SettlementSummaryNumbers {
+  id: string;
+  organization_id: string;
+  tournament_id: number;
+  version: number;
+  status: 'draft' | 'finalized';
+  currency: string;
+  adjustment_notes: string | null;
+  remaining_payout_capacity_cents: number;
+  ledger_changed_since_calculation: boolean;
+  calculated_at: string | null;
+  finalized_at: string | null;
+  finalized_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TournamentPayoutRecord {
+  id: string;
+  organization_id: string;
+  tournament_id: number;
+  settlement_id: string;
+  amount_cents: number;
+  currency: string;
+  status: 'pending' | 'paid' | 'voided';
+  provider: 'check' | 'manual' | 'ach';
+  provider_payout_id: string | null;
+  payee_snapshot: {
+    payee_name?: string;
+    bank_name?: string;
+    payout_notes?: string;
+  };
+  initiated_at: string | null;
+  paid_at: string | null;
+  voided_at: string | null;
+  void_reason: string | null;
+  recorded_by_name: string | null;
+  notes: string | null;
+  idempotency_key: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SettlementLineItem {
+  source_type: string;
+  source_id: number | string;
+  label: string;
+  email: string | null;
+  payment_status: string;
+  payment_method: string | null;
+  stripe_account_origin: string | null;
+  gross_cents: number;
+  refund_cents: number;
+  processing_fee_cents: number;
+  fee_source: 'actual' | 'estimated';
+  paid_at: string | null;
+  refunded_at: string | null;
+}
+
+export interface TournamentSettlementResponse {
+  tournament: {
+    id: number;
+    name: string;
+    slug: string;
+    event_date: string | null;
+  };
+  payment_mode: string;
+  payee_defaults: {
+    payee_name: string | null;
+    bank_name: string | null;
+    payout_notes: string | null;
+  };
+  can_manage_payouts: boolean;
+  settlement: TournamentSettlementRecord | null;
+  live_preview: SettlementSummaryNumbers;
+  line_items: SettlementLineItem[];
+  settlements: TournamentSettlementRecord[];
+  payouts: TournamentPayoutRecord[];
 }
 
 // Export singleton instance

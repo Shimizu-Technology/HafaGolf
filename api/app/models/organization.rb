@@ -8,6 +8,8 @@ class Organization < ApplicationRecord
   has_many :users, through: :organization_memberships
   has_many :message_deliveries, dependent: :nullify
   has_one :organization_payment_config, dependent: :destroy
+  has_many :tournament_settlements, dependent: :restrict_with_error
+  has_many :tournament_payouts, dependent: :restrict_with_error
 
   # Validations
   validates :name, presence: true

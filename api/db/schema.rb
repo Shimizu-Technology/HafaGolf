@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -119,6 +119,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
     t.datetime "updated_at", null: false
     t.datetime "waiver_accepted_at"
     t.string "stripe_account_origin"
+    t.integer "stripe_fee_cents"
     t.index ["group_id"], name: "index_golfers_on_group_id"
     t.index ["magic_link_token"], name: "index_golfers_on_magic_link_token", unique: true, where: "(magic_link_token IS NOT NULL)"
     t.index ["paid_at"], name: "index_golfers_on_paid_at"
@@ -130,6 +131,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
     t.index ["tournament_id", "email"], name: "index_golfers_on_tournament_id_and_email"
     t.index ["tournament_id", "email"], name: "index_golfers_on_tournament_id_and_email_public_unique", unique: true, where: "(((COALESCE(registration_source, 'public'::character varying))::text <> 'admin'::text) AND ((registration_status)::text IS DISTINCT FROM 'cancelled'::text))"
     t.index ["tournament_id"], name: "index_golfers_on_tournament_id"
+    t.check_constraint "stripe_fee_cents IS NULL OR stripe_fee_cents >= 0", name: "chk_golfers_stripe_fee_non_negative"
   end
 
   create_table "groups", force: :cascade do |t|
@@ -220,9 +222,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
     t.datetime "updated_at", null: false
     t.index ["organization_id"], name: "index_organization_payment_configs_on_organization_id", unique: true
     t.index ["webhook_endpoint_token"], name: "index_organization_payment_configs_on_webhook_endpoint_token", unique: true, where: "(webhook_endpoint_token IS NOT NULL)"
-    t.check_constraint "payment_mode::text = ANY (ARRAY['external_link'::character varying, 'platform_collect'::character varying, 'client_processor'::character varying, 'offline'::character varying]::text[])", name: "chk_org_payment_configs_payment_mode"
+    t.check_constraint "payment_mode::text = ANY (ARRAY['external_link'::character varying::text, 'platform_collect'::character varying::text, 'client_processor'::character varying::text, 'offline'::character varying::text])", name: "chk_org_payment_configs_payment_mode"
     t.check_constraint "platform_fee_flat_cents >= 0 AND platform_fee_per_registrant_cents >= 0 AND (platform_fee_cap_cents IS NULL OR platform_fee_cap_cents >= 0)", name: "chk_org_payment_configs_non_negative_fees"
-    t.check_constraint "processor_provider::text = ANY (ARRAY['stripe'::character varying, 'swipesimple'::character varying, 'paypal'::character varying, 'worldpay_cardpointe'::character varying, 'none'::character varying]::text[])", name: "chk_org_payment_configs_processor_provider"
+    t.check_constraint "processor_provider::text = ANY (ARRAY['stripe'::character varying::text, 'swipesimple'::character varying::text, 'paypal'::character varying::text, 'worldpay_cardpointe'::character varying::text, 'none'::character varying::text])", name: "chk_org_payment_configs_processor_provider"
   end
 
   create_table "organizations", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -405,6 +407,65 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
     t.index ["user_id"], name: "index_tournament_assignments_on_user_id"
   end
 
+  create_table "tournament_payouts", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id", null: false
+    t.uuid "settlement_id", null: false
+    t.integer "amount_cents", null: false
+    t.string "currency", default: "usd", null: false
+    t.string "status", default: "pending", null: false
+    t.string "provider", default: "check", null: false
+    t.string "provider_payout_id"
+    t.jsonb "payee_snapshot", default: {}, null: false
+    t.datetime "initiated_at"
+    t.datetime "paid_at"
+    t.datetime "voided_at"
+    t.text "void_reason"
+    t.bigint "recorded_by_id"
+    t.text "notes"
+    t.string "idempotency_key"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["organization_id"], name: "index_tournament_payouts_on_organization_id"
+    t.index ["settlement_id"], name: "index_tournament_payouts_on_settlement_id"
+    t.index ["tournament_id", "idempotency_key"], name: "index_tournament_payouts_on_tournament_and_idempotency_key", unique: true, where: "(idempotency_key IS NOT NULL)"
+    t.index ["tournament_id"], name: "index_tournament_payouts_on_tournament_id"
+    t.check_constraint "amount_cents > 0", name: "chk_tournament_payouts_amount_positive"
+    t.check_constraint "provider::text = ANY (ARRAY['check'::character varying, 'manual'::character varying, 'ach'::character varying]::text[])", name: "chk_tournament_payouts_provider"
+    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying, 'paid'::character varying, 'voided'::character varying]::text[])", name: "chk_tournament_payouts_status"
+  end
+
+  create_table "tournament_settlements", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id", null: false
+    t.integer "version", default: 1, null: false
+    t.string "status", default: "draft", null: false
+    t.string "currency", default: "usd", null: false
+    t.integer "gross_cents", default: 0, null: false
+    t.integer "refund_cents", default: 0, null: false
+    t.integer "processing_fee_cents", default: 0, null: false
+    t.integer "platform_fee_cents", default: 0, null: false
+    t.integer "adjustment_cents", default: 0, null: false
+    t.text "adjustment_notes"
+    t.integer "net_cents", default: 0, null: false
+    t.integer "organizer_proceeds_cents", default: 0, null: false
+    t.integer "paid_cents", default: 0, null: false
+    t.integer "payable_cents", default: 0, null: false
+    t.jsonb "breakdown_json", default: {}, null: false
+    t.string "source_digest"
+    t.datetime "calculated_at"
+    t.datetime "finalized_at"
+    t.bigint "finalized_by_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["organization_id"], name: "index_tournament_settlements_on_organization_id"
+    t.index ["tournament_id", "version"], name: "index_tournament_settlements_on_tournament_id_and_version", unique: true
+    t.index ["tournament_id"], name: "index_tournament_settlements_on_tournament_id"
+    t.check_constraint "gross_cents >= 0 AND refund_cents >= 0 AND processing_fee_cents >= 0 AND platform_fee_cents >= 0 AND paid_cents >= 0", name: "chk_tournament_settlements_non_negative_totals"
+    t.check_constraint "status::text = ANY (ARRAY['draft'::character varying, 'finalized'::character varying]::text[])", name: "chk_tournament_settlements_status"
+    t.check_constraint "version >= 1", name: "chk_tournament_settlements_version_positive"
+  end
+
   create_table "tournaments", force: :cascade do |t|
     t.string "accent_color_override"
     t.boolean "allow_card", default: true
@@ -539,5 +600,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
   add_foreign_key "sponsors", "tournaments"
   add_foreign_key "tournament_assignments", "tournaments"
   add_foreign_key "tournament_assignments", "users"
+  add_foreign_key "tournament_payouts", "organizations", on_delete: :cascade
+  add_foreign_key "tournament_payouts", "tournament_settlements", column: "settlement_id", on_delete: :restrict
+  add_foreign_key "tournament_payouts", "tournaments", on_delete: :cascade
+  add_foreign_key "tournament_payouts", "users", column: "recorded_by_id", on_delete: :nullify
+  add_foreign_key "tournament_settlements", "organizations", on_delete: :cascade
+  add_foreign_key "tournament_settlements", "tournaments", on_delete: :cascade
+  add_foreign_key "tournament_settlements", "users", column: "finalized_by_id", on_delete: :nullify
   add_foreign_key "tournaments", "organizations"
 end
