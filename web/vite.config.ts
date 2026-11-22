@@ -73,6 +73,13 @@ export default defineConfig({
           if (id.includes('node_modules/@clerk/')) {
             return 'admin-clerk';
           }
+          if (
+            id.includes('node_modules/react/') ||
+            id.includes('node_modules/react-dom/') ||
+            id.includes('node_modules/scheduler/')
+          ) {
+            return 'vendor-react';
+          }
           return undefined;
         },
       },

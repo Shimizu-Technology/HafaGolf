@@ -143,6 +143,7 @@ Validate the core Render + Netlify variables before any staging or production de
    - Put the legacy MAW deployment in maintenance/read-only mode.
    - Take the final read-only `pg_dump` snapshot (real data move — never mutate source).
    - Run the idempotent MAW importer + JSON verification report (100% row-count & cent-exact financial match required — see `docs/MIGRATION_REHEARSAL_PLAN.md`) and copy Active Storage S3 blobs.
+   - **Read-only legacy Stripe check (Gate B/D):** Query the read-only MAW snapshot for any non-null `stripe_payment_intent_id` in `golfers` or `raffle_tickets` (the forked `make-a-wish-guam` schema retains Stripe columns alongside SwipeSimple defaults). If any historical Stripe charges exist, verify their Stripe account ID read-only against HafaGolf's production platform Stripe account; keep `legacy_maw` refund-blocked by default unless the account IDs are confirmed identical (with a regression test).
    - Add `golfforwishes.com` and `www.golfforwishes.com` as Domain Aliases on the HafaGolf Netlify site.
    - Update Square DNS: `@` `A` → `75.2.60.5` (Netlify load balancer), `www` `CNAME` → `<hafagolf-site>.netlify.app`.
    - Wait for Let's Encrypt TLS certificate issuance (typically 2–15 minutes).
@@ -152,6 +153,8 @@ Validate the core Render + Netlify variables before any staging or production de
 
 ### 5.4 GIAA DNS (`giaa-tournament.com`) — Post-2027 Event Cutover
 Follow the exact same sequence as Section 5.3 after GIAA's 2027 tournament completes (or if GIAA passes full staging acceptance before registration opens). Verify `employee_pricing`, `checkin_alpha_lanes`, and `memorial-formal` branding before declaring live.
+
+- **GIAA Stripe & Gate D Refund Verification (Leon, Nov 22, 2026):** GIAA has **no Stripe account of its own** — its current app already charges through Shimizu Technology's Stripe, so `platform_collect` matches today with no open decision. Keep imported `stripe_account_origin: "legacy_giaa"` records blocked from automated refunds **by default**. At **Gate D cutover** (never before), perform a read-only check comparing the Stripe account ID behind GIAA's legacy charges with HafaGolf's production platform Stripe account; **only if they match**, enable refunds of `legacy_giaa` charges through the platform adapter with a regression test. Do not touch GIAA's production systems or keys before Gate B/D.
 
 ---
 

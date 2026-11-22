@@ -218,38 +218,37 @@ export const OrgCheckInPage: React.FC = () => {
 
   const standaloneRegistrations = useMemo(
     () =>
-      registrations.filter((reg) => {
-        const bridgedId = (reg as ApiRegistration & { golfer_id?: number | null }).golfer_id;
-        return !bridgedId || !golferIdSet.has(bridgedId);
-      }),
+      registrations.filter((reg) => !reg.golfer_id || !golferIdSet.has(reg.golfer_id)),
     [registrations, golferIdSet]
   );
 
+  const getRegistrationLaneTarget = useCallback((reg: ApiRegistration) => {
+    const captain = reg.team_members.find((m) => m.is_captain) || reg.team_members[0];
+    return { name: captain?.name || reg.contact_name || reg.display_team_name };
+  }, []);
+
   const matchesRegistrationLane = useCallback((reg: ApiRegistration, lane: AlphaLane): boolean => {
     if (lane === 'all') return true;
-    const captain = reg.team_members.find((m) => m.is_captain) || reg.team_members[0];
-    if (captain && matchesAlphaLane({ name: captain.name }, lane)) return true;
-    if (reg.team_members.some((m) => matchesAlphaLane({ name: m.name }, lane))) return true;
-    return matchesAlphaLane({ name: reg.contact_name || reg.display_team_name }, lane);
-  }, []);
+    return matchesAlphaLane(getRegistrationLaneTarget(reg), lane);
+  }, [getRegistrationLaneTarget]);
 
   const queueBaseRegistrations = useMemo(() => {
     switch (activeQueue) {
       case 'not_checked_in':
-        return registrations.filter((reg) => !reg.all_checked_in);
+        return standaloneRegistrations.filter((reg) => !reg.all_checked_in);
       case 'paid':
-        return registrations.filter((reg) => reg.payment_status === 'paid' && !reg.all_checked_in);
+        return standaloneRegistrations.filter((reg) => reg.payment_status === 'paid' && !reg.all_checked_in);
       case 'not_paid':
-        return registrations.filter((reg) => reg.payment_status !== 'paid');
+        return standaloneRegistrations.filter((reg) => reg.payment_status !== 'paid');
       case 'checked_in':
-        return registrations.filter((reg) => reg.checked_in_count > 0);
+        return standaloneRegistrations.filter((reg) => reg.checked_in_count > 0);
       case 'waitlist':
         return [];
       case 'all':
       default:
-        return registrations;
+        return standaloneRegistrations;
     }
-  }, [registrations, activeQueue]);
+  }, [standaloneRegistrations, activeQueue]);
 
   const stats = useMemo(() => {
     const regPlayerCount = (reg: ApiRegistration) =>
@@ -308,21 +307,14 @@ export const OrgCheckInPage: React.FC = () => {
 
   const laneCounts = useMemo(() => {
     const golferLanes = countByAlphaLane(queueBaseGolfers);
-    const standaloneQueueRegs = queueBaseRegistrations.filter((reg) => {
-      const bridgedId = (reg as ApiRegistration & { golfer_id?: number | null }).golfer_id;
-      return !bridgedId || !golferIdSet.has(bridgedId);
-    });
-    const regTargets = standaloneQueueRegs.map((reg) => {
-      const captain = reg.team_members.find((m) => m.is_captain) || reg.team_members[0];
-      return { name: captain?.name || reg.contact_name || reg.display_team_name };
-    });
+    const regTargets = queueBaseRegistrations.map((reg) => getRegistrationLaneTarget(reg));
     const regLanes = countByAlphaLane(regTargets);
     return {
       all: golferLanes.all + regLanes.all,
       a_j: golferLanes.a_j + regLanes.a_j,
       k_z: golferLanes.k_z + regLanes.k_z,
     };
-  }, [queueBaseGolfers, queueBaseRegistrations, golferIdSet]);
+  }, [queueBaseGolfers, queueBaseRegistrations, getRegistrationLaneTarget]);
 
   const filteredGolfers = useMemo(() => {
     let filtered = [...queueBaseGolfers];
