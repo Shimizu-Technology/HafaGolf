@@ -35,6 +35,7 @@ interface SponsorInfo {
 }
 
 interface TournamentInfo {
+  waiver_enabled?: boolean;
   name: string;
   event_date: string | null;
   sponsor_edit_deadline: string | null;
@@ -407,6 +408,7 @@ const Dashboard: React.FC<{
   const { organization } = useOrganization();
   const [sponsor] = useState<SponsorInfo>(initialSponsor);
   const [tournamentInfo] = useState<TournamentInfo>(initialTournament);
+  const [waiverEnabled, setWaiverEnabled] = useState(tournamentInfo?.waiver_enabled !== false);
   const [orgInfo] = useState<OrgInfo>(initialOrg);
   const [slots, setSlots] = useState<SponsorSlot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -455,6 +457,7 @@ const Dashboard: React.FC<{
       if (res.ok) {
         const data = await res.json();
         const slotsData = data.slots || data;
+        if (typeof data.waiver_enabled === 'boolean') setWaiverEnabled(data.waiver_enabled);
         setSlots(slotsData);
         initLocalEdits(slotsData);
       }
@@ -605,6 +608,15 @@ const Dashboard: React.FC<{
           </div>
         </div>
       </div>
+
+      {waiverEnabled && (
+        <aside className="mx-auto mt-4 w-full max-w-4xl px-5" aria-label="Waiver Notice">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            <p className="font-semibold">Waiver Notice</p>
+            <p>Each listed player will confirm the tournament waiver online or at check-in.</p>
+          </div>
+        </aside>
+      )}
 
       {/* Deadline warning */}
       {tournamentInfo?.sponsor_edit_deadline && (

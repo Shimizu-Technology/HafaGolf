@@ -149,6 +149,31 @@ class Api::V1::RegistrationsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "You have been added to the waitlist.", body3["message"]
   end
 
+  test "public team registration requires every player only when the waiver is enabled" do
+    members = team_payload(2)
+    members.last[:waiver_accepted] = false
+    members.last[:waiver_accepted_at] = 1.year.ago.iso8601
+    params = {
+      waiver_accepted: true,
+      registration: { team_members: members, payment_type: "swipe_simple" }
+    }
+    path = "/api/v1/tournaments/#{@tournament_a.id}/registrations"
+    headers = { "X-Tenant-Host" => "alpha.golf.test" }
+
+    assert_no_difference "Registration.count" do
+      post path, params: params, headers: headers, as: :json
+      assert_response :unprocessable_entity
+      assert_includes response.parsed_body.fetch("errors"), "Every player must accept the liability waiver."
+    end
+
+    @tournament_a.update!(waiver_enabled: false)
+    post path, params: params, headers: headers, as: :json
+    assert_response :created
+    players = response.parsed_body.dig("registration", "team_members")
+    assert_equal 2, players.size
+    assert players.all? { |player| player.key?("waiver_accepted_at") && player["waiver_accepted_at"].nil? }
+  end
+
   test "public create rejects cross-tenant tournament ID with 404" do
     post "/api/v1/tournaments/#{@tournament_b.id}/registrations",
          params: {

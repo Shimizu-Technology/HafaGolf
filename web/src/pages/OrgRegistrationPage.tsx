@@ -118,22 +118,23 @@ export const OrgRegistrationPage: React.FC = () => {
   );
   const paymentMode = tournament?.payment_mode || organization?.payment_mode || 'offline';
   const isOfflineMode = paymentMode === 'offline';
+  const waiverEnabled = tournament?.waiver_enabled !== false;
   const isStripeMode = paymentMode === 'platform_collect' || paymentMode === 'client_processor';
 
   const stepNames = useMemo(() => {
-    const names = getStepNames(teamSize);
+    const names = getStepNames(teamSize, waiverEnabled);
     if (isOfflineMode && names.length > 0) {
       return [...names.slice(0, -1), 'Review & Confirm'];
     }
     return names;
-  }, [teamSize, isOfflineMode]);
+  }, [teamSize, isOfflineMode, waiverEnabled]);
   const totalSteps = stepNames.length;
   const isIndividual = teamSize === 1;
 
   // Logical step mapping (individual skips the Teammates step)
   const captainStep = 1;
   const teammatesStep = isIndividual ? -1 : 2;
-  const waiverStep = isIndividual ? 2 : 3;
+  const waiverStep = waiverEnabled ? totalSteps - 1 : -1;
   const reviewStep = totalSteps;
 
   // Employee discount pricing state (only active when :employee_pricing feature is enabled)
@@ -328,13 +329,13 @@ export const OrgRegistrationPage: React.FC = () => {
   const handleNext = () => {
     if (validateStep(currentStep)) {
       setCurrentStep((prev) => Math.min(prev + 1, totalSteps));
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: 'instant' });
     }
   };
 
   const handleBack = () => {
     setCurrentStep((prev) => Math.max(prev - 1, 1));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const handleSubmit = async () => {
@@ -354,6 +355,7 @@ export const OrgRegistrationPage: React.FC = () => {
         },
         {
           paymentType,
+          waiverEnabled,
           organizationSlug: orgSlug,
           isEmployee: isEmployeeValidated,
           employeeNumber: isEmployeeValidated ? employeeValidation.employeeNumber : undefined,
@@ -453,7 +455,7 @@ export const OrgRegistrationPage: React.FC = () => {
 
   if (orgLoading || isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
+      <div data-static-flow className="min-h-screen flex items-center justify-center bg-white">
         <div className="text-center">
           <Loader2 className="h-10 w-10 animate-spin mx-auto text-brand-600" />
           <p className="mt-4 text-sm text-neutral-500 tracking-wide uppercase">Loading registration</p>
@@ -519,7 +521,7 @@ export const OrgRegistrationPage: React.FC = () => {
   const captain = players[0];
 
   return (
-    <div className="min-h-screen bg-neutral-100" data-theme-pack={branding.themePackId}>
+    <div className="min-h-screen bg-neutral-100" data-theme-pack={branding.themePackId} data-static-flow>
       <SignedInAdminBar />
       {/* ================================================================= */}
       {/* HERO HEADER (quiet operational screen — zero entrance animations) */}
@@ -1039,7 +1041,7 @@ export const OrgRegistrationPage: React.FC = () => {
                     </div>
 
                     <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 max-h-64 overflow-y-auto">
-                      <LiabilityWaiver organizationName={organization?.name || 'the tournament organizer'} />
+                      <LiabilityWaiver organizationName={organization?.name} waiverText={tournament.waiver_text} />
                     </div>
 
                     <div className="space-y-4">

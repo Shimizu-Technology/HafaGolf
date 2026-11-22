@@ -19,6 +19,8 @@ module Api
           slug: organization.slug,
           description: organization.description,
           logo_url: organization.logo_url,
+          reversed_logo_url: organization.reversed_logo_url,
+          show_homepage_sponsors: organization.show_homepage_sponsors,
           primary_color: organization.primary_color,
           banner_url: organization.banner_url,
           contact_email: organization.contact_email,
@@ -69,7 +71,8 @@ module Api
           tournament = organization.tournaments.where(public_listed: true).find_by!(slug: params[:tournament_slug])
           
           # Get active sponsors grouped by tier
-          sponsors = tournament.sponsors.active.ordered.includes(logo_attachment: :blob).map do |s|
+          public_sponsors = tournament.show_public_sponsors? ? tournament.sponsors.active.ordered : tournament.sponsors.none
+          sponsors = public_sponsors.includes(logo_attachment: :blob).map do |s|
             logo = if s.logo.attached?
                      Rails.application.routes.url_helpers.rails_blob_url(
                        s.logo,
@@ -1189,7 +1192,8 @@ module Api
       end
 
       def tournament_params
-        params.require(:tournament).permit(
+        raw = params.require(:tournament)
+        attributes = raw.except(:story_photos).permit(
           :name, :year, :edition, :event_type, :status, :slug,
           :event_date, :registration_time, :start_time, :check_in_time,
           :location_name, :location_address,
@@ -1200,15 +1204,22 @@ module Api
           :registration_deadline,
           :contact_name, :contact_phone, :fee_includes, :tournament_info,
           :walkin_fee, :walkin_registration_open,
+          :banner_url_override, :logo_url_override, :signature_image_url_override,
           :theme_preset, :use_org_branding,
+          :commemorative_banner_url, :tribute_title, :tribute_subtitle,
+          :waiver_enabled, :waiver_text, :show_public_sponsors, :sponsor_wall_title,
           team_categories: [],
           course_configs: [:key, :name, :hole_count]
         )
+        # Keep the JSON shape intact so the model can reject malformed entries.
+        attributes[:story_photos] = raw[:story_photos].as_json if raw.key?(:story_photos)
+        attributes
       end
 
       def organization_params
         params.require(:organization).permit(
-          :name, :slug, :description, :logo_url, :primary_color,
+          :name, :slug, :description, :logo_url, :reversed_logo_url, :primary_color,
+          :show_homepage_sponsors,
           :banner_url, :contact_email, :contact_phone, :website_url,
           :sms_sender_id,
           :offseason_enabled, :offseason_title, :offseason_message,
@@ -1240,6 +1251,8 @@ module Api
           slug: org.slug,
           description: org.description,
           logo_url: org.logo_url,
+          reversed_logo_url: org.reversed_logo_url,
+          show_homepage_sponsors: org.show_homepage_sponsors,
           primary_color: org.primary_color,
           banner_url: org.banner_url,
           contact_email: org.contact_email,

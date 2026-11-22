@@ -91,7 +91,7 @@ module Api
           ActiveRecord::Base.transaction(requires_new: true) do
             tournament.lock!
 
-            members_attrs = extract_public_team_members_attributes
+            members_attrs = extract_public_team_members_attributes(tournament.waiver_enabled?)
             incoming_player_count = [members_attrs.size, 1].max
 
             unless tournament.can_accept_public_registration?(player_count: incoming_player_count)
@@ -101,6 +101,11 @@ module Api
                           "Tournament is at capacity."
                         end
               error_response = { errors: [message], status: :unprocessable_entity }
+              raise ActiveRecord::Rollback
+            end
+
+            if tournament.waiver_enabled? && members_attrs.any? { |member| member["waiver_accepted_at"].blank? }
+              error_response = { errors: ["Every player must accept the liability waiver."], status: :unprocessable_entity }
               raise ActiveRecord::Rollback
             end
 
@@ -483,7 +488,7 @@ module Api
         end
       end
 
-      def extract_public_team_members_attributes
+      def extract_public_team_members_attributes(waiver_enabled)
         reg_params = params[:registration].is_a?(ActionController::Parameters) ? params[:registration] : params
         raw_members = reg_params[:team_members] || reg_params[:team_members_attributes] || params[:team_members] || []
         global_waiver = ActiveModel::Type::Boolean.new.cast(params[:waiver_accepted])
@@ -492,13 +497,12 @@ module Api
           next unless entry.is_a?(ActionController::Parameters) || entry.is_a?(Hash)
 
           h = entry.is_a?(ActionController::Parameters) ?
-            entry.permit(:name, :email, :phone, :mobile, :company, :address, :tshirt_size, :handicap, :position, :is_captain, :waiver_accepted, :waiver_accepted_at).to_h :
-            entry.stringify_keys.slice("name", "email", "phone", "mobile", "company", "address", "tshirt_size", "handicap", "position", "is_captain", "waiver_accepted", "waiver_accepted_at")
+            entry.permit(:name, :email, :phone, :mobile, :company, :address, :tshirt_size, :handicap, :position, :is_captain, :waiver_accepted).to_h :
+            entry.stringify_keys.slice("name", "email", "phone", "mobile", "company", "address", "tshirt_size", "handicap", "position", "is_captain", "waiver_accepted")
 
-          waiver_flag = ActiveModel::Type::Boolean.new.cast(h.delete("waiver_accepted"))
-          if h["waiver_accepted_at"].blank? && (waiver_flag || global_waiver)
-            h["waiver_accepted_at"] = Time.current
-          end
+          waiver_accepted = h.key?("waiver_accepted") ?
+            ActiveModel::Type::Boolean.new.cast(h.delete("waiver_accepted")) : global_waiver
+          h["waiver_accepted_at"] = Time.current if waiver_enabled && waiver_accepted
 
           h["position"] = (h["position"].presence || idx + 1).to_i
           h["is_captain"] = idx.zero? if h["is_captain"].nil?

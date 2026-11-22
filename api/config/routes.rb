@@ -115,6 +115,7 @@ Rails.application.routes.draw do
         member do
           post :check_in
           post :undo_check_in
+          post :mark_waiver_signed
           post :verify_payment
           post :payment_details
           post :promote
@@ -153,6 +154,7 @@ Rails.application.routes.draw do
         member do
           post :check_in
           post :undo_check_in
+          post :mark_waiver_signed
         end
       end
 

@@ -48,6 +48,16 @@ module Api
         }
       end
 
+      # POST /api/v1/team_members/:id/mark_waiver_signed
+      def mark_waiver_signed
+        unless @team_member.tournament.waiver_enabled?
+          return render json: { error: "Waivers are disabled for this tournament" }, status: :unprocessable_entity
+        end
+
+        Waivers::RecordSignature.call(@team_member, staff: current_user)
+        render json: { team_member: TeamMemberSerializer.new(@team_member).as_json }
+      end
+
       # POST /api/v1/team_members/:id/undo_check_in
       def undo_check_in
         unchecked_now = false

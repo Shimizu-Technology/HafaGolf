@@ -382,7 +382,8 @@ module Api
       end
 
       def tournament_params
-        params.require(:tournament).permit(
+        raw = params.require(:tournament)
+        attributes = raw.except(:story_photos).permit(
           :organization_id,
           :event_type,
           :name, :year, :edition, :status,
@@ -408,6 +409,8 @@ module Api
           :banner_url_override, :logo_url_override,
           :primary_color_override, :accent_color_override, :signature_image_url_override,
           :theme_preset, :use_org_branding,
+          :commemorative_banner_url, :tribute_title, :tribute_subtitle,
+          :waiver_enabled, :waiver_text, :show_public_sponsors, :sponsor_wall_title,
           :raffle_include_with_registration, :raffle_hold_winner_on_screen,
           config: {},
           team_categories: [],
@@ -415,6 +418,9 @@ module Api
           sponsor_tiers: [:key, :label, :sort_order],
           raffle_bundles: [:quantity, :price_cents, :label]
         )
+        # Keep the JSON shape intact so the model can reject malformed entries.
+        attributes[:story_photos] = raw[:story_photos].as_json if raw.key?(:story_photos)
+        attributes
       end
     end
   end

@@ -45,6 +45,8 @@ module Api
           slug: organization.slug,
           description: organization.description,
           logo_url: organization.logo_url,
+          reversed_logo_url: organization.reversed_logo_url,
+          show_homepage_sponsors: organization.show_homepage_sponsors,
           primary_color: organization.primary_color,
           banner_url: organization.banner_url,
           contact_email: organization.contact_email,

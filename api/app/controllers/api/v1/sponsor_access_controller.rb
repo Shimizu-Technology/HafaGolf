@@ -124,6 +124,7 @@ module Api
           },
           tournament: {
             name: tournament.name,
+            waiver_enabled: tournament.waiver_enabled,
             event_date: tournament.event_date,
             sponsor_edit_deadline: tournament.sponsor_edit_deadline&.iso8601,
             contact_name: tournament.contact_name,

@@ -1,44 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useOrganization } from '../components/OrganizationProvider';
-import { PublicHero } from '../components/PublicHero';
-import { RevealOnScroll } from '../components/RevealOnScroll';
-import { api, Tournament, Sponsor, SponsorTier } from '../services/api';
+import { PublicTournamentHero } from '../components/PublicHero';
+import { CharityStoryStrip } from '../components/themes/CharityStoryStrip';
+import { PublicSponsors } from '../components/PublicSponsors';
+import { api, Tournament } from '../services/api';
 import {
   Calendar, MapPin, Users, DollarSign, Clock,
-  Trophy, AlertCircle, ChevronLeft, ChevronRight, Star, Building2, ExternalLink, Check, Flag, Gift, Ticket, Award, Heart
+  Trophy, AlertCircle, ChevronRight, Check, Flag, Gift, Ticket, Award, Heart
 } from 'lucide-react';
 import { formatDate, formatEventDate } from '../utils/dates';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { getPublicFacingCapacitySummary, getRegistrationStatusLabel } from '../utils/capacity';
-import { useApplyBranding } from '../utils/branding';
-import type { ThemePackDefinition } from '../utils/themePacks';
+import { resolvePublicImageUrl, useApplyBranding } from '../utils/branding';
 import { getDefaultOrgSlug } from '../utils/tenant';
 import { formatEntryFeeDisplay } from '../utils/teamRegistration';
-
-const FALLBACK_SPONSOR_TIERS: SponsorTier[] = [
-  { key: 'title', label: 'Title Sponsors', sort_order: 0 },
-  { key: 'platinum', label: 'Major Sponsors', sort_order: 1 },
-  { key: 'gold', label: 'Major Sponsors', sort_order: 2 },
-  { key: 'silver', label: 'Supporting Sponsors', sort_order: 3 },
-  { key: 'bronze', label: 'Supporting Sponsors', sort_order: 4 },
-  { key: 'hole', label: 'Hole Sponsors', sort_order: 5 },
-];
-
-function sortHoleSponsors(sponsors: Sponsor[], courseConfigs: Tournament['course_configs'] = []) {
-  const courseOrder = new Map((courseConfigs || []).map((course, index) => [course.key, index]));
-
-  return [...sponsors].sort((a, b) => {
-    const courseA = a.course_key ? (courseOrder.get(a.course_key) ?? 999) : 999;
-    const courseB = b.course_key ? (courseOrder.get(b.course_key) ?? 999) : 999;
-    if (courseA !== courseB) return courseA - courseB;
-    return (a.hole_number || 0) - (b.hole_number || 0) || a.name.localeCompare(b.name);
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Main page
-// ---------------------------------------------------------------------------
 
 export function OrgTournamentPage() {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
@@ -110,13 +86,13 @@ export function OrgTournamentPage() {
   }
 
   const getStatusBadge = () => {
-    if (tournament.status === 'in_progress') return { label: 'In Progress', bg: 'bg-amber-500', text: 'text-white' };
+    if (tournament.status === 'in_progress') return { label: 'In Progress', bg: 'bg-amber-100', text: 'text-amber-950' };
     if (tournament.status === 'completed') return { label: 'Completed', bg: 'bg-neutral-200', text: 'text-neutral-600' };
     if (tournament.status === 'archived') return { label: 'Archived', bg: 'bg-neutral-200', text: 'text-neutral-600' };
     if (tournament.status === 'draft') return { label: 'Coming Soon', bg: 'bg-brand-600', text: 'text-brand-foreground' };
     if (!tournament.registration_open) return { label: 'Registration Closed', bg: 'bg-neutral-200', text: 'text-neutral-600' };
     const statusLabel = getRegistrationStatusLabel(tournament);
-    if (statusLabel === 'Waitlist Open') return { label: 'Waitlist Open', bg: 'bg-amber-500', text: 'text-white' };
+    if (statusLabel === 'Waitlist Open') return { label: 'Waitlist Open', bg: 'bg-amber-100', text: 'text-amber-950' };
     if (statusLabel === 'At Capacity') return { label: 'At Capacity', bg: 'bg-neutral-200', text: 'text-neutral-600' };
     if (statusLabel === 'Public Registration Full') return { label: 'Public Registration Full', bg: 'bg-neutral-200', text: 'text-neutral-600' };
     return { label: 'Registration Open', bg: 'bg-accent-600', text: 'text-accent-foreground' };
@@ -124,78 +100,123 @@ export function OrgTournamentPage() {
 
   const status = getStatusBadge();
   const capacitySummary = getPublicFacingCapacitySummary(tournament);
-  const heroBannerUrl = branding.bannerUrl;
-  const sponsorTiers = [...(tournament.sponsor_tiers || FALLBACK_SPONSOR_TIERS)].sort(
-    (a, b) => a.sort_order - b.sort_order
+  const isCharity = pack.id === 'charity-bright';
+  const isCrest = pack.id === 'crest-classic';
+  const featuredActions = isCharity || isCrest;
+  const canJoinFoursome = isCrest && tournament.team_size === 4 && tournament.can_register;
+  const sponsorShowcase = <PublicSponsors tournament={tournament} pack={pack} />;
+  const registrationHref = `/${tournamentSlug}/register`;
+
+  const fundraisingCards = (
+    <>
+      {canJoinFoursome && (
+        <Link to={registrationHref} className={`block ${pack.surfaces.cardClass} p-6`}>
+          <Users className="mb-3 h-6 w-6 text-brand-700" aria-hidden="true" />
+          <h3 className={`${pack.typography.cardTitleClass} mb-2`}>Enter a Foursome</h3>
+          <p className="text-sm text-neutral-600">Reserve four places and register your team together.</p>
+          <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700">
+            Register a Foursome <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </span>
+        </Link>
+      )}
+      {/* Raffle CTA — only when raffle is enabled */}
+      {tournament.raffle_enabled && (
+        <Link
+          to={`/${tournamentSlug}/raffle`}
+          className={`block ${pack.surfaces.cardClass} p-6 group`}
+        >
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
+              <Gift className="w-5 h-5 text-accent-500" strokeWidth={1.5} />
+            </div>
+            <h3 className={`${pack.typography.cardTitleClass} text-lg`}>Raffle Prizes</h3>
+          </div>
+          {tournament.raffle_description ? (
+            <p className="text-neutral-500 text-sm mb-4 line-clamp-2">{tournament.raffle_description}</p>
+          ) : (
+            <p className="text-neutral-500 text-sm mb-4">View prizes and check your tickets</p>
+          )}
+          <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
+            <Ticket className="w-4 h-4" strokeWidth={1.5} />
+            View Raffle Board
+            <ChevronRight className="w-4 h-4" />
+          </span>
+        </Link>
+      )}
+
+      {/* Sponsor Checkout CTA — only when sponsor_checkout feature is enabled */}
+      {tournament.features?.sponsor_checkout && (
+        <Link
+          to={`/${orgSlug}/tournaments/${tournament.slug}/sponsor`}
+          className={`block ${pack.surfaces.cardClass} p-6 group`}
+        >
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-brand-600/10 flex items-center justify-center">
+              <Award className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
+            </div>
+            <h3 className={`${pack.typography.cardTitleClass} text-lg`}>Become a Sponsor</h3>
+          </div>
+          <p className="text-neutral-500 text-sm mb-4">
+            View sponsorship tiers, included player slots, and reserve your package online.
+          </p>
+          <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
+            View Sponsor Tiers
+            <ChevronRight className="w-4 h-4" />
+          </span>
+        </Link>
+      )}
+
+      {/* Donations CTA — only when donations feature is enabled */}
+      {tournament.features?.donations && (
+        <Link
+          to={`/${orgSlug}/tournaments/${tournament.slug}/donate`}
+          className={`block ${pack.surfaces.cardClass} p-6 group`}
+        >
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
+              <Heart className="w-5 h-5 text-accent-600" strokeWidth={1.5} />
+            </div>
+            <h3 className={`${pack.typography.cardTitleClass} text-lg`}>Make a Donation</h3>
+          </div>
+          <p className="text-neutral-500 text-sm mb-4">
+            Can&apos;t play this year? Support the cause directly with an online donation.
+          </p>
+          <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
+            Donate Now
+            <ChevronRight className="w-4 h-4" />
+          </span>
+        </Link>
+      )}
+    </>
   );
 
   return (
     <div className={`min-h-screen ${pack.surfaces.pageClass}`} data-theme-pack={pack.id}>
       <SignedInAdminBar />
 
-      {/* ================================================================= */}
-      {/* HERO — Branded tournament header (single signature moment)        */}
-      {/* ================================================================= */}
-      <PublicHero
-        imageUrl={heroBannerUrl}
-        imageAlt={`${tournament.name} header artwork`}
-        imageDisplay="showcase"
-        containerClassName="min-h-[320px] lg:min-h-[360px]"
-        contentClassName={pack.hero.contentWrapperClass}
-        themePack={pack}
-      >
-        <RevealOnScroll
-          variant={pack.signatureMotion.variant}
-          distancePx={pack.signatureMotion.distancePx}
-          durationMs={pack.signatureMotion.durationMs}
-        >
-          <div className="flex items-start gap-4 sm:gap-6">
-            {branding.logoUrl ? (
-              <div className={`mt-1 hidden shrink-0 sm:block ${pack.hero.variant === 'crest' ? 'rounded-xl border-2 border-accent-400/75 bg-white/10 p-1.5' : ''}`}>
-                <img
-                  src={branding.logoUrl}
-                  alt={organization?.name || tournament.name}
-                  className="h-10 w-auto rounded-lg object-contain"
-                />
-              </div>
-            ) : (
-              <div className={`mt-1 hidden shrink-0 sm:flex ${pack.hero.logoFrameClass} h-10 w-10`}>
-                <Flag className="h-5 w-5 text-brand-foreground" />
-              </div>
-            )}
-            <div className="min-w-0">
-              <Link to="/" className="inline-flex items-center gap-1 text-sm text-white/70 transition-colors hover:text-white">
-                <ChevronLeft className="w-4 h-4" />
-                Back to Events
-              </Link>
-              <div className={`mt-4 ${pack.hero.accentRuleClass}`} />
-              {tournament.edition && (
-                <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-white/75">
-                  {tournament.edition}
-                </p>
-              )}
-              <h1 className={`mt-2 ${pack.typography.heroTitleClass}`}>
-                {tournament.name}
-              </h1>
-              <p className={pack.typography.heroSubtitleClass}>
-                {formatEventDate(tournament.event_date)}{tournament.location_name ? ` · ${tournament.location_name}` : ''}
-              </p>
-              <div className="mt-5 flex flex-wrap items-center gap-3">
-                <span className={`${pack.surfaces.badgeClass} py-1.5 text-sm ${status.bg} ${status.text}`}>
-                  {status.label}
-                </span>
-                {branding.signatureImageUrl && (
-                  <img
-                    src={branding.signatureImageUrl}
-                    alt={`${tournament.name} emblem`}
-                    className="h-9 w-auto rounded object-contain opacity-90"
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-        </RevealOnScroll>
-      </PublicHero>
+      <PublicTournamentHero
+        pack={pack}
+        title={tournament.name}
+        organizerName={organization?.name}
+        edition={tournament.edition}
+        eventLine={[formatEventDate(tournament.event_date), tournament.location_name].filter(Boolean).join(' · ')}
+        status={<span className={`${pack.surfaces.badgeClass} py-1.5 text-sm ${status.bg} ${status.text}`}>{status.label}</span>}
+        action={tournament.can_register && (
+          <Link to={registrationHref} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-brand-600 px-5 text-sm font-semibold text-brand-foreground ring-1 ring-white/50 hover:bg-brand-700">
+            {isCrest && tournament.team_size === 4 ? 'Register a Foursome' : 'Register to Play'}
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        )}
+        logoUrl={resolvePublicImageUrl(branding.logoUrl)}
+        organizationLogoUrl={branding.organizationLogoUrl}
+        reversedLogoUrl={branding.reversedLogoUrl}
+        photoUrl={branding.eventPhotoUrl}
+        emblemUrl={branding.eventEmblemUrl}
+        commemorativeBannerUrl={resolvePublicImageUrl(tournament.commemorative_banner_url)}
+        tributeTitle={tournament.tribute_title}
+        tributeSubtitle={tournament.tribute_subtitle}
+        progress={capacitySummary}
+      />
 
       {/* ================================================================= */}
       {/* KEY STATS BAR                                                      */}
@@ -234,6 +255,19 @@ export function OrgTournamentPage() {
           </div>
         </div>
       </div>
+
+      {isCharity && <CharityStoryStrip photos={tournament.story_photos} />}
+
+      {featuredActions && (canJoinFoursome || tournament.raffle_enabled || tournament.features?.sponsor_checkout || tournament.features?.donations) && (
+        <section className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" aria-labelledby="fundraising-actions">
+          <h2 id="fundraising-actions" className={`mb-5 ${pack.typography.sectionTitleClass}`}>
+            {isCrest ? 'Play & Support' : 'Support the Cause'}
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{fundraisingCards}</div>
+        </section>
+      )}
+
+      {isCharity && sponsorShowcase}
 
       {/* ================================================================= */}
       {/* MAIN CONTENT — Two columns (quiet, no scroll-reveal spam)         */}
@@ -470,117 +504,12 @@ export function OrgTournamentPage() {
               </div>
             )}
 
-            {/* Raffle CTA — only when raffle is enabled */}
-            {tournament.raffle_enabled && (
-              <Link
-                to={`/${tournamentSlug}/raffle`}
-                className={`block ${pack.surfaces.cardClass} p-6 group`}
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
-                    <Gift className="w-5 h-5 text-accent-500" strokeWidth={1.5} />
-                  </div>
-                  <h3 className={`${pack.typography.cardTitleClass} text-lg`}>Raffle Prizes</h3>
-                </div>
-                {tournament.raffle_description ? (
-                  <p className="text-neutral-500 text-sm mb-4 line-clamp-2">{tournament.raffle_description}</p>
-                ) : (
-                  <p className="text-neutral-500 text-sm mb-4">View prizes and check your tickets</p>
-                )}
-                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
-                  <Ticket className="w-4 h-4" strokeWidth={1.5} />
-                  View Raffle Board
-                  <ChevronRight className="w-4 h-4" />
-                </span>
-              </Link>
-            )}
-
-            {/* Sponsor Checkout CTA — only when sponsor_checkout feature is enabled */}
-            {tournament.features?.sponsor_checkout && (
-              <Link
-                to={`/${orgSlug}/tournaments/${tournament.slug}/sponsor`}
-                className={`block ${pack.surfaces.cardClass} p-6 group`}
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-brand-600/10 flex items-center justify-center">
-                    <Award className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
-                  </div>
-                  <h3 className={`${pack.typography.cardTitleClass} text-lg`}>Become a Sponsor</h3>
-                </div>
-                <p className="text-neutral-500 text-sm mb-4">
-                  View sponsorship tiers, included player slots, and reserve your package online.
-                </p>
-                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
-                  View Sponsor Tiers
-                  <ChevronRight className="w-4 h-4" />
-                </span>
-              </Link>
-            )}
-
-            {/* Donations CTA — only when donations feature is enabled */}
-            {tournament.features?.donations && (
-              <Link
-                to={`/${orgSlug}/tournaments/${tournament.slug}/donate`}
-                className={`block ${pack.surfaces.cardClass} p-6 group`}
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
-                    <Heart className="w-5 h-5 text-accent-600" strokeWidth={1.5} />
-                  </div>
-                  <h3 className={`${pack.typography.cardTitleClass} text-lg`}>Make a Donation</h3>
-                </div>
-                <p className="text-neutral-500 text-sm mb-4">
-                  Can&apos;t play this year? Support the cause directly with an online donation.
-                </p>
-                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
-                  Donate Now
-                  <ChevronRight className="w-4 h-4" />
-                </span>
-              </Link>
-            )}
+            {!featuredActions && fundraisingCards}
           </div>
         </div>
       </main>
 
-      {/* ================================================================= */}
-      {/* SPONSORS (static grid — no marquees, no staggered scroll spam)    */}
-      {/* ================================================================= */}
-      {tournament.sponsors && tournament.sponsors.length > 0 && (
-        <section className={pack.surfaces.mutedSectionClass}>
-          <div className="max-w-5xl mx-auto px-6 lg:px-8 py-16 lg:py-24">
-            <div className="flex items-center gap-3 mb-8">
-              <Star className="w-5 h-5 text-accent-500" strokeWidth={2} />
-              <h2 className={pack.typography.sectionTitleClass}>Our Sponsors</h2>
-            </div>
-
-            {sponsorTiers.map((tierDef) => {
-              const tierSponsors = (tournament.sponsors || []).filter(s => s.tier === tierDef.key);
-              if (tierSponsors.length === 0) return null;
-
-              const isHoleTier = tierSponsors.some(s => s.hole_number != null);
-              const isTopTier = tierDef.sort_order <= 1;
-
-              return (
-                <div key={tierDef.key} className="mb-10">
-                  <h3 className="text-lg font-semibold text-neutral-700 tracking-tight mb-4">
-                    {tierDef.label}{tierDef.label.toLowerCase().includes('sponsor') ? '' : ' Sponsors'}
-                  </h3>
-                  {isHoleTier ? (
-                    <HoleSponsorGrid sponsors={tierSponsors} courseConfigs={tournament.course_configs} pack={pack} />
-                  ) : (
-                    <SponsorGrid
-                      sponsors={tierSponsors}
-                      size={isTopTier ? 'large' : 'small'}
-                      columns={isTopTier ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'}
-                      pack={pack}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {!isCharity && sponsorShowcase}
 
       {/* ================================================================= */}
       {/* FOOTER                                                             */}
@@ -603,157 +532,4 @@ export function OrgTournamentPage() {
       </footer>
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Sponsor grid (static)
-// ---------------------------------------------------------------------------
-
-function SponsorGrid({
-  sponsors,
-  size,
-  columns,
-  pack,
-}: {
-  sponsors: Sponsor[];
-  size: 'large' | 'small';
-  columns: string;
-  pack: ThemePackDefinition;
-}) {
-  return (
-    <div className={`grid ${columns} gap-4`}>
-      {sponsors.map((sponsor) => (
-        <SponsorCard key={sponsor.id} sponsor={sponsor} size={size} pack={pack} />
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Hole sponsor grid (static)
-// ---------------------------------------------------------------------------
-
-function HoleSponsorGrid({
-  sponsors,
-  courseConfigs,
-  pack,
-}: {
-  sponsors: Sponsor[];
-  courseConfigs?: Tournament['course_configs'];
-  pack: ThemePackDefinition;
-}) {
-  const sorted = sortHoleSponsors(sponsors, courseConfigs);
-
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-      {sorted.map((sponsor) => {
-        const inner = (
-          <div className={`relative ${pack.surfaces.cardClass} overflow-hidden`}>
-            {/* Logo area */}
-            <div className="flex items-center justify-center bg-neutral-50/60 p-4 min-h-[80px]">
-              {sponsor.logo_url ? (
-                <img
-                  src={sponsor.logo_url}
-                  alt={sponsor.name}
-                  className="max-w-full max-h-10 object-contain"
-                />
-              ) : (
-                <Building2 className="w-8 h-8 text-neutral-300" strokeWidth={1.5} />
-              )}
-            </div>
-            {/* Name */}
-            <div className="text-center px-2 py-2">
-              <p className="font-semibold text-neutral-800 text-xs truncate">{sponsor.name}</p>
-              {sponsor.display_label && (
-                <p className="text-[10px] text-neutral-500 mt-1">{sponsor.display_label}</p>
-              )}
-              {sponsor.website_url && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-brand-600 mt-1">
-                  <ExternalLink className="w-2.5 h-2.5" />
-                  Visit
-                </span>
-              )}
-            </div>
-          </div>
-        );
-        return sponsor.website_url ? (
-          <a key={sponsor.id} href={sponsor.website_url} target="_blank" rel="noopener noreferrer" className="block">
-            {inner}
-          </a>
-        ) : (
-          <div key={sponsor.id}>{inner}</div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Sponsor card
-// ---------------------------------------------------------------------------
-
-function SponsorCard({
-  sponsor,
-  size,
-  pack,
-}: {
-  sponsor: Sponsor;
-  size: 'large' | 'small';
-  pack: ThemePackDefinition;
-}) {
-  const isLarge = size === 'large';
-
-  const card = (
-    <div className={`group relative ${pack.surfaces.cardClass} flex flex-col overflow-hidden`}>
-      {/* Logo / placeholder area */}
-      <div className={`flex items-center justify-center bg-neutral-50/60 ${
-        isLarge ? 'p-5 min-h-[100px]' : 'p-4 min-h-[72px]'
-      }`}>
-        {sponsor.logo_url ? (
-          <img
-            src={sponsor.logo_url}
-            alt={sponsor.name}
-            className={`max-w-full object-contain ${isLarge ? 'max-h-14' : 'max-h-9'}`}
-          />
-        ) : (
-          <Building2
-            className={`text-neutral-300 ${isLarge ? 'w-10 h-10' : 'w-7 h-7'}`}
-            strokeWidth={1.5}
-          />
-        )}
-      </div>
-
-      {/* Name + description */}
-      <div className={`text-center ${isLarge ? 'px-3 py-3' : 'px-2 py-2'}`}>
-        <p className={`font-semibold text-neutral-800 leading-tight ${
-          isLarge ? 'text-sm' : 'text-xs'
-        }`}>
-          {sponsor.name}
-        </p>
-        {sponsor.description && isLarge && (
-          <p className="text-[11px] text-neutral-500 mt-1 line-clamp-2 leading-relaxed">
-            {sponsor.description}
-          </p>
-        )}
-        {sponsor.website_url && (
-          <span className={`inline-flex items-center gap-1 text-brand-600 mt-1.5 ${
-            isLarge ? 'text-xs' : 'text-[10px]'
-          }`}>
-            <ExternalLink className="w-2.5 h-2.5" />
-            Visit
-          </span>
-        )}
-      </div>
-    </div>
-  );
-
-  if (sponsor.website_url) {
-    return (
-      <a href={sponsor.website_url} target="_blank" rel="noopener noreferrer" className="block">
-        {card}
-      </a>
-    );
-  }
-
-  return card;
 }

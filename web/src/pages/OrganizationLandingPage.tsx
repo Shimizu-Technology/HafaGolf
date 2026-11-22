@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useOrganization } from '../components/OrganizationProvider';
 import { PublicHero } from '../components/PublicHero';
+import { PublicSponsors } from '../components/PublicSponsors';
 import { RevealOnScroll } from '../components/RevealOnScroll';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { api, Tournament } from '../services/api';
@@ -35,10 +36,23 @@ export function OrganizationLandingPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const featuredThemePreset = useMemo(() => {
-    const featured = tournaments.find((t) => t.status === 'open') || tournaments[0];
-    return featured?.theme_preset;
-  }, [tournaments]);
+  const [featuredSponsors, setFeaturedSponsors] = useState<Tournament | null>(null);
+  const featuredTournament = tournaments.find((t) => t.status === 'open') || tournaments[0];
+  const featuredThemePreset = featuredTournament?.theme_preset;
+  const sponsorEventSlug = organization?.show_homepage_sponsors && featuredTournament?.show_public_sponsors !== false
+    ? featuredTournament?.slug
+    : null;
+
+  useEffect(() => {
+    if (!orgSlug || !sponsorEventSlug) return;
+    let cancelled = false;
+
+    api.getOrganizationTournament(orgSlug, sponsorEventSlug)
+      .then((event) => { if (!cancelled) setFeaturedSponsors(event); })
+      .catch(() => { if (!cancelled) setFeaturedSponsors(null); });
+
+    return () => { cancelled = true; };
+  }, [orgSlug, sponsorEventSlug]);
 
   const featuredTournamentBranding = useMemo(
     () => (featuredThemePreset ? { theme_preset: featuredThemePreset, use_org_branding: true } : null),
@@ -215,6 +229,10 @@ export function OrganizationLandingPage() {
           </div>
         )}
       </main>
+
+      {sponsorEventSlug && featuredSponsors?.slug === sponsorEventSlug && featuredSponsors.organization_slug === orgSlug && (
+        <PublicSponsors tournament={featuredSponsors} pack={pack} featuredOnly />
+      )}
 
       {/* ================================================================= */}
       {/* CONTACT                                                            */}

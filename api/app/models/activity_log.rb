@@ -36,6 +36,7 @@ class ActivityLog < ApplicationRecord
     registration_removed_from_group
     team_member_checked_in
     team_member_unchecked
+    waiver_signed
     settings_updated
     admin_created
     admin_deleted
