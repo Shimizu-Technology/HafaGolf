@@ -1524,10 +1524,10 @@ export class ApiClient {
   }
 
   async downloadTournamentSettlementCsv(tournamentId: number): Promise<Blob> {
-    const token = await this.getAuthToken();
+    const token = this.getAuthToken ? await this.getAuthToken() : null;
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${API_URL}/api/v1/tournaments/${tournamentId}/settlement/export`, {
+    const res = await fetch(`${API_BASE_URL}/api/v1/tournaments/${tournamentId}/settlement/export`, {
       headers,
     });
     if (!res.ok) {
