@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
+  AlertTriangle,
   Archive,
+  ArrowRight,
   Calendar,
   ChevronRight,
   Copy,
@@ -13,17 +15,38 @@ import {
   Ticket,
   Trophy,
   Users,
+  X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useTournament } from '../contexts';
+import { useAdmin, useTournament } from '../contexts';
+import { useOrganization } from '../components/OrganizationProvider';
+import { CloneTournamentModal } from '../components/CloneTournamentModal';
+import { useOrganizationStore } from '../stores/organizationStore';
 import { adminEventPath, adminOrgRoutes } from '../utils/adminRoutes';
 import { formatShortDate } from '../utils/dates';
-import { api, type Tournament } from '../services/api';
+import {
+  api,
+  type CloneTournamentResponse,
+  type Organization,
+  type Tournament,
+} from '../services/api';
+
+interface PostCloneNotice {
+  tournament: Tournament;
+  warnings: string[];
+  isCrossOrg: boolean;
+  targetOrganization?: Organization;
+}
 
 export const EventsManagementPage: React.FC = () => {
   const navigate = useNavigate();
+  const { isSuperAdmin } = useAdmin();
+  const { organization } = useOrganization();
+  const setOrganization = useOrganizationStore((state) => state.setOrganization);
   const { tournaments, currentTournament, isLoading, error, refreshTournaments } = useTournament();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [cloneTarget, setCloneTarget] = useState<Tournament | null>(null);
+  const [postCloneNotice, setPostCloneNotice] = useState<PostCloneNotice | null>(null);
 
   const activeTournaments = useMemo(
     () => tournaments.filter((tournament) => tournament.status !== 'archived'),
@@ -88,7 +111,7 @@ export const EventsManagementPage: React.FC = () => {
 
   const runEventAction = async (
     tournament: Tournament,
-    action: 'open' | 'close' | 'complete' | 'archive' | 'copy'
+    action: 'open' | 'close' | 'complete' | 'archive'
   ) => {
     const actionCopy = {
       open: {
@@ -107,35 +130,65 @@ export const EventsManagementPage: React.FC = () => {
         confirm: `Archive "${tournament.name}"? It will move to historical events but remain available for reference.`,
         success: 'Event archived',
       },
-      copy: {
-        confirm: `Clone "${tournament.name}" for next year? Registrations, tickets, winners, groups, and scores will not be copied.`,
-        success: 'Event cloned',
-      },
     }[action];
 
     if (!confirm(actionCopy.confirm)) return;
 
     setActionLoading(`${action}-${tournament.id}`);
     try {
-      const result = await ({
+      await ({
         open: () => api.openTournament(tournament.id),
         close: () => api.closeTournament(tournament.id),
         complete: () => api.completeTournament(tournament.id),
         archive: () => api.archiveTournament(tournament.id),
-        copy: () => api.copyTournament(tournament.id),
       }[action]());
 
       toast.success(actionCopy.success);
       await refreshTournaments();
-
-      if (action === 'copy') {
-        navigate(adminEventPath(result.slug, 'settings'));
-      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Event action failed');
     } finally {
       setActionLoading(null);
     }
+  };
+
+  const handleCloned = async (
+    response: CloneTournamentResponse,
+    targetOrganization?: Organization
+  ) => {
+    const isCrossOrg = response.clone_metadata?.mode === 'cross_org_template';
+    setCloneTarget(null);
+
+    toast.success(
+      isCrossOrg && targetOrganization
+        ? `Cloned "${response.tournament.name}" as draft into ${targetOrganization.name}`
+        : `Cloned "${response.tournament.name}" as draft`
+    );
+
+    if (response.clone_warnings.length > 0) {
+      setPostCloneNotice({
+        tournament: response.tournament,
+        warnings: response.clone_warnings,
+        isCrossOrg,
+        targetOrganization,
+      });
+    } else {
+      setPostCloneNotice(null);
+    }
+
+    await refreshTournaments();
+
+    if (!isCrossOrg && response.clone_warnings.length === 0) {
+      navigate(adminEventPath(response.tournament.slug, 'settings'));
+    }
+  };
+
+  const handleOpenClonedTournament = (notice: PostCloneNotice) => {
+    if (notice.isCrossOrg && notice.targetOrganization) {
+      setOrganization(notice.targetOrganization);
+    }
+    setPostCloneNotice(null);
+    navigate(adminEventPath(notice.tournament.slug, 'settings'));
   };
 
   if (isLoading) {
@@ -157,6 +210,56 @@ export const EventsManagementPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      {postCloneNotice && (
+        <section
+          role="status"
+          className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600" />
+              <div className="space-y-2">
+                <div>
+                  <h2 className="text-sm font-semibold text-amber-950">
+                    Draft cloned: {postCloneNotice.tournament.display_name || postCloneNotice.tournament.name}
+                  </h2>
+                  <p className="mt-0.5 text-xs text-amber-900">
+                    Review the following items before opening registration:
+                  </p>
+                </div>
+                <ul className="list-disc space-y-1 pl-4 text-sm text-amber-900">
+                  {postCloneNotice.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenClonedTournament(postCloneNotice)}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-900 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-amber-800"
+                  >
+                    <span>
+                      {postCloneNotice.isCrossOrg && postCloneNotice.targetOrganization
+                        ? `Switch to ${postCloneNotice.targetOrganization.name} & Configure Draft`
+                        : 'Configure New Draft Event'}
+                    </span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPostCloneNotice(null)}
+              aria-label="Dismiss clone warnings"
+              className="rounded-xl p-1.5 text-amber-700 transition hover:bg-amber-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </section>
+      )}
+
       <section className="rounded-[28px] bg-white p-6 shadow-sm sm:p-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="max-w-2xl">
@@ -354,11 +457,11 @@ export const EventsManagementPage: React.FC = () => {
                         </button>
                       )}
                       <button
-                        onClick={() => runEventAction(tournament, 'copy')}
-                        disabled={actionLoading === `copy-${tournament.id}`}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+                        type="button"
+                        onClick={() => setCloneTarget(tournament)}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
                       >
-                        {actionLoading === `copy-${tournament.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+                        <Copy className="h-4 w-4" />
                         Clone
                       </button>
                     </div>
@@ -390,12 +493,11 @@ export const EventsManagementPage: React.FC = () => {
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation();
-                    runEventAction(tournament, 'copy');
+                    setCloneTarget(tournament);
                   }}
-                  disabled={actionLoading === `copy-${tournament.id}`}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-white"
                 >
-                  {actionLoading === `copy-${tournament.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
+                  <Copy className="h-3.5 w-3.5" />
                   Clone
                 </button>
                 <Link to={adminEventPath(tournament.slug)} className="rounded-lg p-2 text-neutral-400 hover:bg-white">
@@ -405,6 +507,16 @@ export const EventsManagementPage: React.FC = () => {
             ))}
           </div>
         </section>
+      )}
+
+      {cloneTarget && (
+        <CloneTournamentModal
+          tournament={cloneTarget}
+          currentOrganizationId={organization?.id}
+          isSuperAdmin={isSuperAdmin}
+          onClose={() => setCloneTarget(null)}
+          onCloned={handleCloned}
+        />
       )}
     </div>
   );

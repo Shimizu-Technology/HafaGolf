@@ -98,6 +98,7 @@ Rails.application.routes.draw do
       resources :tournaments, except: [:create] do
         member do
           post :archive
+          post :clone
           post :copy
           post :open
           post :close

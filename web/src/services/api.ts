@@ -213,6 +213,32 @@ export interface Tournament {
   registration_count?: number;
 }
 
+export interface CloneTournamentParams {
+  name?: string;
+  year?: number;
+  edition?: string | null;
+  event_date?: string | null;
+  copy_sponsor_shells?: boolean;
+  copy_raffle_prizes?: boolean;
+  target_organization_id?: string | null;
+}
+
+export interface CloneTournamentMetadata {
+  mode: 'same_org' | 'cross_org_template';
+  source_tournament_id: number;
+  source_organization_id: string;
+  target_organization_id: string;
+  requires_payment_url_review: boolean;
+  copied_sponsor_shells_count: number;
+  copied_raffle_prizes_count: number;
+}
+
+export interface CloneTournamentResponse {
+  tournament: Tournament;
+  clone_warnings: string[];
+  clone_metadata: CloneTournamentMetadata;
+}
+
 export interface Golfer {
   id: number;
   tournament_id: number;
@@ -799,10 +825,19 @@ export class ApiClient {
     });
   }
 
-  async copyTournament(id: number): Promise<Tournament> {
-    return this.request(`/api/v1/tournaments/${id}/copy`, {
+  async cloneTournament(
+    id: number,
+    params: CloneTournamentParams = {}
+  ): Promise<CloneTournamentResponse> {
+    return this.request(`/api/v1/tournaments/${id}/clone`, {
       method: 'POST',
+      body: JSON.stringify(params),
     });
+  }
+
+  async copyTournament(id: number, params: CloneTournamentParams = {}): Promise<Tournament> {
+    const response = await this.cloneTournament(id, params);
+    return response.tournament;
   }
 
   async openTournament(id: number): Promise<Tournament> {
