@@ -5,6 +5,7 @@ import {
   DollarSign,
   Download,
   Grid3X3,
+  Landmark,
   List,
   Phone,
   RefreshCw,
@@ -12,6 +13,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { PayoutStatementPanel } from '../components/PayoutStatementPanel';
 import {
   api,
   CombinedLedgerReportRow,
@@ -28,7 +30,7 @@ import { useGolferChannel } from '../hooks/useGolferChannel';
 import { useTournament } from '../contexts';
 import { formatDate, formatDateTime, formatShortDate } from '../utils/dates';
 
-type ReportTab = 'registrations' | 'checkin' | 'payments' | 'groups' | 'contacts';
+type ReportTab = 'registrations' | 'checkin' | 'payments' | 'payouts' | 'groups' | 'contacts';
 type PaymentReportSection = 'registrations' | 'sponsors' | 'raffle' | 'included' | 'ledger';
 
 const startingPositionText = (golfer: Pick<Golfer, 'hole_position_label'>) =>
@@ -337,6 +339,7 @@ export function ReportsPage() {
     { id: 'registrations', label: 'All Registrations', mobileLabel: 'All', icon: <List size={14} /> },
     { id: 'checkin', label: 'Check-In Sheet', mobileLabel: 'Check-In', icon: <ClipboardList size={14} /> },
     { id: 'payments', label: 'Payment Summary', mobileLabel: 'Payments', icon: <DollarSign size={14} /> },
+    { id: 'payouts', label: 'Payout Statement', mobileLabel: 'Payouts', icon: <Landmark size={14} /> },
     { id: 'groups', label: 'Pairings by Start', mobileLabel: 'Pairings', icon: <Grid3X3 size={14} /> },
     { id: 'contacts', label: 'Contact List', mobileLabel: 'Contacts', icon: <Phone size={14} /> },
   ];
@@ -439,7 +442,7 @@ export function ReportsPage() {
       </div>
 
       {/* Search & filters */}
-      {activeTab !== 'groups' && (
+      {activeTab !== 'groups' && activeTab !== 'payouts' && (
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
           <div className="relative flex-1">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -485,6 +488,9 @@ export function ReportsPage() {
             onTimingChange={setPaymentTimingFilter}
             onChannelChange={setPaymentChannelFilter}
           />
+        )}
+        {activeTab === 'payouts' && activeTournament && (
+          <PayoutStatementPanel tournamentId={activeTournament.id} />
         )}
         {activeTab === 'groups' && (
           <GroupsTab

@@ -248,7 +248,8 @@ class Api::V1::OrganizationsControllerTest < ActionDispatch::IntegrationTest
       group: group,
       position: 1
     )
-    Setting.instance.update!(stripe_secret_key: "sk_test_refund_failure")
+    previous_stripe_key = ENV["PLATFORM_STRIPE_SECRET_KEY"]
+    ENV["PLATFORM_STRIPE_SECRET_KEY"] = "sk_test_refund_failure"
 
     refund_singleton = class << Stripe::Refund; self; end
     refund_singleton.send(:alias_method, :__original_create_for_test, :create)
@@ -259,6 +260,7 @@ class Api::V1::OrganizationsControllerTest < ActionDispatch::IntegrationTest
            headers: auth_headers,
            as: :json
     ensure
+      ENV["PLATFORM_STRIPE_SECRET_KEY"] = previous_stripe_key
       refund_singleton.send(:alias_method, :create, :__original_create_for_test)
       refund_singleton.send(:remove_method, :__original_create_for_test)
     end

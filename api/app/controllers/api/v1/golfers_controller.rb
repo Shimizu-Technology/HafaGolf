@@ -1088,11 +1088,14 @@ module Api
       # Public endpoint to check registration capacity
       def registration_status
         tournament = resolve_public_tournament(tournament_id: params[:tournament_id])
-        settings = Setting.instance
 
         if tournament
+          payment_config = tournament.organization.effective_payment_config
+          payment_adapter = Payments::Resolver.for(tournament.organization)
           render json: {
             tournament_id: tournament.id,
+            payment_mode: payment_config.payment_mode,
+            processor_provider: payment_config.processor_provider,
             # Total capacity (for admin reference)
             max_capacity: tournament.max_capacity,
             confirmed_count: tournament.confirmed_count,
@@ -1126,10 +1129,9 @@ module Api
             checks_payable_to: tournament.checks_payable_to,
             contact_name: tournament.contact_name,
             contact_phone: tournament.contact_phone,
-            # Global settings
-            stripe_configured: settings.stripe_configured?,
-            stripe_public_key: settings.stripe_public_key.presence,
-            payment_mode: settings.payment_mode
+            # Org payment settings (publishable key only; never secrets)
+            stripe_configured: payment_adapter.configured?,
+            stripe_public_key: payment_adapter.publishable_key
           }
         else
           render json: {
@@ -1187,12 +1189,15 @@ module Api
       end
 
       def authorize_golfer_access!
-        golfer = if action_name == "refund"
-          with_user_rls_context { Golfer.includes(:tournament).find(params[:id]) }
+        if action_name == "refund"
+          with_user_rls_context do
+            golfer = Golfer.includes(:tournament).find(params[:id])
+            require_tournament_admin!(golfer.tournament)
+          end
         else
-          Golfer.find(params[:id])
+          golfer = Golfer.find(params[:id])
+          require_tournament_admin!(golfer.tournament)
         end
-        require_tournament_admin!(golfer.tournament)
       end
 
       def authorize_golfer_volunteer_access!

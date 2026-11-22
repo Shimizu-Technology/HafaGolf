@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useOrganization } from '../components/OrganizationProvider';
 import { OrgFeaturesPanel } from '../components/OrgFeaturesPanel';
+import { OrgPaymentConfigPanel } from '../components/OrgPaymentConfigPanel';
 import { ImageUpload } from '../components/ImageUpload';
 import { ThemePackPicker } from '../components/ThemePackPicker';
 import { Skeleton } from '../components/LoadingStates';
@@ -1059,6 +1060,9 @@ export const OrgSettingsPage: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* Per-Organization Payment Configuration */}
+          <OrgPaymentConfigPanel organizationSlug={organization.slug} />
 
           {/* Platform Features */}
           <OrgFeaturesPanel

@@ -19,6 +19,9 @@ module TenantRls
   DIRECT_ORG_TABLES = %w[
     tournaments
     message_deliveries
+    organization_payment_configs
+    tournament_settlements
+    tournament_payouts
     employee_numbers
   ].freeze
 

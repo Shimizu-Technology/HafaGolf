@@ -56,15 +56,14 @@ org.add_admin(admin2)
 puts "  Super admin: #{admin2.email}"
 
 # =============================================================================
-# Settings (singleton)
+# Payment Config (per-organization)
 # =============================================================================
-Setting.find_or_create_by!(id: 1) do |s|
-  s.stripe_public_key = ENV['STRIPE_PUBLISHABLE_KEY']
-  s.stripe_secret_key = ENV['STRIPE_SECRET_KEY']
-  s.payment_mode = 'test'
-  s.admin_email = 'guamcnmi@wish.org'
+OrganizationPaymentConfig.find_or_create_by!(organization: org) do |c|
+  c.payment_mode = "external_link"
+  c.processor_provider = "swipesimple"
+  c.test_mode = false
 end
-puts "  Settings created"
+puts "  Payment config created"
 
 # =============================================================================
 # Tournament: Golf for Wishes 2026

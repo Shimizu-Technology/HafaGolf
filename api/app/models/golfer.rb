@@ -366,17 +366,28 @@ class Golfer < ApplicationRecord
     raise "Cannot refund - no payment intent" unless stripe_payment_intent_id.present?
     raise "Already refunded" if refunded?
 
-    setting = Setting.instance
-    stripe_secret = StripeConfig.secret_key(setting: setting)
-    raise "Stripe not configured" unless stripe_secret.present?
+    organization = tournament&.organization
+    payment_config = organization&.effective_payment_config
+    adapter = Payments::Resolver.for(organization, config: payment_config)
 
-    Stripe.api_key = stripe_secret
+    unless payment_config&.stripe_mode? && adapter.configured?
+      raise "Stripe is not configured for this organization"
+    end
 
-    # Process the refund through Stripe OUTSIDE any DB transaction
-    refund = Stripe::Refund.create({
+    # Historical refund safety: block automated cross-account Stripe refunds when
+    # the payment originated from a different/legacy Stripe account.
+    if stripe_account_origin.present? && adapter.account_origin.present? &&
+       stripe_account_origin != adapter.account_origin
+      raise "Cannot process automated refund: payment originated on Stripe account '#{stripe_account_origin}', " \
+            "which does not match this organization's active Stripe account ('#{adapter.account_origin}'). " \
+            "Refund in the original Stripe dashboard and use Mark Refunded."
+    end
+
+    # Process the refund through Stripe OUTSIDE any DB transaction using per-request api_key
+    refund = adapter.create_refund(
       payment_intent: stripe_payment_intent_id,
       reason: "requested_by_customer"
-    })
+    )
 
     persist_refund = lambda do
       ActiveRecord::Base.transaction(requires_new: true) do
