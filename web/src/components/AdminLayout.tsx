@@ -23,6 +23,7 @@ import {
 import { useOrganization } from './OrganizationProvider';
 import { useTournament, useAdmin } from '../contexts';
 import { adminEventPath, adminOrgRoutes, getAdminEventSection, getAdminEventSlug } from '../utils/adminRoutes';
+import { useApplyBranding } from '../utils/branding';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -56,6 +57,9 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
     return currentTournament;
   }, [currentTournament, routeTournamentSlug, tournaments]);
+
+  const branding = useApplyBranding(organization, activeTournament);
+  const organizationDisplayName = organization?.name || 'HafaGolf';
 
   useEffect(() => {
     if (!routeTournamentSlug || isLoading) return;
@@ -210,7 +214,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 onClick={() => handleNavigate(item.path)}
                 className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition-all ${
                   isActive
-                    ? 'bg-brand-600 text-white shadow-sm'
+                    ? 'bg-brand-600 text-brand-foreground shadow-sm'
                     : 'text-neutral-700 hover:bg-neutral-100'
                 }`}
               >
@@ -226,12 +230,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   return (
     <div className="min-h-screen bg-neutral-100">
-      <header className="sticky top-0 z-40 border-b border-brand-800/10 bg-brand-600 text-white shadow-sm">
+      <header className="sticky top-0 z-40 border-b border-brand-800/10 bg-brand-600 text-brand-foreground shadow-sm">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 lg:px-6">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setMobileMenuOpen((open) => !open)}
-              className="inline-flex rounded-xl p-2 text-white/90 transition hover:bg-white/10 lg:hidden"
+              className="inline-flex rounded-xl p-2 text-brand-foreground/90 transition hover:bg-white/10 lg:hidden"
               aria-label="Toggle admin navigation"
             >
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -241,9 +245,19 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
               onClick={() => navigate(adminOrgRoutes.dashboard)}
               className="flex items-center gap-3 text-left transition hover:opacity-90"
             >
-              <img src="/images/maw-star-icon.png" alt="Make-A-Wish Guam" className="h-10 w-10 rounded-xl bg-white/10 p-1.5" />
+              {branding.logoUrl ? (
+                <img
+                  src={branding.logoUrl}
+                  alt={organizationDisplayName}
+                  className="h-10 w-10 rounded-xl bg-white/10 object-contain p-1.5"
+                />
+              ) : (
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15">
+                  <Flag className="h-5 w-5 text-brand-foreground" />
+                </div>
+              )}
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-200">Make-A-Wish Guam</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-200">{organizationDisplayName}</p>
                 <h1 className="text-base font-semibold tracking-tight lg:text-lg">Admin Console</h1>
               </div>
             </button>
@@ -333,7 +347,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           <div className="flex items-center justify-between border-b border-neutral-200 pb-4 lg:hidden">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Admin navigation</p>
-              <p className="text-sm font-medium text-neutral-900">{organization?.name || 'Make-A-Wish Guam'}</p>
+              <p className="text-sm font-medium text-neutral-900">{organizationDisplayName}</p>
             </div>
             <button
               onClick={() => setMobileMenuOpen(false)}
@@ -376,7 +390,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                     onClick={() => handleNavigate(item.path)}
                     className={`flex w-full items-center justify-center rounded-2xl p-3 transition-all ${
                       isActive
-                        ? 'bg-brand-600 text-white shadow-sm'
+                        ? 'bg-brand-600 text-brand-foreground shadow-sm'
                         : 'text-neutral-700 hover:bg-neutral-100'
                     }`}
                     title={item.label}

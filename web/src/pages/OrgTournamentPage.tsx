@@ -16,6 +16,8 @@ import {
 import { formatDate, formatEventDate } from '../utils/dates';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { getPublicFacingCapacitySummary, getRegistrationStatusLabel } from '../utils/capacity';
+import { useApplyBranding } from '../utils/branding';
+import { getDefaultOrgSlug } from '../utils/tenant';
 
 // ---------------------------------------------------------------------------
 // Animation variants
@@ -99,10 +101,11 @@ function sortHoleSponsors(sponsors: Sponsor[], courseConfigs: Tournament['course
 export function OrgTournamentPage() {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization, isLoading: orgLoading } = useOrganization();
-  const orgSlug = organization?.slug || 'make-a-wish-guam';
+  const orgSlug = organization?.slug || getDefaultOrgSlug();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const branding = useApplyBranding(organization, tournament);
 
   useEffect(() => {
     async function fetchTournament() {
@@ -127,7 +130,7 @@ export function OrgTournamentPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-10 w-10 border-2 border-[#0057B8]/20 border-t-[#0057B8] mx-auto" />
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-brand-600/20 border-t-brand-600 mx-auto" />
           <p className="mt-5 text-sm text-neutral-500 tracking-wide uppercase">Loading tournament</p>
         </div>
       </div>
@@ -143,7 +146,7 @@ export function OrgTournamentPage() {
           <p className="mt-3 text-neutral-500 leading-relaxed">{error || 'The tournament does not exist.'}</p>
           <Link
             to="/"
-            className="inline-flex items-center gap-2 mt-6 px-6 py-2.5 text-sm font-semibold text-white bg-[#0057B8] rounded-full transition-colors hover:bg-[#003a6e]"
+            className="inline-flex items-center gap-2 mt-6 px-6 py-2.5 text-sm font-semibold text-brand-foreground bg-brand-600 rounded-full transition-colors hover:bg-brand-700"
           >
             Back to Tournaments
           </Link>
@@ -156,18 +159,18 @@ export function OrgTournamentPage() {
     if (tournament.status === 'in_progress') return { label: 'In Progress', bg: 'bg-amber-500', text: 'text-white' };
     if (tournament.status === 'completed') return { label: 'Completed', bg: 'bg-neutral-200', text: 'text-neutral-600' };
     if (tournament.status === 'archived') return { label: 'Archived', bg: 'bg-neutral-200', text: 'text-neutral-600' };
-    if (tournament.status === 'draft') return { label: 'Coming Soon', bg: 'bg-[#0057B8]', text: 'text-white' };
+    if (tournament.status === 'draft') return { label: 'Coming Soon', bg: 'bg-brand-600', text: 'text-brand-foreground' };
     if (!tournament.registration_open) return { label: 'Registration Closed', bg: 'bg-neutral-200', text: 'text-neutral-600' };
     const statusLabel = getRegistrationStatusLabel(tournament);
     if (statusLabel === 'Waitlist Open') return { label: 'Waitlist Open', bg: 'bg-amber-500', text: 'text-white' };
     if (statusLabel === 'At Capacity') return { label: 'At Capacity', bg: 'bg-neutral-200', text: 'text-neutral-600' };
     if (statusLabel === 'Public Registration Full') return { label: 'Public Registration Full', bg: 'bg-neutral-200', text: 'text-neutral-600' };
-    return { label: 'Registration Open', bg: 'bg-[#E31837]', text: 'text-white' };
+    return { label: 'Registration Open', bg: 'bg-accent-600', text: 'text-accent-foreground' };
   };
 
   const status = getStatusBadge();
   const capacitySummary = getPublicFacingCapacitySummary(tournament);
-  const heroBannerUrl = tournament.banner_url_override || null;
+  const heroBannerUrl = branding.bannerUrl;
   const sponsorTiers = [...(tournament.sponsor_tiers || FALLBACK_SPONSOR_TIERS)].sort(
     (a, b) => a.sort_order - b.sort_order
   );
@@ -177,7 +180,7 @@ export function OrgTournamentPage() {
     <div className="min-h-screen bg-white text-neutral-900">
       <SignedInAdminBar />
       {/* ================================================================= */}
-      {/* HERO — MAW blue gradient (no photo)                               */}
+      {/* HERO — Branded tournament gradient header                         */}
       {/* ================================================================= */}
       <PublicHero
         imageUrl={heroBannerUrl}
@@ -187,11 +190,17 @@ export function OrgTournamentPage() {
         contentClassName="max-w-3xl"
       >
         <div className="flex items-start gap-4 sm:gap-6">
-          <img
-            src="/images/maw-star-icon.png"
-            alt="Make-A-Wish Guam & CNMI"
-            className="mt-1 hidden h-10 flex-shrink-0 rounded-lg sm:block"
-          />
+          {branding.logoUrl ? (
+            <img
+              src={branding.logoUrl}
+              alt={organization?.name || tournament.name}
+              className="mt-1 hidden h-10 w-auto flex-shrink-0 rounded-lg object-contain sm:block"
+            />
+          ) : (
+            <div className="mt-1 hidden h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white/15 sm:flex">
+              <Flag className="h-5 w-5 text-brand-foreground" />
+            </div>
+          )}
           <div>
             <Link to="/" className="inline-flex items-center gap-1 text-sm text-white/70 transition-colors hover:text-white">
               <ChevronLeft className="w-4 h-4" />
@@ -218,29 +227,29 @@ export function OrgTournamentPage() {
           <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3 sm:gap-8 text-sm">
             {tournament.event_date && (
               <div className="flex items-center gap-2 text-neutral-600">
-                <Calendar className="w-4 h-4 text-[#0057B8]" strokeWidth={1.5} />
+                <Calendar className="w-4 h-4 text-brand-600" strokeWidth={1.5} />
                 <span>{formatEventDate(tournament.event_date)}</span>
               </div>
             )}
             {tournament.location_name && (
               <div className="flex items-center gap-2 text-neutral-600">
-                <MapPin className="w-4 h-4 text-[#0057B8]" strokeWidth={1.5} />
+                <MapPin className="w-4 h-4 text-brand-600" strokeWidth={1.5} />
                 <span>{tournament.location_name}</span>
               </div>
             )}
             {tournament.format_name && (
               <div className="flex items-center gap-2 text-neutral-600">
-                <Flag className="w-4 h-4 text-[#0057B8]" strokeWidth={1.5} />
+                <Flag className="w-4 h-4 text-brand-600" strokeWidth={1.5} />
                 <span>{tournament.format_name}</span>
               </div>
             )}
             <div className="flex items-center gap-2 text-neutral-600">
-              <DollarSign className="w-4 h-4 text-[#0057B8]" strokeWidth={1.5} />
+              <DollarSign className="w-4 h-4 text-brand-600" strokeWidth={1.5} />
               <span>{tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}</span>
             </div>
             {capacitySummary.label && (
               <div className="flex items-center gap-2 text-neutral-600">
-                <Users className="w-4 h-4 text-[#0057B8]" strokeWidth={1.5} />
+                <Users className="w-4 h-4 text-brand-600" strokeWidth={1.5} />
                 <span>{capacitySummary.label}</span>
               </div>
             )}
@@ -261,7 +270,7 @@ export function OrgTournamentPage() {
               <div className="space-y-5">
                 {tournament.location_name && (
                   <div className="flex items-start gap-3">
-                    <MapPin className="w-5 h-5 mt-0.5 shrink-0 text-[#0057B8]" strokeWidth={1.5} />
+                    <MapPin className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
                     <div>
                       <p className="font-medium text-neutral-900">{tournament.location_name}</p>
                       {tournament.location_address && (
@@ -272,7 +281,7 @@ export function OrgTournamentPage() {
                 )}
 
                 <div className="flex items-start gap-3">
-                  <Calendar className="w-5 h-5 mt-0.5 shrink-0 text-[#0057B8]" strokeWidth={1.5} />
+                  <Calendar className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
                   <div>
                     <p className="font-medium text-neutral-900">{formatEventDate(tournament.event_date) || 'Date TBA'}</p>
                     {(tournament.check_in_time || tournament.registration_time) && (
@@ -286,7 +295,7 @@ export function OrgTournamentPage() {
 
                 {tournament.format_name && (
                   <div className="flex items-start gap-3">
-                    <Trophy className="w-5 h-5 mt-0.5 shrink-0 text-[#0057B8]" strokeWidth={1.5} />
+                    <Trophy className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
                     <div>
                       <p className="font-medium text-neutral-900">Format: {tournament.format_name}</p>
                       {tournament.tournament_format && (
@@ -300,14 +309,14 @@ export function OrgTournamentPage() {
                 )}
 
                 {tournament.fee_includes && (
-                  <div className="mt-6 p-4 rounded-2xl bg-[#F5F5F5]">
+                  <div className="mt-6 p-4 rounded-2xl bg-neutral-100">
                     <p className="font-medium text-neutral-900 mb-1">Entry Fee Includes:</p>
                     <p className="text-neutral-600 text-sm leading-relaxed">{tournament.fee_includes}</p>
                   </div>
                 )}
 
                 {tournament.tournament_info && (
-                  <div className="mt-6 p-4 rounded-2xl bg-[#F5F5F5]">
+                  <div className="mt-6 p-4 rounded-2xl bg-neutral-100">
                     <p className="font-medium text-neutral-900 mb-1">Tournament Info</p>
                     <p className="text-neutral-600 text-sm leading-relaxed whitespace-pre-line">{tournament.tournament_info}</p>
                   </div>
@@ -322,15 +331,15 @@ export function OrgTournamentPage() {
                       <p className="text-neutral-500 text-sm">{tournament.contact_phone}</p>
                     )}
                     {tournament.contact_email && (
-                      <a href={`mailto:${tournament.contact_email}`} className="text-[#0057B8] hover:underline text-sm">{tournament.contact_email}</a>
+                      <a href={`mailto:${tournament.contact_email}`} className="text-brand-600 hover:underline text-sm">{tournament.contact_email}</a>
                     )}
                   </div>
                 )}
 
                 {(tournament.event_schedule || tournament.check_in_time || tournament.start_time) && (
-                  <div className="mt-6 p-4 rounded-2xl bg-[#F5F5F5]">
+                  <div className="mt-6 p-4 rounded-2xl bg-neutral-100">
                     <div className="flex items-center gap-2 mb-3">
-                      <Clock className="w-5 h-5 text-[#0057B8]" strokeWidth={1.5} />
+                      <Clock className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
                       <p className="font-medium text-neutral-900">Event Schedule</p>
                     </div>
                     <ul className="space-y-1.5 text-sm text-neutral-600">
@@ -408,7 +417,7 @@ export function OrgTournamentPage() {
                   ) : (
                     <Link
                       to={`/${tournamentSlug}/register`}
-                      className="flex items-center justify-center gap-2 w-full text-center px-5 py-3 text-sm font-semibold text-white bg-[#E31837] hover:bg-[#c41230] rounded-full transition-colors duration-200"
+                      className="flex items-center justify-center gap-2 w-full text-center px-5 py-3 text-sm font-semibold text-brand-foreground bg-brand-600 hover:bg-brand-700 rounded-full transition-colors duration-200"
                     >
                       Register Now
                       <ChevronRight className="w-4 h-4" strokeWidth={2} />
@@ -451,24 +460,24 @@ export function OrgTournamentPage() {
                     <ul className="space-y-2.5 text-sm text-neutral-600">
                       {tournament.allow_card && (
                         <li className="flex items-center gap-2.5">
-                          <div className="w-5 h-5 rounded-md flex items-center justify-center bg-[#0057B8]/10">
-                            <Check className="w-3 h-3 text-[#0057B8]" />
+                          <div className="w-5 h-5 rounded-md flex items-center justify-center bg-brand-600/10">
+                            <Check className="w-3 h-3 text-brand-600" />
                           </div>
                           Credit/Debit Card
                         </li>
                       )}
                       {tournament.allow_cash && (
                         <li className="flex items-center gap-2.5">
-                          <div className="w-5 h-5 rounded-md flex items-center justify-center bg-[#0057B8]/10">
-                            <Check className="w-3 h-3 text-[#0057B8]" />
+                          <div className="w-5 h-5 rounded-md flex items-center justify-center bg-brand-600/10">
+                            <Check className="w-3 h-3 text-brand-600" />
                           </div>
                           Cash (on tournament day)
                         </li>
                       )}
                       {tournament.allow_check && (
                         <li className="flex items-center gap-2.5">
-                          <div className="w-5 h-5 rounded-md flex items-center justify-center bg-[#0057B8]/10">
-                            <Check className="w-3 h-3 text-[#0057B8]" />
+                          <div className="w-5 h-5 rounded-md flex items-center justify-center bg-brand-600/10">
+                            <Check className="w-3 h-3 text-brand-600" />
                           </div>
                           <span>
                             Check
@@ -492,8 +501,8 @@ export function OrgTournamentPage() {
                   className="block bg-white rounded-2xl shadow-lg border border-neutral-200 p-6 transition-shadow hover:shadow-xl group"
                 >
                   <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-[#F5A800]/10 flex items-center justify-center">
-                      <Gift className="w-5 h-5 text-[#F5A800]" strokeWidth={1.5} />
+                    <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
+                      <Gift className="w-5 h-5 text-accent-500" strokeWidth={1.5} />
                     </div>
                     <h3 className="font-bold tracking-tight text-lg text-neutral-900">Raffle Prizes</h3>
                   </div>
@@ -502,7 +511,7 @@ export function OrgTournamentPage() {
                   ) : (
                     <p className="text-neutral-500 text-sm mb-4">View prizes and check your tickets</p>
                   )}
-                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#0057B8] group-hover:text-[#003a6e] transition-colors">
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
                     <Ticket className="w-4 h-4" strokeWidth={1.5} />
                     View Raffle Board
                     <ChevronRight className="w-4 h-4" />
@@ -518,11 +527,11 @@ export function OrgTournamentPage() {
       {/* SPONSORS                                                           */}
       {/* ================================================================= */}
       {tournament.sponsors && tournament.sponsors.length > 0 && (
-        <section className="bg-[#F5F5F5]">
+        <section className="bg-neutral-100">
           <div className="max-w-5xl mx-auto px-6 lg:px-8 py-16 lg:py-24">
             <ScrollReveal>
               <div className="flex items-center gap-3 mb-8">
-                <Star className="w-5 h-5 text-[#F5A800]" strokeWidth={2} />
+                <Star className="w-5 h-5 text-accent-500" strokeWidth={2} />
                 <h2 className="text-2xl font-bold tracking-tight">Our Sponsors</h2>
               </div>
             </ScrollReveal>
@@ -570,7 +579,9 @@ export function OrgTournamentPage() {
             <span className="font-medium text-neutral-600">Shimizu Technology</span>
           </p>
           <div className="flex items-center gap-4">
-            <p className="hidden sm:block">Supporting children with critical illnesses</p>
+            {organization?.settings?.homepage_tagline && (
+              <p className="hidden sm:block">{organization.settings.homepage_tagline}</p>
+            )}
             <Link to="/admin" className="text-xs text-neutral-400 hover:text-neutral-600 transition-colors">
               Admin
             </Link>
@@ -665,7 +676,7 @@ function HoleSponsorGrid({
                 <p className="text-[10px] text-neutral-500 mt-1">{sponsor.display_label}</p>
               )}
               {sponsor.website_url && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-[#0057B8] mt-1">
+                <span className="inline-flex items-center gap-1 text-[10px] text-brand-600 mt-1">
                   <ExternalLink className="w-2.5 h-2.5" />
                   Visit
                 </span>
@@ -732,7 +743,7 @@ function SponsorCard({ sponsor, size }: { sponsor: Sponsor; size: 'large' | 'sma
           </p>
         )}
         {sponsor.website_url && (
-          <span className={`inline-flex items-center gap-1 text-[#0057B8] mt-1.5 ${
+          <span className={`inline-flex items-center gap-1 text-brand-600 mt-1.5 ${
             isLarge ? 'text-xs' : 'text-[10px]'
           }`}>
             <ExternalLink className="w-2.5 h-2.5" />

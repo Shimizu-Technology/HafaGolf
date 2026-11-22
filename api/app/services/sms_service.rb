@@ -17,7 +17,8 @@ class SmsService
 
     tournament = golfer.tournament
     sender_id = tournament&.organization&.sms_sender_id.presence
-    contact_suffix = tournament.contact_phone.present? ? " Questions? Call #{tournament.contact_phone}." : ""
+    contact_phone = tournament.contact_phone.presence || tournament.organization&.contact_phone.presence
+    contact_suffix = contact_phone.present? ? " Questions? Call #{contact_phone}." : ""
 
     message = "You're registered for #{tournament.name}! " \
               "#{tournament.event_date} at #{tournament.location_name}. " \

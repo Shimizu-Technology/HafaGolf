@@ -304,10 +304,7 @@ export const CreateTournamentPage: React.FC = () => {
       <Toaster position="top-right" />
       
       {/* Header */}
-      <header
-        className="text-white py-6 px-4"
-        style={{ backgroundColor: organization?.primary_color || '#0057B8' }}
-      >
+      <header className="bg-brand-600 text-brand-foreground py-6 px-4">
         <div className="max-w-4xl mx-auto">
           <button
             onClick={() => navigate(adminOrgRoutes.events)}
@@ -331,7 +328,7 @@ export const CreateTournamentPage: React.FC = () => {
                 <InputField
                   label="Event Name"
                   name="name"
-                  placeholder="e.g., Golf for Wishes 2027"
+                  placeholder="e.g., Annual Charity Golf Classic 2027"
                   required
                   value={formData.name}
                   error={errors.name}

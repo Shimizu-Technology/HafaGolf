@@ -26,7 +26,9 @@ class TournamentSerializer < ActiveModel::Serializer
              # Payment
              :payment_instructions, :allow_cash, :allow_check, :allow_card,
              :swipe_simple_url, :walkin_swipe_simple_url,
-             :entry_fee_display, :banner_url_override, :use_org_branding,
+             :entry_fee_display, :banner_url_override, :logo_url_override,
+             :primary_color_override, :accent_color_override, :signature_image_url_override,
+             :theme_preset, :use_org_branding,
              # Raffle
              :raffle_enabled, :raffle_ticket_price_cents, :raffle_draw_time,
              :raffle_description, :raffle_auto_draw,

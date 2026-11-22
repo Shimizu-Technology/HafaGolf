@@ -126,13 +126,10 @@ jobs:
     name: No Client Names in Logic
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event_name == 'pull_request'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Check added lines for client-specific identifiers (diff-only until PR-2a)
-        run: bash scripts/check-no-client-names.sh diff "origin/${{ github.base_ref }}"
+      - name: Check application logic for client-specific identifiers (full-repo)
+        run: bash scripts/check-no-client-names.sh full

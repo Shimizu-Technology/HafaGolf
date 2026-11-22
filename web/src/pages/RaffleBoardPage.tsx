@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
+import { getDefaultOrgSlug } from '../utils/tenant';
 
 interface Prize {
   id: number;
@@ -118,8 +119,8 @@ function getTierBadge(tier: string, tierDisplay: string) {
   };
 
   const c = config[tier] || {
-    bg: 'bg-[#0057B8]',
-    text: 'text-white',
+    bg: 'bg-brand-600',
+    text: 'text-brand-foreground',
     icon: <Gift className="w-3.5 h-3.5" />,
   };
 
@@ -153,7 +154,7 @@ function getTierPlaceholderBg(tier: string) {
 export const RaffleBoardPage: React.FC = () => {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
-  const orgSlug = organization?.slug || 'make-a-wish-guam';
+  const orgSlug = organization?.slug || getDefaultOrgSlug();
   const [data, setData] = useState<RaffleBoardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -462,7 +463,7 @@ export const RaffleBoardPage: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-10 w-10 border-2 border-[#0057B8]/20 border-t-[#0057B8] mx-auto" />
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-brand-600/20 border-t-brand-600 mx-auto" />
           <p className="mt-5 text-sm text-neutral-500 tracking-wide uppercase">Loading raffle</p>
         </div>
       </div>
@@ -481,7 +482,7 @@ export const RaffleBoardPage: React.FC = () => {
           <p className="mt-3 text-neutral-500 leading-relaxed">{error}</p>
           <Link
             to={`/${tournamentSlug}`}
-            className="inline-flex items-center gap-2 mt-6 px-6 py-2.5 text-sm font-semibold text-white bg-[#0057B8] rounded-full transition-colors hover:bg-[#003a6e]"
+            className="inline-flex items-center gap-2 mt-6 px-6 py-2.5 text-sm font-semibold text-brand-foreground bg-brand-600 rounded-full transition-colors hover:bg-brand-700"
           >
             Back to Tournament
           </Link>
@@ -506,7 +507,7 @@ export const RaffleBoardPage: React.FC = () => {
           </p>
           <Link
             to={`/${tournamentSlug}`}
-            className="inline-flex items-center gap-2 mt-6 px-6 py-2.5 text-sm font-semibold text-white bg-[#0057B8] rounded-full transition-colors hover:bg-[#003a6e]"
+            className="inline-flex items-center gap-2 mt-6 px-6 py-2.5 text-sm font-semibold text-brand-foreground bg-brand-600 rounded-full transition-colors hover:bg-brand-700"
           >
             <ChevronLeft className="w-4 h-4" />
             Back to Tournament
@@ -520,7 +521,7 @@ export const RaffleBoardPage: React.FC = () => {
   // Main render
   // ---------------------------------------------------------------------------
   return (
-    <div className="min-h-screen bg-[#F5F5F5] text-neutral-900">
+    <div className="min-h-screen bg-neutral-100 text-neutral-900">
       <SignedInAdminBar />
       {liveDraw && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/80 px-4 py-6 backdrop-blur-sm">
@@ -533,8 +534,8 @@ export const RaffleBoardPage: React.FC = () => {
             >
               <X className="h-4 w-4" />
             </button>
-            <div className="bg-[#0057B8] px-5 py-4 text-white sm:px-8 sm:py-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#F5A800]">Live raffle draw</p>
+            <div className="bg-brand-600 px-5 py-4 text-brand-foreground sm:px-8 sm:py-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-accent-300">Live raffle draw</p>
               <h2 className="mt-2 text-2xl font-bold tracking-tight sm:text-4xl">{liveDraw.prizeName}</h2>
               <p className="mt-2 text-sm text-white/75">
                 Drawing from {liveDraw.eligibleTicketCount.toLocaleString()} ticket{liveDraw.eligibleTicketCount === 1 ? '' : 's'} in this draw.
@@ -568,14 +569,14 @@ export const RaffleBoardPage: React.FC = () => {
                     </div>
                   </div>
                   <div className="mt-5 flex items-center justify-center gap-3 text-sm font-medium text-neutral-600">
-                    <Loader2 className="h-5 w-5 animate-spin text-[#0057B8]" />
+                    <Loader2 className="h-5 w-5 animate-spin text-brand-600" />
                     Shuffling {liveDraw.eligibleTicketCount.toLocaleString()} ticket{liveDraw.eligibleTicketCount === 1 ? '' : 's'} in this draw
                   </div>
                 </>
               ) : (
                 <div className="text-center">
-                  <PartyPopper className="mx-auto h-14 w-14 text-[#F5A800]" />
-                  <p className="mt-4 text-xs font-semibold uppercase tracking-[0.22em] text-[#0057B8]">Winner</p>
+                  <PartyPopper className="mx-auto h-14 w-14 text-accent-500" />
+                  <p className="mt-4 text-xs font-semibold uppercase tracking-[0.22em] text-brand-600">Winner</p>
                   <p className="mt-2 text-3xl font-bold tracking-tight text-neutral-950 sm:text-5xl">{liveDraw.winnerName || 'Winner selected'}</p>
                   {liveDraw.winnerTicketNumber && (
                     <p className="mt-3 font-mono text-lg font-semibold text-neutral-600">Ticket #{liveDraw.winnerTicketNumber}</p>
@@ -589,7 +590,7 @@ export const RaffleBoardPage: React.FC = () => {
       {/* ================================================================= */}
       {/* HERO HEADER                                                        */}
       {/* ================================================================= */}
-      <div className="relative bg-gradient-to-br from-[#0057B8] via-[#00408a] to-[#002d63] text-white">
+      <div className="relative bg-gradient-to-br from-brand-600 via-brand-700 to-brand-900 text-brand-foreground">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -601,7 +602,7 @@ export const RaffleBoardPage: React.FC = () => {
                 Back to Tournament
               </Link>
               <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight flex items-center gap-2 sm:gap-3">
-                <Gift className="w-6 h-6 sm:w-7 sm:h-7 text-[#F5A800] shrink-0" strokeWidth={1.5} />
+                <Gift className="w-6 h-6 sm:w-7 sm:h-7 text-accent-300 shrink-0" strokeWidth={1.5} />
                 <span className="truncate">{tournament.name} Raffle</span>
               </h1>
               {tournament.raffle_description && (
@@ -612,7 +613,7 @@ export const RaffleBoardPage: React.FC = () => {
               {tournament.raffle_draw_time && (
                 <div className="text-right hidden sm:block">
                   <p className="text-white/60 text-xs">Drawing in</p>
-                  <p className="text-lg font-bold text-[#F5A800] flex items-center gap-1">
+                  <p className="text-lg font-bold text-accent-300 flex items-center gap-1">
                     <Clock className="w-4 h-4" />
                     {formatCountdown(tournament.raffle_draw_time)}
                   </p>
@@ -631,9 +632,9 @@ export const RaffleBoardPage: React.FC = () => {
           {/* Mobile draw time */}
           {tournament.raffle_draw_time && (
             <div className="mt-3 flex items-center gap-2 text-sm sm:hidden">
-              <Clock className="w-4 h-4 text-[#F5A800]" />
+              <Clock className="w-4 h-4 text-accent-300" />
               <span className="text-white/70">Drawing in</span>
-              <span className="font-bold text-[#F5A800]">{formatCountdown(tournament.raffle_draw_time)}</span>
+              <span className="font-bold text-accent-300">{formatCountdown(tournament.raffle_draw_time)}</span>
             </div>
           )}
         </div>
@@ -646,8 +647,8 @@ export const RaffleBoardPage: React.FC = () => {
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-6">
             <div className="flex items-center gap-3 p-3 sm:p-0">
-              <div className="w-10 h-10 rounded-xl bg-[#F5A800]/10 flex items-center justify-center shrink-0">
-                <Gift className="w-5 h-5 text-[#F5A800]" strokeWidth={1.5} />
+              <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center shrink-0">
+                <Gift className="w-5 h-5 text-accent-500" strokeWidth={1.5} />
               </div>
               <div>
                 <p className="text-xl sm:text-2xl font-bold text-neutral-900">{stats.total_prizes}</p>
@@ -664,8 +665,8 @@ export const RaffleBoardPage: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-3 p-3 sm:p-0">
-              <div className="w-10 h-10 rounded-xl bg-[#0057B8]/10 flex items-center justify-center shrink-0">
-                <Star className="w-5 h-5 text-[#0057B8]" strokeWidth={1.5} />
+              <div className="w-10 h-10 rounded-xl bg-brand-600/10 flex items-center justify-center shrink-0">
+                <Star className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
               </div>
               <div>
                 <p className="text-xl sm:text-2xl font-bold text-neutral-900">{stats.prizes_remaining}</p>
@@ -695,8 +696,8 @@ export const RaffleBoardPage: React.FC = () => {
             onClick={() => setShowMyTickets(!showMyTickets)}
             className="flex items-center gap-2 text-sm font-medium text-neutral-600 hover:text-neutral-900 transition-colors"
           >
-            <div className="w-8 h-8 rounded-lg bg-[#0057B8]/10 flex items-center justify-center">
-              <Ticket className="w-4 h-4 text-[#0057B8]" strokeWidth={1.5} />
+            <div className="w-8 h-8 rounded-lg bg-brand-600/10 flex items-center justify-center">
+              <Ticket className="w-4 h-4 text-brand-600" strokeWidth={1.5} />
             </div>
             Check My Tickets
             {showMyTickets
@@ -715,14 +716,14 @@ export const RaffleBoardPage: React.FC = () => {
                     value={ticketEmail}
                     onChange={(e) => setTicketEmail(e.target.value)}
                     placeholder="Enter your email, phone, or ticket #..."
-                    className="w-full pl-10 pr-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-[#0057B8] focus:ring-2 focus:ring-[#0057B8]/20 transition-colors"
+                    className="w-full pl-10 pr-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20 transition-colors"
                     required
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={ticketLoading}
-                  className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-[#0057B8] text-white text-sm font-semibold rounded-xl hover:bg-[#003a6e] disabled:opacity-50 transition-colors shrink-0"
+                  className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-brand-600 text-brand-foreground text-sm font-semibold rounded-xl hover:bg-brand-700 disabled:opacity-50 transition-colors shrink-0"
                 >
                   {ticketLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
                   Look Up
@@ -771,13 +772,13 @@ export const RaffleBoardPage: React.FC = () => {
                 value={prizeSearch}
                 onChange={(e) => setPrizeSearch(e.target.value)}
                 placeholder="Search prizes or sponsors..."
-                className="w-full rounded-xl border border-neutral-200 bg-neutral-50 py-3 pl-10 pr-4 text-sm focus:border-[#0057B8] focus:outline-none focus:ring-2 focus:ring-[#0057B8]/20"
+                className="w-full rounded-xl border border-neutral-200 bg-neutral-50 py-3 pl-10 pr-4 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
               />
             </div>
             <select
               value={tierFilter}
               onChange={(e) => setTierFilter(e.target.value)}
-              className="rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm focus:border-[#0057B8] focus:outline-none focus:ring-2 focus:ring-[#0057B8]/20"
+              className="rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
             >
               <option value="">All tiers</option>
               {TIERS.map((tier) => (
@@ -787,7 +788,7 @@ export const RaffleBoardPage: React.FC = () => {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as PublicPrizeStatusFilter)}
-              className="rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm focus:border-[#0057B8] focus:outline-none focus:ring-2 focus:ring-[#0057B8]/20"
+              className="rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
             >
               <option value="">All prizes</option>
               <option value="available">Available</option>
@@ -796,7 +797,7 @@ export const RaffleBoardPage: React.FC = () => {
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as PublicPrizeSort)}
-              className="rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm focus:border-[#0057B8] focus:outline-none focus:ring-2 focus:ring-[#0057B8]/20"
+              className="rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
             >
               <option value="tier">Sort by tier</option>
               <option value="position">Sort by list order</option>
@@ -819,7 +820,7 @@ export const RaffleBoardPage: React.FC = () => {
                   setStatusFilter('');
                   setSortBy('tier');
                 }}
-                className="font-medium text-[#0057B8] hover:text-[#003a6e]"
+                className="font-medium text-brand-600 hover:text-brand-700"
               >
                 Reset filters
               </button>
@@ -906,8 +907,8 @@ export const RaffleBoardPage: React.FC = () => {
                 {/* Winner Overlay */}
                 {prize.won && prize.winner && (
                   <div className="absolute inset-0 bg-neutral-900/85 flex flex-col items-center justify-center text-white p-4 backdrop-blur-sm">
-                    <PartyPopper className="w-10 h-10 text-[#F5A800] mb-3" />
-                    <p className="text-xs uppercase tracking-widest text-[#F5A800] font-semibold mb-1">Winner</p>
+                    <PartyPopper className="w-10 h-10 text-accent-300 mb-3" />
+                    <p className="text-xs uppercase tracking-widest text-accent-300 font-semibold mb-1">Winner</p>
                     <p className="text-xl font-bold text-center">{prize.winner.name}</p>
                     <p className="text-sm text-white/60 mt-1 font-mono">
                       Ticket #{prize.winner.ticket_number}

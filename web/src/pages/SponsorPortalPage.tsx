@@ -2,9 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Mail, Loader2, CheckCircle, ArrowRight, User, Phone, Save,
-  AlertCircle, Clock, Building2, ExternalLink, Users, Shield,
+  AlertCircle, Clock, Building2, ExternalLink, Users, Shield, Flag,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useOrganization } from '../components/OrganizationProvider';
+import { useApplyBranding } from '../utils/branding';
 import {
   clearSponsorPortalSession,
   loadSponsorPortalSession,
@@ -44,6 +46,7 @@ interface TournamentInfo {
 interface OrgInfo {
   name: string;
   primary_color: string;
+  logo_url?: string | null;
 }
 
 type VerifiedSponsorPortalData = {
@@ -57,9 +60,11 @@ type VerifiedSponsorPortalData = {
 // Login Screen
 // ---------------------------------------------------------------------------
 const LoginScreen: React.FC = () => {
+  const { organization } = useOrganization();
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [linkSent, setLinkSent] = useState(false);
+  const orgName = organization?.name || 'HafaGolf';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,10 +87,16 @@ const LoginScreen: React.FC = () => {
       {/* Minimal header */}
       <header className="px-6 py-5">
         <div className="max-w-md mx-auto flex items-center gap-3">
-          <img src="/images/maw-star-icon.png" alt="Make-A-Wish" className="h-8 rounded" />
+          {organization?.logo_url ? (
+            <img src={organization.logo_url} alt={orgName} className="h-8 w-auto rounded object-contain" />
+          ) : (
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-brand-foreground">
+              <Flag className="h-4 w-4" />
+            </div>
+          )}
           <div>
             <div className="font-bold text-gray-900 text-sm">Sponsor Portal</div>
-            <div className="text-gray-500 text-xs">Make-A-Wish Guam & CNMI</div>
+            <div className="text-gray-500 text-xs">{orgName}</div>
           </div>
         </div>
       </header>
@@ -95,11 +106,11 @@ const LoginScreen: React.FC = () => {
           {!linkSent ? (
             <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
               {/* Branded top accent */}
-              <div className="h-1.5 bg-gradient-to-r from-[#0057B8] to-[#003a6e]" />
+              <div className="h-1.5 bg-gradient-to-r from-brand-600 to-brand-800" />
               <div className="p-8">
                 <div className="text-center mb-8">
-                  <div className="w-14 h-14 bg-[#0057B8]/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                    <Shield className="w-7 h-7 text-[#0057B8]" />
+                  <div className="w-14 h-14 bg-brand-600/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <Shield className="w-7 h-7 text-brand-600" />
                   </div>
                   <h1 className="text-2xl font-bold text-gray-900 mb-2">Sponsor Portal Login</h1>
                   <p className="text-gray-500 text-sm leading-relaxed">
@@ -116,13 +127,13 @@ const LoginScreen: React.FC = () => {
                       type="email" id="email" value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="your@company.com"
-                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0057B8]/20 focus:border-[#0057B8] text-sm"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-brand-600/20 focus:border-brand-600 text-sm"
                       disabled={isSubmitting} autoComplete="email" autoFocus
                     />
                   </div>
                   <button
                     type="submit" disabled={isSubmitting || !email.trim()}
-                    className="w-full bg-[#0057B8] hover:bg-[#004494] disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-3 px-6 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
+                    className="w-full bg-brand-600 hover:bg-brand-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-brand-foreground py-3 px-6 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
                   >
                     {isSubmitting ? (<><Loader2 className="w-4 h-4 animate-spin" /> Sending...</>) : (<>Send Access Link <ArrowRight className="w-4 h-4" /></>)}
                   </button>
@@ -149,7 +160,7 @@ const LoginScreen: React.FC = () => {
                     <strong>Don't see it?</strong> Check your spam/junk folder, or wait a minute and try again.
                   </p>
                 </div>
-                <button onClick={() => { setLinkSent(false); setEmail(''); }} className="text-sm text-[#0057B8] hover:underline font-medium">
+                <button onClick={() => { setLinkSent(false); setEmail(''); }} className="text-sm text-brand-600 hover:underline font-medium">
                   Try a different email
                 </button>
               </div>
@@ -204,7 +215,7 @@ const SlotCard: React.FC<{
             type="text" placeholder="Full name" value={playerName}
             onChange={(e) => onChangeField('player_name', e.target.value)}
             disabled={disabled}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#0057B8]/20 focus:border-[#0057B8] text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-brand-600/20 focus:border-brand-600 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
           />
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -216,7 +227,7 @@ const SlotCard: React.FC<{
               type="email" placeholder="email@example.com" value={playerEmail}
               onChange={(e) => onChangeField('player_email', e.target.value)}
               disabled={disabled}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#0057B8]/20 focus:border-[#0057B8] text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-brand-600/20 focus:border-brand-600 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
           </div>
           <div>
@@ -227,7 +238,7 @@ const SlotCard: React.FC<{
               type="tel" placeholder="+1671 xxx-xxxx" value={playerPhone}
               onChange={(e) => onChangeField('player_phone', e.target.value)}
               disabled={disabled}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#0057B8]/20 focus:border-[#0057B8] text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-brand-600/20 focus:border-brand-600 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
           </div>
         </div>
@@ -286,9 +297,11 @@ const EmailVerification: React.FC<{
   sponsorName: string;
   onVerified: (data: VerifiedSponsorPortalData) => void;
 }> = ({ token, sponsorName, onVerified }) => {
+  const { organization } = useOrganization();
   const [email, setEmail] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const orgName = organization?.name || 'HafaGolf';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -311,10 +324,16 @@ const EmailVerification: React.FC<{
     <div className="min-h-screen bg-gradient-to-br from-[#f0f4f8] to-[#e2e8f0] flex flex-col">
       <header className="px-6 py-5">
         <div className="max-w-md mx-auto flex items-center gap-3">
-          <img src="/images/maw-star-icon.png" alt="Make-A-Wish" className="h-8 rounded" />
+          {organization?.logo_url ? (
+            <img src={organization.logo_url} alt={orgName} className="h-8 w-auto rounded object-contain" />
+          ) : (
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-brand-foreground">
+              <Flag className="h-4 w-4" />
+            </div>
+          )}
           <div>
             <div className="font-bold text-gray-900 text-sm">Sponsor Portal</div>
-            <div className="text-gray-500 text-xs">Make-A-Wish Guam & CNMI</div>
+            <div className="text-gray-500 text-xs">{orgName}</div>
           </div>
         </div>
       </header>
@@ -322,11 +341,11 @@ const EmailVerification: React.FC<{
       <main className="flex-1 flex items-center justify-center px-6 pb-12">
         <div className="w-full max-w-md">
           <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-            <div className="h-1.5 bg-gradient-to-r from-[#0057B8] to-[#003a6e]" />
+            <div className="h-1.5 bg-gradient-to-r from-brand-600 to-brand-800" />
             <div className="p-8">
               <div className="text-center mb-6">
-                <div className="w-14 h-14 bg-[#0057B8]/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <Shield className="w-7 h-7 text-[#0057B8]" />
+                <div className="w-14 h-14 bg-brand-600/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <Shield className="w-7 h-7 text-brand-600" />
                 </div>
                 <h1 className="text-xl font-bold text-gray-900 mb-1">Verify Your Identity</h1>
                 <p className="text-gray-500 text-sm leading-relaxed">
@@ -343,7 +362,7 @@ const EmailVerification: React.FC<{
                     type="email" id="verify-email" value={email}
                     onChange={(e) => { setEmail(e.target.value); setErrorMsg(''); }}
                     placeholder="your@company.com"
-                    className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-[#0057B8]/20 focus:border-[#0057B8] text-sm ${
+                    className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-brand-600/20 focus:border-brand-600 text-sm ${
                       errorMsg ? 'border-red-300' : 'border-gray-200'
                     }`}
                     disabled={verifying} autoComplete="email" autoFocus
@@ -358,7 +377,7 @@ const EmailVerification: React.FC<{
 
                 <button
                   type="submit" disabled={verifying || !email.trim()}
-                  className="w-full bg-[#0057B8] hover:bg-[#004494] disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-3 px-6 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
+                  className="w-full bg-brand-600 hover:bg-brand-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-brand-foreground py-3 px-6 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
                 >
                   {verifying ? (<><Loader2 className="w-4 h-4 animate-spin" /> Verifying...</>) : (<><Shield className="w-4 h-4" /> Verify & Continue</>)}
                 </button>
@@ -385,6 +404,7 @@ const Dashboard: React.FC<{
   initialOrg: OrgInfo;
   onSessionExpired: () => void;
 }> = ({ sessionToken, initialSponsor, initialTournament, initialOrg, onSessionExpired }) => {
+  const { organization } = useOrganization();
   const [sponsor] = useState<SponsorInfo>(initialSponsor);
   const [tournamentInfo] = useState<TournamentInfo>(initialTournament);
   const [orgInfo] = useState<OrgInfo>(initialOrg);
@@ -394,7 +414,13 @@ const Dashboard: React.FC<{
   const [savingSlots, setSavingSlots] = useState<Record<number, boolean>>({});
   const [savingAll, setSavingAll] = useState(false);
 
-  const brandColor = orgInfo?.primary_color || '#0057B8';
+  const branding = useApplyBranding({
+    ...organization,
+    name: orgInfo?.name || organization?.name,
+    primary_color: orgInfo?.primary_color || organization?.primary_color,
+    logo_url: orgInfo?.logo_url || organization?.logo_url,
+  });
+  const brandColor = branding.primaryColor;
   const deadlinePassed = tournamentInfo?.sponsor_edit_deadline
     ? new Date(tournamentInfo.sponsor_edit_deadline) < new Date()
     : false;
@@ -509,7 +535,7 @@ const Dashboard: React.FC<{
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#f0f4f8] to-[#e2e8f0] flex items-center justify-center">
         <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-[#0057B8] mx-auto mb-3" />
+          <Loader2 className="w-8 h-8 animate-spin text-brand-600 mx-auto mb-3" />
           <p className="text-gray-500 text-sm">Loading your portal...</p>
         </div>
       </div>
@@ -522,13 +548,19 @@ const Dashboard: React.FC<{
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f0f4f8] to-[#e2e8f0] flex flex-col">
       {/* Header */}
-      <header className="text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${brandColor} 0%, ${darkenColor(brandColor, 20)} 100%)` }}>
+      <header className="text-brand-foreground shadow-lg" style={{ background: `linear-gradient(135deg, ${brandColor} 0%, ${darkenColor(brandColor, 20)} 100%)` }}>
         <div className="max-w-4xl mx-auto px-5 py-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src="/images/maw-star-icon.png" alt="" className="h-8 rounded opacity-90" />
+              {branding.logoUrl ? (
+                <img src={branding.logoUrl} alt="" className="h-8 w-auto rounded object-contain opacity-90" />
+              ) : (
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15">
+                  <Flag className="h-4 w-4 text-brand-foreground" />
+                </div>
+              )}
               <div>
-                <div className="text-white/70 text-xs font-medium tracking-wide uppercase">{orgInfo?.name || 'Make-A-Wish Guam & CNMI'}</div>
+                <div className="text-white/70 text-xs font-medium tracking-wide uppercase">{orgInfo?.name || organization?.name || 'HafaGolf'}</div>
                 <div className="font-bold text-base">{tournamentInfo?.name || 'Sponsor Portal'}</div>
               </div>
             </div>
@@ -736,7 +768,7 @@ const AuthenticatedFlow: React.FC<{ token: string }> = ({ token }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#f0f4f8] to-[#e2e8f0]">
         <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-[#0057B8] mx-auto mb-3" />
+          <Loader2 className="w-8 h-8 animate-spin text-brand-600 mx-auto mb-3" />
           <p className="text-gray-500 text-sm">Verifying your access link...</p>
         </div>
       </div>
@@ -750,7 +782,7 @@ const AuthenticatedFlow: React.FC<{ token: string }> = ({ token }) => {
           <AlertCircle className="w-10 h-10 text-red-500 mx-auto mb-3" />
           <h2 className="font-bold text-gray-900 text-lg mb-2">Access Denied</h2>
           <p className="text-gray-500 text-sm mb-6">{error}</p>
-          <a href="/sponsor-portal" className="inline-flex items-center gap-2 text-[#0057B8] font-medium text-sm hover:underline">
+          <a href="/sponsor-portal" className="inline-flex items-center gap-2 text-brand-600 font-medium text-sm hover:underline">
             <ArrowRight className="w-4 h-4 rotate-180" /> Request a new link
           </a>
         </div>

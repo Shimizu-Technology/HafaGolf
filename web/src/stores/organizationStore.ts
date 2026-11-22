@@ -10,6 +10,9 @@ export interface OrganizationSettings {
   homepage_tagline?: string;
   homepage_mission?: string;
   homepage_stats?: HomepageStat[];
+  primary_color?: string;
+  secondary_color?: string;
+  accent_color?: string;
 }
 
 export interface Organization {
@@ -19,10 +22,19 @@ export interface Organization {
   description?: string;
   logo_url?: string;
   primary_color?: string;
+  secondary_color?: string;
+  accent_color?: string;
   banner_url?: string;
   contact_email?: string;
   contact_phone?: string;
   website_url?: string;
+  brand_kit?: {
+    primary_color?: string;
+    secondary_color?: string;
+    accent_color?: string;
+    logo_url?: string;
+    banner_url?: string;
+  };
   settings?: OrganizationSettings;
   tournament_count?: number;
 }
@@ -49,7 +61,7 @@ export const useOrganizationStore = create<OrganizationState>()(
       clearOrganization: () => set({ organization: null, error: null }),
     }),
     {
-      name: 'maw-organization',
+      name: 'hafagolf-organization',
       partialize: (state) => ({ organization: state.organization }),
     }
   )

@@ -1,5 +1,7 @@
+import { DEFAULT_PRIMARY_COLOR } from './branding';
+
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
-const FALLBACK = '#0057B8';
+const FALLBACK = DEFAULT_PRIMARY_COLOR;
 
 function safeHex(hex: string): string {
   return HEX_RE.test(hex) ? hex : FALLBACK;

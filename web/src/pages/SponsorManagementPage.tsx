@@ -194,10 +194,7 @@ export const SponsorManagementPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
-      <section
-        className="rounded-[28px] px-4 sm:px-6 py-4 sm:py-5 text-white shadow-sm lg:px-8"
-        style={{ backgroundColor: organization?.primary_color || '#0057B8' }}
-      >
+      <section className="rounded-[28px] bg-brand-600 px-4 sm:px-6 py-4 sm:py-5 text-brand-foreground shadow-sm lg:px-8">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
@@ -739,7 +736,7 @@ const SponsorModal: React.FC<{
                   <p className="text-xs text-neutral-400 mb-1">Or paste a URL:</p>
                   <input type="url" placeholder="https://example.com/logo.png" value={form.logo_url}
                     onChange={e => { setForm({ ...form, logo_url: e.target.value }); setLogoFile(null); setLogoPreview(null); }}
-                    className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-[#0057B8] focus:outline-none focus:ring-2 focus:ring-[#0057B8]/20" />
+                    className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
                 </div>
               )}
               {(logoPreview || form.logo_url) && (
@@ -768,7 +765,7 @@ const SponsorModal: React.FC<{
             </label>
             <input type="email" placeholder="sponsor@company.com" value={form.login_email || ''}
               onChange={e => setForm({ ...form, login_email: e.target.value })}
-              className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-[#0057B8] focus:outline-none focus:ring-2 focus:ring-[#0057B8]/20" />
+              className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
           </div>
 
           <div>
@@ -777,7 +774,7 @@ const SponsorModal: React.FC<{
             </label>
             <input type="number" min="0" max="10" placeholder="0" value={form.team_count || 0}
               onChange={e => setForm({ ...form, team_count: parseInt(e.target.value) || 0 })}
-              className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-[#0057B8] focus:outline-none focus:ring-2 focus:ring-[#0057B8]/20" />
+              className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
             {form.team_count > 0 && (<p className="text-xs text-neutral-500 mt-1">= {form.team_count * 2} player slots in the sponsor portal</p>)}
           </div>
 

@@ -4,6 +4,8 @@ import { useOrganizationStore } from '../stores/organizationStore';
 import { api } from '../services/api';
 import type { Organization } from '../stores/organizationStore';
 import { AlertTriangle } from 'lucide-react';
+import { useApplyBranding } from '../utils/branding';
+import { getDefaultOrgSlug } from '../utils/tenant';
 
 interface OrganizationProviderProps {
   children: React.ReactNode;
@@ -21,9 +23,11 @@ export function OrganizationProvider({
   orgSlug: propOrgSlug,
 }: OrganizationProviderProps) {
   const { orgSlug: paramOrgSlug } = useParams<{ orgSlug: string }>();
-  const orgSlug = propOrgSlug || paramOrgSlug || 'make-a-wish-guam';
+  const orgSlug = propOrgSlug || paramOrgSlug || getDefaultOrgSlug();
   const navigate = useNavigate();
   const { organization, setOrganization, setLoading, setError, isLoading, error } = useOrganizationStore();
+
+  useApplyBranding(organization);
 
   useEffect(() => {
     async function fetchOrganization() {

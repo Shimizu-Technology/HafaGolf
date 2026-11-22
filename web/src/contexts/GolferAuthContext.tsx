@@ -70,7 +70,7 @@ interface GolferAuthContextType extends GolferAuthState {
 
 export const GolferAuthContext = createContext<GolferAuthContextType | null>(null);
 
-const STORAGE_KEY = 'maw_golfer_session';
+const STORAGE_KEY = 'hafagolf_golfer_session';
 
 export function GolferAuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GolferAuthState>({

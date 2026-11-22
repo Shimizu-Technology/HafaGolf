@@ -43,7 +43,7 @@ export const SponsorsOverviewPage: React.FC = () => {
       <section className="rounded-[28px] bg-white shadow-sm">
         <div className="border-b border-neutral-200 px-6 py-5">
           <h2 className="text-lg font-semibold text-neutral-900">Jump into event sponsor pages</h2>
-          <p className="mt-1 text-sm text-neutral-500">Useful while MAW is still event-first behind the scenes.</p>
+          <p className="mt-1 text-sm text-neutral-500">Manage sponsors per event from a single overview.</p>
         </div>
 
         {activeTournaments.length === 0 ? (

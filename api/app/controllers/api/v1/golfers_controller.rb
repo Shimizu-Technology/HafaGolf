@@ -843,7 +843,7 @@ module Api
             # Tournament configuration for landing page
             tournament_year: tournament.year,
             tournament_edition: tournament.edition,
-            tournament_title: "AIRPORT WEEK", # Could add to Tournament model if needed
+            tournament_title: tournament.edition.presence || tournament.name,
             tournament_name: tournament.name,
             event_date: format_event_date(tournament.event_date),
             registration_time: tournament.registration_time,

@@ -883,7 +883,7 @@ export const OrgSettingsPage: React.FC = () => {
                 </label>
                 <div className="flex flex-col sm:flex-row sm:items-center">
                   <span className="px-3 sm:px-4 py-2 sm:py-3 bg-gray-100 border border-gray-300 rounded-t-xl sm:rounded-t-none sm:rounded-l-xl sm:border-r-0 text-gray-500 text-sm">
-                    maw-guam.events/
+                    {window.location.host}/
                   </span>
                   <input
                     type="text"
@@ -1074,7 +1074,7 @@ export const OrgSettingsPage: React.FC = () => {
                     type="text"
                     value={tournamentSettings.name}
                     onChange={(e) => handleTournamentChange('name', e.target.value)}
-                    placeholder="e.g. Golf for Wishes 2026"
+                    placeholder="e.g. Annual Golf Classic 2027"
                     className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                 </div>
@@ -1163,7 +1163,7 @@ export const OrgSettingsPage: React.FC = () => {
                       className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
                     />
                     <p className="mt-1 text-xs text-gray-400">
-                      Each start slot like 1A or 1B will hold this many teams. For Golf for Wishes, use 2.
+                      Each start slot like 1A or 1B will hold this many teams (typically 1 or 2).
                     </p>
                   </div>
                   <div>
@@ -1483,7 +1483,7 @@ export const OrgSettingsPage: React.FC = () => {
                     type="tel"
                     value={tournamentSettings.contact_phone}
                     onChange={(e) => handleTournamentChange('contact_phone', e.target.value)}
-                    placeholder="e.g. 671-649-9474"
+                    placeholder="e.g. 671-555-0100"
                     className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                 </div>
@@ -1496,7 +1496,7 @@ export const OrgSettingsPage: React.FC = () => {
                   type="email"
                   value={tournamentSettings.contact_email}
                   onChange={(e) => handleTournamentChange('contact_email', e.target.value)}
-                  placeholder="e.g. etydingco@guam.wish.org"
+                  placeholder="e.g. events@organization.org"
                   className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
@@ -1598,7 +1598,7 @@ export const OrgSettingsPage: React.FC = () => {
             {/* Raffle Settings */}
             <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
               <h3 className="text-sm sm:text-md font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
-                <Gift className="w-5 h-5 text-[#F5A800] flex-shrink-0" />
+                <Gift className="w-5 h-5 text-accent-500 flex-shrink-0" />
                 Raffle Settings
               </h3>
               <div className="space-y-4">
