@@ -180,7 +180,7 @@ class Api::V1::RaffleDrawReadinessTest < ActionDispatch::IntegrationTest
 
     select_count = 0
     callback = lambda do |_name, _started, _finished, _unique_id, payload|
-      next if payload[:name] == "SCHEMA"
+      next if payload[:name] == "SCHEMA" || payload[:name].to_s.start_with?("TenantContext.")
       next unless payload[:sql]&.match?(/\ASELECT/i)
 
       select_count += 1

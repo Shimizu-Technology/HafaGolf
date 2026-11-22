@@ -80,9 +80,15 @@ module TenantContext
 
   def with_transaction_config(connection:, organization_id:, accessible_org_ids:, rls_bypass:)
     if connection.transaction_open?
-      previous_org_id = connection.select_value("SELECT current_setting('app.current_organization_id', true)").to_s
-      previous_accessible_ids = connection.select_value("SELECT current_setting('app.accessible_organization_ids', true)").to_s
-      previous_bypass = connection.select_value("SELECT current_setting('app.rls_bypass', true)").to_s
+      prev = connection.exec_query(
+        "SELECT current_setting('app.current_organization_id', true) AS org_id, " \
+        "current_setting('app.accessible_organization_ids', true) AS accessible_ids, " \
+        "current_setting('app.rls_bypass', true) AS bypass",
+        "TenantContext.get_config"
+      ).first || {}
+      previous_org_id = prev["org_id"].to_s
+      previous_accessible_ids = prev["accessible_ids"].to_s
+      previous_bypass = prev["bypass"].to_s
 
       apply_local_settings(
         connection,
