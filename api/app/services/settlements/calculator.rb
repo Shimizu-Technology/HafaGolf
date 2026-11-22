@@ -49,7 +49,7 @@ module Settlements
       donations = @tournament.donations.order(:id).to_a
 
       platform_reg_charges = []
-      direct_reg_totals = { count: 0, gross_cents: 0, refund_cents: 0 }
+      direct_reg_totals = { count: 0, billable_registrant_count: 0, gross_cents: 0, refund_cents: 0 }
       line_items = []
       digest_rows = []
 
@@ -105,9 +105,26 @@ module Settlements
             registration.stripe_payment_intent_id
           ]
         elsif registration.payment_status.in?(%w[paid refunded])
+          player_count = [registration.player_count, 1].max
+          active_paid = registration.payment_status == "paid" && registration.registration_status != "cancelled" && refund < amount
           direct_reg_totals[:count] += 1
+          direct_reg_totals[:billable_registrant_count] += player_count if active_paid
           direct_reg_totals[:gross_cents] += amount
           direct_reg_totals[:refund_cents] += refund
+          unless @payment_config.platform_collect?
+            digest_rows << [
+              "direct_team_registration",
+              registration.id,
+              registration.payment_status,
+              registration.registration_status,
+              player_count,
+              amount,
+              refund,
+              registration.payment_method,
+              registration.stripe_account_origin,
+              registration.stripe_payment_intent_id
+            ]
+          end
         end
       end
 
@@ -156,9 +173,23 @@ module Settlements
             golfer.stripe_account_origin
           ]
         elsif golfer.payment_status.in?(%w[paid refunded])
+          active_paid = golfer.payment_status == "paid" && golfer.registration_status != "cancelled" && refund < amount
           direct_reg_totals[:count] += 1
+          direct_reg_totals[:billable_registrant_count] += 1 if active_paid
           direct_reg_totals[:gross_cents] += amount
           direct_reg_totals[:refund_cents] += refund
+          unless @payment_config.platform_collect?
+            digest_rows << [
+              "direct_golfer",
+              golfer.id,
+              golfer.payment_status,
+              golfer.registration_status,
+              amount,
+              refund,
+              golfer.payment_method,
+              golfer.stripe_account_origin
+            ]
+          end
         end
       end
 
@@ -258,6 +289,18 @@ module Settlements
           direct_sponsor_totals[:count] += 1
           direct_sponsor_totals[:gross_cents] += amount
           direct_sponsor_totals[:refund_cents] += refund
+          unless @payment_config.platform_collect?
+            digest_rows << [
+              "direct_sponsor",
+              sponsor.id,
+              sponsor.payment_status,
+              amount,
+              refund,
+              sponsor.payment_method,
+              sponsor.stripe_account_origin,
+              sponsor.stripe_payment_intent_id
+            ]
+          end
         end
       end
 
@@ -308,6 +351,18 @@ module Settlements
           direct_donation_totals[:count] += 1
           direct_donation_totals[:gross_cents] += amount
           direct_donation_totals[:refund_cents] += refund
+          unless @payment_config.platform_collect?
+            digest_rows << [
+              "direct_donation",
+              donation.id,
+              donation.payment_status,
+              amount,
+              refund,
+              donation.payment_method,
+              donation.stripe_account_origin,
+              donation.stripe_payment_intent_id
+            ]
+          end
         end
       end
 
@@ -328,14 +383,58 @@ module Settlements
       refund_cents = reg_refunds + raffle_refunds + sponsor_refunds + donation_refunds
       processing_fee_cents = reg_fees + raffle_fees + sponsor_fees + donation_fees
 
-      billable_registrant_count = platform_reg_charges.sum { |c| c[:active_paid] ? c.fetch(:registrant_count, 1) : 0 }
-      platform_fee_cents = calculate_platform_fee_cents(
-        gross_cents: gross_cents,
-        billable_registrant_count: billable_registrant_count
-      )
+      platform_billable_registrant_count = platform_reg_charges.sum { |c| c[:active_paid] ? c.fetch(:registrant_count, 1) : 0 }
+      direct_gross_cents =
+        direct_reg_totals[:gross_cents] +
+        direct_raffle_totals[:gross_cents] +
+        direct_sponsor_totals[:gross_cents] +
+        direct_donation_totals[:gross_cents]
 
-      net_cents = gross_cents - refund_cents
-      organizer_proceeds_cents = net_cents - processing_fee_cents - platform_fee_cents + @adjustment_cents
+      if @payment_config.platform_collect?
+        billable_registrant_count = platform_billable_registrant_count
+        platform_fee_cents = calculate_platform_fee_cents(
+          gross_cents: gross_cents,
+          billable_registrant_count: billable_registrant_count
+        )
+        net_cents = gross_cents - refund_cents
+        organizer_proceeds_cents = net_cents - processing_fee_cents - platform_fee_cents + @adjustment_cents
+        owed_to_platform_cents = organizer_proceeds_cents.negative? ? -organizer_proceeds_cents : 0
+        settlement_direction =
+          if organizer_proceeds_cents.positive?
+            "platform_owes_organizer"
+          elsif organizer_proceeds_cents.negative?
+            "organizer_owes_platform"
+          else
+            "no_balance_due"
+          end
+      else
+        # Direct collection modes (client_processor, external_link, offline):
+        # The organization collects payments directly; Shimizu holds $0 (unless historical
+        # platform_collect charges exist from before a mode switch) and any configured
+        # platform fee is owed BY the organization TO Shimizu.
+        billable_registrant_count = platform_billable_registrant_count + direct_reg_totals[:billable_registrant_count]
+        platform_fee_cents = calculate_platform_fee_cents(
+          gross_cents: gross_cents + direct_gross_cents,
+          billable_registrant_count: billable_registrant_count
+        )
+        net_cents = gross_cents - refund_cents
+        if gross_cents.positive?
+          platform_held_net = net_cents - processing_fee_cents - platform_fee_cents + @adjustment_cents
+          organizer_proceeds_cents = [platform_held_net, 0].max
+          owed_to_platform_cents = platform_held_net.negative? ? -platform_held_net : 0
+        else
+          organizer_proceeds_cents = 0
+          owed_to_platform_cents = [platform_fee_cents - @adjustment_cents, 0].max
+        end
+        settlement_direction =
+          if organizer_proceeds_cents.positive?
+            "platform_owes_organizer"
+          elsif owed_to_platform_cents.positive?
+            "organizer_owes_platform"
+          else
+            "no_balance_due"
+          end
+      end
 
       all_fee_tracked = platform_reg_charges + platform_sponsor_charges + platform_donation_charges
       actual_fee_count = all_fee_tracked.count { |c| c[:fee_source] == "actual" }
@@ -343,6 +442,7 @@ module Settlements
 
       breakdown = {
         "payment_mode" => @payment_config.payment_mode,
+        "settlement_direction" => settlement_direction,
         "registrations" => {
           "charge_count" => platform_reg_charges.size,
           "billable_registrant_count" => billable_registrant_count,
@@ -377,7 +477,8 @@ module Settlements
           "per_registrant_cents" => @payment_config.platform_fee_per_registrant_cents.to_i,
           "cap_cents" => @payment_config.platform_fee_cap_cents,
           "billable_registrant_count" => billable_registrant_count,
-          "computed_cents" => platform_fee_cents
+          "computed_cents" => platform_fee_cents,
+          "owed_to_platform_cents" => owed_to_platform_cents
         },
         "direct_collected" => {
           "registrations" => direct_reg_totals.transform_keys(&:to_s),

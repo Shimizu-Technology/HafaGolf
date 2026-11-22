@@ -925,6 +925,121 @@ class SettlementsAndPayoutsTest < ActionDispatch::IntegrationTest
     assert_equal 2, result.breakdown_json.dig("registrations", "charge_count")
   end
 
+  test "client_processor settlement owes $0 from platform, reports direct collected totals, and shows platform fee owed to platform" do
+    @org_b.organization_payment_config&.destroy!
+    @org_b.create_organization_payment_config!(
+      payment_mode: "client_processor",
+      processor_provider: "stripe",
+      encrypted_public_key: "pk_test_client_b_1234567890",
+      encrypted_secret_key: "rk_test_client_b_restricted_key",
+      encrypted_webhook_secret: "whsec_client_b_secret",
+      platform_fee_flat_cents: 0,
+      platform_fee_per_registrant_cents: 400, # $4.00 per registrant
+      platform_fee_cap_cents: nil
+    )
+    @tournament_b.update!(team_size: 4, allow_partial_teams: true, capacity_unit: "players", entry_fee: 15_000)
+
+    origin = "client_processor:#{@org_b.id}"
+
+    # Paid 4-player registration via client's own Stripe ($600.00)
+    @tournament_b.registrations.create!(
+      organization: @org_b,
+      team_name: "Client Stripe Foursome",
+      contact_name: "Client Captain",
+      contact_email: "client-cap@example.com",
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 60_000,
+      stripe_payment_intent_id: "pi_client_reg_1",
+      stripe_account_origin: origin,
+      registration_status: "confirmed",
+      paid_at: Time.current,
+      team_members_attributes: [
+        { organization: @org_b, tournament: @tournament_b, position: 1, is_captain: true, name: "Client Captain" },
+        { organization: @org_b, tournament: @tournament_b, position: 2, is_captain: false, name: "Client Player 2" },
+        { organization: @org_b, tournament: @tournament_b, position: 3, is_captain: false, name: "Client Player 3" },
+        { organization: @org_b, tournament: @tournament_b, position: 4, is_captain: false, name: "Client Player 4" }
+      ]
+    )
+
+    # Paid sponsor via client's own Stripe ($1,000.00)
+    @tournament_b.sponsors.create!(
+      name: "Client Direct Sponsor",
+      login_email: "client-sponsor@example.com",
+      tier: "gold",
+      payment_type: "stripe",
+      payment_amount_cents: 100_000,
+      payment_status: "paid",
+      payment_method: "stripe",
+      stripe_payment_intent_id: "pi_client_sponsor_1",
+      stripe_account_origin: origin,
+      active: true,
+      paid_at: Time.current
+    )
+
+    # Paid donation via client's own Stripe ($50.00)
+    @tournament_b.donations.create!(
+      organization: @org_b,
+      donor_name: "Client Direct Donor",
+      donor_email: "client-donor@example.com",
+      amount_cents: 5_000,
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      stripe_payment_intent_id: "pi_client_donation_1",
+      stripe_account_origin: origin,
+      paid_at: Time.current
+    )
+
+    result = Settlements::Calculator.call(@tournament_b)
+
+    # Platform holds $0 and owes $0 in payouts to the client
+    assert_equal 0, result.gross_cents
+    assert_equal 0, result.refund_cents
+    assert_equal 0, result.processing_fee_cents
+    assert_equal 0, result.net_cents
+    assert_equal 0, result.organizer_proceeds_cents
+    # Platform fee = 4 billable registrants * $4.00 = $16.00 owed TO Shimizu
+    assert_equal 4, result.breakdown_json.dig("platform_fee", "billable_registrant_count")
+    assert_equal 1_600, result.platform_fee_cents
+    assert_equal 1_600, result.breakdown_json.dig("platform_fee", "owed_to_platform_cents")
+    assert_equal "organizer_owes_platform", result.breakdown_json["settlement_direction"]
+    # Direct collected totals accurately reflect all 3 client-collected payments
+    assert_equal 60_000, result.breakdown_json.dig("direct_collected", "registrations", "gross_cents")
+    assert_equal 4, result.breakdown_json.dig("direct_collected", "registrations", "billable_registrant_count")
+    assert_equal 100_000, result.breakdown_json.dig("direct_collected", "sponsorships", "gross_cents")
+    assert_equal 5_000, result.breakdown_json.dig("direct_collected", "donations", "gross_cents")
+
+    # Verify API JSON + CSV export + payout disbursement guard
+    get "/api/v1/tournaments/#{@tournament_b.id}/settlement", headers: auth_headers_for(@org_b_admin)
+    assert_response :success
+    payload = JSON.parse(response.body)
+    assert_equal "client_processor", payload["payment_mode"]
+    assert_equal 0, payload.dig("live_preview", "payable_cents")
+    assert_equal 1_600, payload.dig("live_preview", "breakdown", "platform_fee", "owed_to_platform_cents")
+
+    get "/api/v1/tournaments/#{@tournament_b.id}/settlement/export", headers: auth_headers_for(@org_b_admin)
+    assert_response :success
+    assert_includes response.body, "Payment Mode,client_processor"
+    assert_includes response.body, "Balance Owed (Payable),0.00,0"
+    assert_includes response.body, "Platform Fee Owed to Platform,16.00,1600"
+    assert_includes response.body, "Directly Collected by Organization"
+    assert_includes response.body, "Registrations,1,600.00"
+    assert_includes response.body, "Sponsorships,1,1000.00"
+    assert_includes response.body, "Donations,1,50.00"
+
+    # Super admin cannot record a disbursement payout when organizer_proceeds_cents == 0
+    post "/api/v1/tournaments/#{@tournament_b.id}/settlement/calculate", headers: auth_headers_for(@super_admin)
+    assert_response :success
+    post "/api/v1/tournaments/#{@tournament_b.id}/settlement/finalize", headers: auth_headers_for(@super_admin)
+    assert_response :success
+    post "/api/v1/tournaments/#{@tournament_b.id}/settlement/payouts",
+         params: { amount_cents: 100, provider: "check" },
+         headers: auth_headers_for(@super_admin)
+    assert_response :unprocessable_entity
+  end
+
   private
 
   def auth_headers_for(user)
