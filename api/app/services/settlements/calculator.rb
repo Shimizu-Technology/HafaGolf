@@ -41,6 +41,8 @@ module Settlements
     end
 
     def call
+      registrations = @tournament.registrations.includes(:team_members).order(:id).to_a
+      bridged_golfer_ids = registrations.filter_map(&:golfer_id).to_set
       golfers = @tournament.golfers.order(:id).to_a
       raffle_tickets = @tournament.raffle_tickets.order(:id).to_a
       sponsors = @tournament.sponsors.includes(:sponsor_tier).order(:id).to_a
@@ -51,8 +53,63 @@ module Settlements
       line_items = []
       digest_rows = []
 
+      registrations.each do |registration|
+        next if registration.payment_type == "sponsor"
+
+        amount = registration_charge_cents(registration)
+        refund = clamped_refund_cents(registration, amount)
+        next if amount <= 0 && refund <= 0
+
+        if platform_collected_record?(registration)
+          recorded_fee = registration.respond_to?(:stripe_fee_cents) ? registration.stripe_fee_cents : nil
+          fee_cents, fee_source = resolve_processing_fee(amount, recorded_fee)
+          player_count = [registration.player_count, 1].max
+          platform_reg_charges << {
+            id: "reg:#{registration.id}",
+            amount_cents: amount,
+            refund_cents: refund,
+            fee_cents: fee_cents,
+            fee_source: fee_source,
+            registrant_count: player_count,
+            active_paid: registration.payment_status == "paid" && registration.registration_status != "cancelled" && refund < amount
+          }
+          line_items << {
+            source_type: "registration",
+            source_id: registration.id,
+            label: registration.team_name.presence || registration.contact_name.presence || "Registration ##{registration.id}",
+            email: registration.contact_email,
+            payment_status: registration.payment_status,
+            payment_method: registration.payment_method || "stripe",
+            stripe_account_origin: registration.stripe_account_origin,
+            gross_cents: amount,
+            refund_cents: refund,
+            processing_fee_cents: fee_cents,
+            fee_source: fee_source,
+            paid_at: registration.paid_at&.iso8601,
+            refunded_at: registration.refunded_at&.iso8601
+          }
+          digest_rows << [
+            "registration",
+            registration.id,
+            registration.payment_status,
+            registration.registration_status,
+            amount,
+            refund,
+            recorded_fee,
+            registration.payment_method,
+            registration.stripe_account_origin,
+            registration.stripe_payment_intent_id
+          ]
+        elsif registration.payment_status.in?(%w[paid refunded])
+          direct_reg_totals[:count] += 1
+          direct_reg_totals[:gross_cents] += amount
+          direct_reg_totals[:refund_cents] += refund
+        end
+      end
+
       golfers.each do |golfer|
         next if golfer.payment_type == "sponsor"
+        next if bridged_golfer_ids.include?(golfer.id)
 
         amount = registration_charge_cents(golfer)
         refund = clamped_refund_cents(golfer, amount)
@@ -66,6 +123,7 @@ module Settlements
             refund_cents: refund,
             fee_cents: fee_cents,
             fee_source: fee_source,
+            registrant_count: 1,
             active_paid: golfer.payment_status == "paid" && golfer.registration_status != "cancelled" && refund < amount
           }
           line_items << {
@@ -267,7 +325,7 @@ module Settlements
       refund_cents = reg_refunds + raffle_refunds + sponsor_refunds + donation_refunds
       processing_fee_cents = reg_fees + raffle_fees + sponsor_fees + donation_fees
 
-      billable_registrant_count = platform_reg_charges.count { |c| c[:active_paid] }
+      billable_registrant_count = platform_reg_charges.sum { |c| c[:active_paid] ? c.fetch(:registrant_count, 1) : 0 }
       platform_fee_cents = calculate_platform_fee_cents(
         gross_cents: gross_cents,
         billable_registrant_count: billable_registrant_count
