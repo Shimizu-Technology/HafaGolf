@@ -9,10 +9,11 @@
               <% if @org_logo_url.present? %>
                 <img src="<%= @org_logo_url %>" alt="<%= @org_name %>" style="max-height: 50px; margin-bottom: 15px;">
               <% end %>
-              <h1 style="margin: 0 0 5px 0; color: #ffffff; font-size: 14px; font-weight: normal; letter-spacing: 2px; text-transform: uppercase;"><%= @setting.tournament_year %> <%= @setting.tournament_title %></h1>
-              <h2 style="margin: 0 0 5px 0; color: #ffffff; font-size: 11px; font-style: italic; font-weight: normal;"><%= @setting.tournament_edition %> Annual</h2>
-              <h3 style="margin: 0 0 8px 0; color: #ffffff; font-size: 24px; font-weight: bold;"><%= @setting.tournament_name.gsub(' Memorial Golf Tournament', '').upcase %></h3>
-              <p style="margin: 0; color: rgba(255,255,255,0.8); font-size: 14px; font-weight: 600; letter-spacing: 1px;">MEMORIAL GOLF TOURNAMENT</p>
+              <% if @tournament&.year.present? || @tournament&.edition.present? %>
+                <h1 style="margin: 0 0 5px 0; color: #ffffff; font-size: 14px; font-weight: normal; letter-spacing: 2px; text-transform: uppercase;"><%= [@tournament&.year, @tournament&.edition].compact.join(' ') %></h1>
+              <% end %>
+              <h3 style="margin: 0 0 8px 0; color: #ffffff; font-size: 24px; font-weight: bold;"><%= (@tournament&.name || @org_name || 'Golf Tournament').upcase %></h3>
+              <p style="margin: 0; color: rgba(255,255,255,0.8); font-size: 14px; font-weight: 600; letter-spacing: 1px;"><%= @org_name %></p>
             </td>
           </tr>
 
@@ -31,7 +32,7 @@
               <h2 style="margin: 0 0 20px 0; color: <%= @primary_color %>; font-size: 22px;">Hello, <%= @golfer.name %></h2>
               
               <p style="margin: 0 0 25px 0; color: #4a5568; font-size: 15px; line-height: 1.6;">
-                Your refund for the <strong><%= @tournament&.display_name || @setting.tournament_name %></strong> has been processed. The funds will be returned to your original payment method.
+                Your refund for <strong><%= @tournament&.display_name || @tournament&.name || 'the tournament' %></strong> has been processed. The funds will be returned to your original payment method.
               </p>
 
               <!-- Refund Details Box -->
@@ -74,7 +75,7 @@
               </p>
 
               <p style="margin: 0; color: #4a5568; font-size: 14px; line-height: 1.6;">
-                Questions? Contact <strong><%= @setting.contact_name %></strong> at <strong><%= @setting.contact_phone %></strong>.
+                Questions? Contact <strong><%= @tournament&.contact_name.presence || @org_name %></strong><% if (@tournament&.contact_phone.presence || @organization&.contact_phone.presence).present? %> at <strong><%= @tournament&.contact_phone.presence || @organization&.contact_phone %></strong><% end %>.
               </p>
             </td>
           </tr>

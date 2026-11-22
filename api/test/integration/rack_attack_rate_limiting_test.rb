@@ -35,11 +35,11 @@ class RackAttackRateLimitingTest < ActionDispatch::IntegrationTest
     ip_env = { "REMOTE_ADDR" => "10.10.20.20" }
 
     120.times do
-      get "/api/v1/settings", headers: headers, env: ip_env
+      get "/api/v1/admin/organizations", headers: headers, env: ip_env
       refute_equal 429, response.status
     end
 
-    get "/api/v1/settings", headers: headers, env: ip_env
+    get "/api/v1/admin/organizations", headers: headers, env: ip_env
     assert_response :too_many_requests
   end
 end

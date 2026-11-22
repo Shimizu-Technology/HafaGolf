@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -118,6 +118,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
     t.string "tshirt_size"
     t.datetime "updated_at", null: false
     t.datetime "waiver_accepted_at"
+    t.string "stripe_account_origin"
     t.index ["group_id"], name: "index_golfers_on_group_id"
     t.index ["magic_link_token"], name: "index_golfers_on_magic_link_token", unique: true, where: "(magic_link_token IS NOT NULL)"
     t.index ["paid_at"], name: "index_golfers_on_paid_at"
@@ -195,6 +196,33 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
     t.index ["organization_id"], name: "index_organization_memberships_on_organization_id"
     t.index ["user_id", "organization_id"], name: "index_organization_memberships_on_user_id_and_organization_id", unique: true
     t.index ["user_id"], name: "index_organization_memberships_on_user_id"
+  end
+
+  create_table "organization_payment_configs", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.string "payment_mode", default: "offline", null: false
+    t.string "processor_provider", default: "none", null: false
+    t.boolean "test_mode", default: false, null: false
+    t.string "webhook_endpoint_token"
+    t.text "encrypted_public_key"
+    t.text "encrypted_secret_key"
+    t.text "encrypted_webhook_secret"
+    t.string "external_checkout_url"
+    t.string "external_walkin_url"
+    t.string "external_donation_url"
+    t.integer "platform_fee_flat_cents", default: 0, null: false
+    t.integer "platform_fee_per_registrant_cents", default: 0, null: false
+    t.integer "platform_fee_cap_cents"
+    t.string "payout_payee_name"
+    t.string "payout_bank_name"
+    t.text "payout_notes"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["organization_id"], name: "index_organization_payment_configs_on_organization_id", unique: true
+    t.index ["webhook_endpoint_token"], name: "index_organization_payment_configs_on_webhook_endpoint_token", unique: true, where: "(webhook_endpoint_token IS NOT NULL)"
+    t.check_constraint "payment_mode::text = ANY (ARRAY['external_link'::character varying, 'platform_collect'::character varying, 'client_processor'::character varying, 'offline'::character varying]::text[])", name: "chk_org_payment_configs_payment_mode"
+    t.check_constraint "platform_fee_flat_cents >= 0 AND platform_fee_per_registrant_cents >= 0 AND (platform_fee_cap_cents IS NULL OR platform_fee_cap_cents >= 0)", name: "chk_org_payment_configs_non_negative_fees"
+    t.check_constraint "processor_provider::text = ANY (ARRAY['stripe'::character varying, 'swipesimple'::character varying, 'paypal'::character varying, 'worldpay_cardpointe'::character varying, 'none'::character varying]::text[])", name: "chk_org_payment_configs_processor_provider"
   end
 
   create_table "organizations", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -326,33 +354,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
     t.index ["tournament_id", "group_id", "hole"], name: "index_scores_on_tournament_id_and_group_id_and_hole"
     t.index ["tournament_id", "hole"], name: "index_scores_on_tournament_id_and_hole"
     t.index ["tournament_id"], name: "index_scores_on_tournament_id"
-  end
-
-  create_table "settings", force: :cascade do |t|
-    t.string "admin_email"
-    t.string "checks_payable_to", default: "GIAAEO"
-    t.string "contact_name", default: "Peter Torres"
-    t.string "contact_phone", default: "671.689.8677"
-    t.datetime "created_at", null: false
-    t.string "event_date", default: "January 9, 2026"
-    t.string "fee_includes", default: "Green Fee, Ditty Bag, Drinks & Food"
-    t.string "format_name", default: "Individual Callaway"
-    t.string "location_address", default: "Windward Hills, Guam"
-    t.string "location_name", default: "Country Club of the Pacific"
-    t.integer "max_capacity"
-    t.string "payment_mode", default: "test"
-    t.boolean "registration_open", default: true, null: false
-    t.string "registration_time", default: "11:00 am"
-    t.string "start_time", default: "12:30 pm"
-    t.string "stripe_public_key"
-    t.string "stripe_secret_key"
-    t.string "stripe_webhook_secret"
-    t.string "tournament_edition", default: "5th"
-    t.integer "tournament_entry_fee", default: 12500
-    t.string "tournament_name", default: "Edward A.P. Muna II Memorial Golf Tournament"
-    t.string "tournament_title", default: "AIRPORT WEEK"
-    t.string "tournament_year", default: "2026"
-    t.datetime "updated_at", null: false
   end
 
   create_table "sponsor_slots", force: :cascade do |t|
@@ -520,6 +521,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
   add_foreign_key "organization_domains", "organizations"
   add_foreign_key "organization_memberships", "organizations"
   add_foreign_key "organization_memberships", "users"
+  add_foreign_key "organization_payment_configs", "organizations", on_delete: :cascade
   add_foreign_key "raffle_prizes", "raffle_tickets", column: "winning_ticket_id"
   add_foreign_key "raffle_prizes", "tournaments"
   add_foreign_key "raffle_sale_batches", "tournaments"

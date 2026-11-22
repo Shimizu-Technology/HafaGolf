@@ -1041,7 +1041,11 @@ module Api
       end
 
       def authorize_tournament_admin!
-        require_tournament_admin!(@tournament)
+        if %w[draw draw_all claim_prize resend_winner_notification].include?(action_name)
+          with_user_rls_context { require_tournament_admin!(@tournament) }
+        else
+          require_tournament_admin!(@tournament)
+        end
       end
 
       def authorize_volunteer_or_admin!

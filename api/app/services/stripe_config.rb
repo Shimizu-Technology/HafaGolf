@@ -1,37 +1,45 @@
 # frozen_string_literal: true
 
-# Resolves Stripe credentials with environment variables taking precedence over
-# the legacy Setting singleton. Keeps Setting fallback intact until PR-4a replaces
-# it with per-organization encrypted payment configs and drops the settings table.
+# Resolves Shimizu Technology's platform-level Stripe credentials exclusively from
+# server environment variables. Platform secrets are NEVER stored in tenant rows.
 module StripeConfig
   module_function
 
-  def secret_key(setting: nil)
+  def platform_secret_key
     ENV["PLATFORM_STRIPE_SECRET_KEY"].presence ||
-      ENV["STRIPE_SECRET_KEY"].presence ||
-      resolved_setting(setting)&.stripe_secret_key.presence
+      ENV["STRIPE_SECRET_KEY"].presence
   end
 
-  def publishable_key(setting: nil)
+  def platform_publishable_key
     ENV["PLATFORM_STRIPE_PUBLISHABLE_KEY"].presence ||
-      ENV["STRIPE_PUBLISHABLE_KEY"].presence ||
-      resolved_setting(setting)&.stripe_public_key.presence
+      ENV["STRIPE_PUBLISHABLE_KEY"].presence
   end
 
-  def webhook_secret(setting: nil)
+  def platform_webhook_secret
     ENV["PLATFORM_STRIPE_WEBHOOK_SECRET"].presence ||
-      ENV["STRIPE_WEBHOOK_SECRET"].presence ||
-      resolved_setting(setting)&.stripe_webhook_secret.presence
+      ENV["STRIPE_WEBHOOK_SECRET"].presence
   end
 
-  def configured?(setting: nil)
-    secret_key(setting: setting).present? && publishable_key(setting: setting).present?
+  # Backwards-compatible aliases (no longer accept legacy Setting)
+  def secret_key
+    platform_secret_key
   end
 
-  def resolved_setting(setting)
-    return setting if setting
-
-    Setting.instance
+  def publishable_key
+    platform_publishable_key
   end
-  private_class_method :resolved_setting
+
+  def webhook_secret
+    platform_webhook_secret
+  end
+
+  def configured?
+    platform_secret_key.present? && platform_publishable_key.present?
+  end
+
+  def strict_webhook_signatures_required?
+    Rails.env.production? ||
+      Rails.env.staging? ||
+      %w[production staging].include?(ENV["APP_ENV"].to_s.downcase)
+  end
 end
