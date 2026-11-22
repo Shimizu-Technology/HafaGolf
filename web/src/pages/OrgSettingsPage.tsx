@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useOrganization } from '../components/OrganizationProvider';
+import { OrgFeaturesPanel } from '../components/OrgFeaturesPanel';
 import { ImageUpload } from '../components/ImageUpload';
 import { Skeleton } from '../components/LoadingStates';
+import { useTournament } from '../contexts';
 import { useOrganizationStore } from '../stores/organizationStore';
 import type { OrganizationSettings as OrganizationContentSettings } from '../stores/organizationStore';
 import { useAuthToken } from '../hooks/useAuthToken';
@@ -378,6 +380,7 @@ function SettingsPageSkeleton({ organizationName }: { organizationName?: string 
 
 export const OrgSettingsPage: React.FC = () => {
   const { organization } = useOrganization();
+  const { refreshTournaments } = useTournament();
   const { getToken } = useAuthToken();
   const [formData, setFormData] = useState<FormData | null>(null);
   const [saving, setSaving] = useState(false);
@@ -788,6 +791,7 @@ export const OrgSettingsPage: React.FC = () => {
               contact_phone: formData.contact_phone,
               website_url: formData.website_url,
               settings: {
+                ...(organization.settings || {}),
                 homepage_tagline: formData.homepage_tagline,
                 homepage_mission: formData.homepage_mission,
                 homepage_stats: formData.homepage_stats.filter(s => s.value || s.label),
@@ -805,6 +809,7 @@ export const OrgSettingsPage: React.FC = () => {
       useOrganizationStore.getState().setOrganization(updatedOrg);
 
       await saveTournamentSettings(token);
+      await refreshTournaments();
 
       toast.success('All settings saved!');
     } catch (err) {
@@ -1045,6 +1050,24 @@ export const OrgSettingsPage: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* Platform Features */}
+          <OrgFeaturesPanel
+            organizationSlug={organization.slug}
+            onFeaturesUpdated={(updated) => {
+              refreshTournaments();
+              if (tournamentSettings?.id) {
+                const matched = updated.tournaments.find(
+                  (t) => t.id.toString() === tournamentSettings.id
+                );
+                if (matched) {
+                  setTournamentSettings((prev) =>
+                    prev ? { ...prev, raffle_enabled: matched.raffle_enabled } : null
+                  );
+                }
+              }
+            }}
+          />
 
           {/* ─── EVENT SETTINGS DIVIDER ─── */}
           {tournamentSettings && (

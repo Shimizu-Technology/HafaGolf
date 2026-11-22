@@ -75,6 +75,8 @@ Rails.application.routes.draw do
       post 'admin/organizations/:slug/domains' => 'organizations#create_domain'
       patch 'admin/organizations/:slug/domains/:domain_id' => 'organizations#update_domain'
       delete 'admin/organizations/:slug/domains/:domain_id' => 'organizations#destroy_domain'
+      get 'admin/organizations/:slug/features' => 'organizations#features'
+      patch 'admin/organizations/:slug/features' => 'organizations#update_features'
       get 'admin/organizations/:slug/members' => 'organizations#members'
       post 'admin/organizations/:slug/members' => 'organizations#add_member'
       patch 'admin/organizations/:slug/members/:member_id' => 'organizations#update_member'

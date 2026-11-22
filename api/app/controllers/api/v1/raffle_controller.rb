@@ -21,6 +21,7 @@ module Api
       before_action :authorize_volunteer_or_admin!, only: [
         :admin_tickets, :create_tickets, :sell_tickets, :resend_ticket_confirmation
       ]
+      before_action -> { require_feature!(:raffle) }
 
       # ===========================================
       # PUBLIC ENDPOINTS

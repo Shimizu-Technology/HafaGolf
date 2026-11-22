@@ -56,6 +56,7 @@ module Api
           offseason_cta_label: organization.offseason_cta_label,
           offseason_cta_url: organization.offseason_cta_url,
           settings: organization.settings || {},
+          features: Features.for(organization).to_h,
           tournament_count: organization.tournament_count
         }
       end
