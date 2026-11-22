@@ -235,14 +235,15 @@ class Golfer < ApplicationRecord
       captain_ticket = existing.first
       partner_ticket = existing.second
 
+      captain_phone = normalized_raffle_phone(phone)
       if captain_ticket
-        captain_ticket.update!(purchaser_name: name, purchaser_email: email, purchaser_phone: phone)
+        captain_ticket.update!(purchaser_name: name, purchaser_email: email, purchaser_phone: captain_phone)
       else
         tournament.raffle_tickets.create!(
           golfer_id: id,
           purchaser_name: name,
           purchaser_email: email,
-          purchaser_phone: phone,
+          purchaser_phone: captain_phone,
           price_cents: 0,
           payment_status: 'paid',
           purchased_at: Time.current
@@ -250,18 +251,19 @@ class Golfer < ApplicationRecord
       end
 
       if partner_name.present?
+        partner_contact_phone = normalized_raffle_phone(partner_phone.presence || phone)
         if partner_ticket
           partner_ticket.update!(
             purchaser_name: partner_name,
             purchaser_email: partner_email.presence || email,
-            purchaser_phone: partner_phone.presence || phone
+            purchaser_phone: partner_contact_phone
           )
         elsif existing.count < 2
           tournament.raffle_tickets.create!(
             golfer_id: id,
             purchaser_name: partner_name,
             purchaser_email: partner_email.presence || email,
-            purchaser_phone: partner_phone.presence || phone,
+            purchaser_phone: partner_contact_phone,
             price_cents: 0,
             payment_status: 'paid',
             purchased_at: Time.current
@@ -289,19 +291,26 @@ class Golfer < ApplicationRecord
 
       tickets_to_create = raffle_tickets_requested - existing_purchased
       per_ticket_cents = tournament.raffle_ticket_price_cents || 500
+      buyer_phone = normalized_raffle_phone(phone)
 
       tickets_to_create.times do
         tournament.raffle_tickets.create!(
           golfer_id: id,
           purchaser_name: name,
           purchaser_email: email,
-          purchaser_phone: phone,
+          purchaser_phone: buyer_phone,
           price_cents: per_ticket_cents,
           payment_status: 'paid',
           purchased_at: Time.current
         )
       end
     end
+  end
+
+  def normalized_raffle_phone(raw)
+    return raw if raw.blank?
+
+    RafflePhoneValidator.normalize(raw).presence || raw
   end
 
   # Cancel a golfer's registration (without refund - for unpaid or non-Stripe payments)

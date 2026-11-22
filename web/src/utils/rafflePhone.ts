@@ -2,6 +2,14 @@ const BARE_PREFIX_DIGITS = new Set(['1', '671', '1671', '670', '1670']);
 const MIN_FULL_DIGITS = 10;
 const NANP_FULL_DIGITS = 11;
 const MAX_E164_DIGITS = 15;
+const NANP_TEN_DIGIT_RE = /^[2-9]\d{2}[2-9]\d{6}$/;
+
+function isNanpTenDigit(digits: string): boolean {
+  return (
+    digits.length === MIN_FULL_DIGITS &&
+    (digits.startsWith('671') || digits.startsWith('670') || NANP_TEN_DIGIT_RE.test(digits))
+  );
+}
 
 export type PhoneValidationStatus = 'empty' | 'incomplete' | 'mismatch' | 'valid';
 
@@ -47,11 +55,7 @@ export function normalizeRafflePhone(raw: string): string | null {
     return null;
   }
 
-  if (trimmed.startsWith('+')) {
-    return `+${digits}`;
-  }
-
-  if (digits.length === MIN_FULL_DIGITS) {
+  if (digits.length === MIN_FULL_DIGITS && (!trimmed.startsWith('+') || isNanpTenDigit(digits))) {
     return `+1${digits}`;
   }
 

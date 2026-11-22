@@ -156,12 +156,14 @@ export const RaffleEditContactModal: React.FC<RaffleEditContactModalProps> = ({
         const ticketCount = data.ticket_count || 1;
         const ticketWord = ticketCount === 1 ? 'ticket' : 'tickets';
 
-        if (channels.length > 0) {
+        if (data.resent === false) {
+          toast.success(data.message || `Contact updated across ${ticketCount} ${ticketWord} (no paid tickets to resend)`);
+        } else if (channels.length > 0) {
           toast.success(
             `Updated ${ticketCount} ${ticketWord} and sent confirmation via ${channels.join(' and ')}`
           );
         } else {
-          toast.success(`Contact updated across ${ticketCount} ${ticketWord}`);
+          toast.success(data.message || `Contact updated across ${ticketCount} ${ticketWord}`);
         }
 
         const warning = deliveryFailureMessage(data.delivery);

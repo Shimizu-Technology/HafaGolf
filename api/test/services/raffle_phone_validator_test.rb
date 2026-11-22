@@ -45,7 +45,10 @@ class RafflePhoneValidatorTest < ActiveSupport::TestCase
     assert_equal "+16715551234", RafflePhoneValidator.normalize("6715551234")
     assert_equal "+16715551234", RafflePhoneValidator.normalize("16715551234")
     assert_equal "+16715551234", RafflePhoneValidator.normalize("+16715551234")
+    assert_equal "+16715551234", RafflePhoneValidator.normalize("+671 555-1234")
     assert_equal "+16705559876", RafflePhoneValidator.normalize("670.555.9876")
+    assert_equal "+16705559876", RafflePhoneValidator.normalize("+670 555-9876")
+    assert_equal "+18085551234", RafflePhoneValidator.normalize("+808 555-1234")
     assert_equal "+819012345678", RafflePhoneValidator.normalize("+81 90-1234-5678")
   end
 end

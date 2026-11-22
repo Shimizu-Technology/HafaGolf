@@ -65,15 +65,19 @@ class RafflePhoneValidator
       end
 
       normalized =
-        if trimmed.start_with?("+")
-          "+#{digits}"
-        elsif digits.length == MIN_FULL_DIGITS
+        if digits.length == MIN_FULL_DIGITS && (!trimmed.start_with?("+") || nanp_ten_digit?(digits))
           "+1#{digits}"
         else
           "+#{digits}"
         end
 
       { valid: true, normalized: normalized, error: nil }
+    end
+
+    def nanp_ten_digit?(digits)
+      digits.length == MIN_FULL_DIGITS && (
+        digits.start_with?("671", "670") || digits.match?(/\A[2-9]\d{2}[2-9]\d{6}\z/)
+      )
     end
 
     def normalize(raw)

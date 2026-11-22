@@ -1210,6 +1210,86 @@ class Api::V1::RaffleControllerTest < ActionDispatch::IntegrationTest
     assert_nil ticket.purchaser_phone
   end
 
+  test "resend_ticket_confirmation rejects legacy stored bare prefix when no email and skips SMS when email is present" do
+    legacy_phone_only = @tournament.raffle_tickets.create!(
+      purchaser_name: "Legacy Bare Prefix",
+      purchaser_email: nil,
+      purchaser_phone: "+16715550111",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+    legacy_phone_only.update_columns(purchaser_phone: "+1671")
+
+    sms_called = false
+    sms_stub = ->(**) { sms_called = true; { success: true } }
+    with_singleton_method(RaffleSmsService, :purchase_confirmation, sms_stub) do
+      post "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{legacy_phone_only.id}/resend_confirmation",
+           headers: @headers
+    end
+
+    assert_response :unprocessable_entity
+    assert_not sms_called
+    assert_match(/incomplete/i, JSON.parse(response.body).fetch("error"))
+
+    legacy_with_email = @tournament.raffle_tickets.create!(
+      purchaser_name: "Legacy Dual Contact",
+      purchaser_email: "legacy@example.com",
+      purchaser_phone: "+16715550111",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+    legacy_with_email.update_columns(purchaser_phone: "+1671")
+
+    email_called = false
+    email_stub = ->(**) { email_called = true; { success: true, status: "accepted", message_id: "em_1" } }
+    with_singleton_method(RaffleSmsService, :purchase_confirmation, sms_stub) do
+      with_singleton_method(RaffleMailer, :purchase_confirmation_email, email_stub) do
+        post "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{legacy_with_email.id}/resend_confirmation",
+             headers: @headers
+      end
+    end
+
+    assert_response :success
+    assert email_called
+    assert_not sms_called
+  end
+
+  test "update_ticket_contact allows name-only edit on legacy batch with invalid stored phone and reports resent false when no paid tickets" do
+    legacy_batch = @tournament.raffle_sale_batches.create!(
+      buyer_name: "Legacy Batch",
+      buyer_email: "legacy-batch@example.com",
+      buyer_phone: "+16715550111",
+      quantity: 1,
+      total_cents: 500,
+      purchased_at: Time.current
+    )
+    legacy_batch.update_columns(buyer_phone: "+1671")
+
+    pending_ticket = @tournament.raffle_tickets.create!(
+      raffle_sale_batch: legacy_batch,
+      purchaser_name: "Legacy Batch",
+      purchaser_email: "legacy-batch@example.com",
+      purchaser_phone: "+16715550111",
+      price_cents: 500,
+      payment_status: "pending"
+    )
+    pending_ticket.update_columns(purchaser_phone: "+1671")
+
+    patch "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{pending_ticket.id}/contact",
+          params: { buyer_name: "Fixed Name Only", resend: true },
+          headers: @headers
+
+    assert_response :success
+    json = JSON.parse(response.body)
+    assert_equal false, json.fetch("resent")
+    assert_match(/no paid tickets to resend/i, json.fetch("message"))
+    assert_equal "Fixed Name Only", legacy_batch.reload.buyer_name
+    assert_equal "+1671", legacy_batch.buyer_phone
+    assert_equal "Fixed Name Only", pending_ticket.reload.purchaser_name
+  end
+
   private
 
   def build_png_upload

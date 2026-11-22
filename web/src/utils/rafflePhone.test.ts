@@ -29,6 +29,8 @@ describe('rafflePhone', () => {
     expect(normalizeRafflePhone('6715551234')).toBe('+16715551234');
     expect(normalizeRafflePhone('1-671-555-1234')).toBe('+16715551234');
     expect(normalizeRafflePhone('+16715551234')).toBe('+16715551234');
+    expect(normalizeRafflePhone('+671 555-1234')).toBe('+16715551234');
+    expect(normalizeRafflePhone('+670 555-9876')).toBe('+16705559876');
     expect(normalizeRafflePhone('+81 90-1234-5678')).toBe('+819012345678');
   });
 
@@ -43,6 +45,7 @@ describe('rafflePhone', () => {
   it('matches equivalent phone formats after digit normalization', () => {
     expect(phonesMatch('671-555-1234', '6715551234')).toBe(true);
     expect(phonesMatch('671-555-1234', '+16715551234')).toBe(true);
+    expect(phonesMatch('+671 555-1234', '671-555-1234')).toBe(true);
     expect(phonesMatch('(671) 555-1234', '1-671-555-1234')).toBe(true);
     expect(phonesMatch('671-555-1234', '671-555-1235')).toBe(false);
     expect(phonesMatch('+1671', '+1671')).toBe(false);
@@ -51,6 +54,7 @@ describe('rafflePhone', () => {
   it('formats NANP numbers clearly for read-back', () => {
     expect(formatPhoneReadback('6715551234')).toBe('+1 (671) 555-1234');
     expect(formatPhoneReadback('+16715551234')).toBe('+1 (671) 555-1234');
+    expect(formatPhoneReadback('+671 555-1234')).toBe('+1 (671) 555-1234');
     expect(formatPhoneReadback('+81 90-1234-5678')).toBe('+819012345678');
   });
 
