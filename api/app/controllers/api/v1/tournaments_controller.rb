@@ -3,8 +3,8 @@ module Api
     class TournamentsController < BaseController
       skip_before_action :authenticate_user!, only: [:current]
       skip_around_action :with_tenant_rls_context, only: [:current]
-      before_action :set_tournament, only: [:show, :update, :destroy, :archive, :copy, :open, :close, :complete]
-      before_action :authorize_tournament_access!, only: [:show, :update, :destroy, :archive, :copy, :open, :close, :complete]
+      before_action :set_tournament, only: [:show, :update, :destroy, :archive, :clone, :copy, :open, :close, :complete]
+      before_action :authorize_tournament_access!, only: [:show, :update, :destroy, :archive, :clone, :copy, :open, :close, :complete]
 
       # GET /api/v1/tournaments
       # List all tournaments (for admin dropdown)
@@ -203,22 +203,50 @@ module Api
         render json: @tournament, serializer: TournamentSerializer
       end
 
+      # POST /api/v1/tournaments/:id/clone
       # POST /api/v1/tournaments/:id/copy
-      # Create a new tournament based on this one (for next year)
-      def copy
-        new_tournament = @tournament.copy_for_next_year
-        
-        if new_tournament.save
-          ActivityLog.log(
-            admin: current_admin,
-            action: 'tournament_created',
-            target: new_tournament,
-            details: "Created tournament #{new_tournament.display_name} (copied from #{@tournament.display_name})"
-          )
-          render json: new_tournament, serializer: TournamentSerializer, status: :created
-        else
-          render json: { errors: new_tournament.errors.full_messages }, status: :unprocessable_entity
+      # Clone this tournament for next year (same org) or as a template to another org (super_admin only)
+      def clone
+        options = clone_params
+
+        if options[:target_organization_id].present? &&
+           options[:target_organization_id].to_s != @tournament.organization_id.to_s
+          require_super_admin!
+          return if performed?
         end
+
+        result = Tournaments::CloneService.call(
+          source: @tournament,
+          actor: current_user,
+          **options
+        )
+
+        # Pre-populate empty stats so TournamentSerializer avoids an extra count query
+        result.tournament.instance_variable_set(:@golfer_stats, {
+          confirmed: 0,
+          public_confirmed: 0,
+          sponsor_confirmed: 0,
+          paid: 0,
+          pending_payment: 0,
+          waitlist: 0,
+          checked_in: 0
+        })
+
+        render json: {
+          tournament: TournamentSerializer.new(result.tournament).as_json,
+          clone_warnings: result.warnings,
+          clone_metadata: result.metadata
+        }, status: :created
+      rescue Tournaments::CloneService::AuthorizationError => e
+        render json: { error: e.message }, status: :forbidden
+      rescue Tournaments::CloneService::TargetOrganizationNotFoundError => e
+        render json: { error: e.message }, status: :not_found
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { errors: e.record.errors.full_messages }, status: :unprocessable_entity
+      end
+
+      def copy
+        clone
       end
 
       # POST /api/v1/tournaments/:id/open
@@ -324,6 +352,33 @@ module Api
           },
           tournament: @tournament
         )
+      end
+
+      def clone_params
+        allowed_keys = %i[
+          name
+          year
+          edition
+          event_date
+          registration_deadline
+          early_bird_deadline
+          sponsor_edit_deadline
+          raffle_draw_time
+          copy_sponsor_shells
+          copy_raffle_prizes
+          target_organization_id
+        ]
+
+        sources = []
+        sources << params[:tournament].permit(*allowed_keys) if params[:tournament].is_a?(ActionController::Parameters)
+        sources << params[:clone].permit(*allowed_keys) if params[:clone].is_a?(ActionController::Parameters)
+        sources << params.permit(*allowed_keys)
+
+        sources.each_with_object({}) do |permitted, options|
+          allowed_keys.each do |key|
+            options[key] = permitted[key] if permitted.key?(key)
+          end
+        end
       end
 
       def tournament_params

@@ -17,15 +17,22 @@ class SponsorSlotSyncer
       @sponsor.lock!
       slots = @sponsor.sponsor_slots.reload.order(:slot_number).to_a
 
-      # Legacy Golfer sync (pairs)
+      # Legacy Golfer sync (pairs) — capture synced golfers by slot_id so Registrations bridge cleanly
+      # Note: complimentary raffle tickets are created once on Registration (not duplicated on Golfer).
+      golfer_by_slot_id = {}
       slots.each_slice(2).with_index do |(captain_slot, partner_slot), team_idx|
-        sync_team(captain_slot, partner_slot, team_idx + 1)
+        synced_golfer = sync_team(captain_slot, partner_slot, team_idx + 1)
+        next unless synced_golfer
+
+        golfer_by_slot_id[captain_slot.id] = synced_golfer if captain_slot
+        golfer_by_slot_id[partner_slot.id] = synced_golfer if partner_slot
       end
 
       # Real teams Registration + TeamMember sync (1, 2, or 4 per team_size)
       team_size = effective_team_size
       slots.each_slice(team_size).with_index do |team_slots, team_idx|
-        sync_registration_team(team_slots, team_idx + 1)
+        bridged_golfer = team_slots.filter_map { |s| golfer_by_slot_id[s.id] }.first
+        sync_registration_team(team_slots, team_idx + 1, bridged_golfer: bridged_golfer)
       end
     end
   end
@@ -41,7 +48,7 @@ class SponsorSlotSyncer
       pair_start = (legacy_team_number - 1) * 2 + 1
       captain_slot = @sponsor.sponsor_slots.find_by(slot_number: pair_start)
       partner_slot = @sponsor.sponsor_slots.find_by(slot_number: pair_start + 1)
-      sync_team(captain_slot, partner_slot, legacy_team_number)
+      synced_golfer = sync_team(captain_slot, partner_slot, legacy_team_number)
 
       # 2. Real teams Registration + TeamMember sync
       team_size = effective_team_size
@@ -49,7 +56,7 @@ class SponsorSlotSyncer
       range_start = (reg_team_number - 1) * team_size + 1
       range_end = range_start + team_size - 1
       team_slots = @sponsor.sponsor_slots.where(slot_number: range_start..range_end).order(:slot_number).to_a
-      sync_registration_team(team_slots, reg_team_number)
+      sync_registration_team(team_slots, reg_team_number, bridged_golfer: synced_golfer)
     end
 
     true
@@ -65,7 +72,7 @@ class SponsorSlotSyncer
   # Real Teams Sync (Registration + TeamMember with 1:1 sponsor_slot_id)
   # =========================================================================
 
-  def sync_registration_team(team_slots, team_number)
+  def sync_registration_team(team_slots, team_number, bridged_golfer: nil)
     slots = Array(team_slots).compact.sort_by(&:slot_number)
     return if slots.empty?
 
@@ -88,9 +95,11 @@ class SponsorSlotSyncer
     contact_phone = captain_slot.player_phone&.strip.presence || "N/A"
     team_size = effective_team_size
 
+    bridge_golfer_id = resolve_bridge_golfer_id(bridged_golfer, registration)
+
     Registration.transaction(requires_new: true) do
       if registration
-        registration.update!(
+        reg_update = {
           team_name: expected_team_name,
           sponsor_id: @sponsor.id,
           contact_name: captain_slot.player_name.strip,
@@ -101,7 +110,9 @@ class SponsorSlotSyncer
           payment_status: "paid",
           registration_source: "sponsor",
           registration_status: "confirmed"
-        )
+        }
+        reg_update[:golfer_id] = bridge_golfer_id if bridge_golfer_id.present?
+        registration.update!(reg_update)
 
         # Remove team_members for slots that were cleared
         cleared_slot_ids = (slots - filled_slots).map(&:id)
@@ -152,6 +163,7 @@ class SponsorSlotSyncer
         registration = @tournament.registrations.create!(
           organization_id: @tournament.organization_id,
           sponsor_id: @sponsor.id,
+          golfer_id: bridge_golfer_id,
           team_name: expected_team_name,
           contact_name: captain_slot.player_name.strip,
           contact_email: contact_email,
@@ -173,6 +185,15 @@ class SponsorSlotSyncer
     rescue => e
       Rails.logger.warn("Failed to create registration raffle tickets for #{registration.display_team_name}: #{e.message}")
     end
+  end
+
+  def resolve_bridge_golfer_id(bridged_golfer, current_registration)
+    return nil unless bridged_golfer&.id.present?
+    return bridged_golfer.id if current_registration&.golfer_id == bridged_golfer.id
+
+    already_linked = Registration.where(golfer_id: bridged_golfer.id)
+    already_linked = already_linked.where.not(id: current_registration.id) if current_registration&.persisted?
+    already_linked.exists? ? nil : bridged_golfer.id
   end
 
   def find_existing_registration(slots, expected_team_name)
@@ -230,19 +251,11 @@ class SponsorSlotSyncer
       changes = detect_changes(golfer, update_attrs)
       golfer.update!(update_attrs)
       append_audit(golfer, "Updated via sponsor portal: #{changes}") if changes.present?
-      begin
-        golfer.create_raffle_tickets!
-      rescue => e
-        Rails.logger.warn("Failed to create raffle tickets for #{golfer.name}: #{e.message}")
-      end
+      golfer
     else
       new_golfer = @tournament.golfers.create!(attrs)
       append_audit(new_golfer, "Created via sponsor portal by #{@sponsor.name}")
-      begin
-        new_golfer.create_raffle_tickets!
-      rescue => e
-        Rails.logger.warn("Failed to create raffle tickets for #{new_golfer.name}: #{e.message}")
-      end
+      new_golfer
     end
   end
 

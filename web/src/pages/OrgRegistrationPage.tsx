@@ -21,7 +21,7 @@ import { api, Tournament } from '../services/api';
 import { useOrganization } from '../components/OrganizationProvider';
 import { formatEventDate } from '../utils/dates';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
-import { getPublicFacingCapacitySummary } from '../utils/capacity';
+import { getPublicFacingCapacitySummary, isAtCapacity, isPublicAtCapacity } from '../utils/capacity';
 import { useApplyBranding } from '../utils/branding';
 import { getDefaultOrgSlug } from '../utils/tenant';
 import {
@@ -301,23 +301,26 @@ export const OrgRegistrationPage: React.FC = () => {
     );
   }
 
+  const totalAtCapacity = isAtCapacity(tournament);
+  const publicFull = isPublicAtCapacity(tournament);
+  const anyAtCapacity = totalAtCapacity || publicFull;
+
   if (!tournament.can_register) {
-    const isAtCapacity = tournament.at_capacity || tournament.public_at_capacity;
-    const publicOnlyFull = tournament.public_at_capacity && !tournament.at_capacity;
+    const publicOnlyFull = publicFull && !totalAtCapacity;
     const waitlistEnabled = tournament.waitlist_enabled;
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <Card className="p-8 max-w-md text-center">
           <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
           <h1 className="text-xl font-bold text-neutral-900 mb-2">
-            {isAtCapacity && !waitlistEnabled
+            {anyAtCapacity && !waitlistEnabled
               ? publicOnlyFull
                 ? 'Public Registration Full'
                 : 'Event Full'
               : 'Registration Closed'}
           </h1>
           <p className="text-neutral-600 mb-4">
-            {isAtCapacity && !waitlistEnabled
+            {anyAtCapacity && !waitlistEnabled
               ? publicOnlyFull
                 ? `Public registration for ${tournament.name} is full because sponsor-reserved slots are held separately.`
                 : `${tournament.name} has reached maximum capacity.`
@@ -392,7 +395,7 @@ export const OrgRegistrationPage: React.FC = () => {
         </div>
       </PublicHero>
 
-      {(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled && (
+      {anyAtCapacity && tournament.waitlist_enabled && (
         <div className="bg-amber-50 border-b border-amber-200">
           <div className="max-w-6xl mx-auto px-6 py-3">
             <p className="text-sm text-amber-800 font-medium text-center">
@@ -911,7 +914,7 @@ export const OrgRegistrationPage: React.FC = () => {
                   onClick={handleSubmit}
                   disabled={submitState !== 'idle'}
                   className={`inline-flex items-center gap-2 ${
-                    (tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled
+                    anyAtCapacity && tournament.waitlist_enabled
                       ? 'bg-amber-500 hover:bg-amber-600 text-white'
                       : 'bg-brand-600 hover:bg-brand-700 text-brand-foreground'
                   } font-semibold text-sm rounded-full px-8 py-3 transition-colors min-h-[44px] w-full sm:w-auto justify-center ${
@@ -920,7 +923,7 @@ export const OrgRegistrationPage: React.FC = () => {
                 >
                   {submitState === 'idle' && (
                     <>
-                      {(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled
+                      {anyAtCapacity && tournament.waitlist_enabled
                         ? 'Join Waitlist'
                         : 'Register & Pay'}
                       <ChevronRight className="w-4 h-4" />
@@ -1022,11 +1025,11 @@ export const OrgRegistrationPage: React.FC = () => {
                   )}
                 </div>
 
-                {(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled ? (
+                {anyAtCapacity && tournament.waitlist_enabled ? (
                   <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3">
                     <p className="text-xs text-amber-800 font-medium mb-1">Waitlist Registration</p>
                     <p className="text-xs text-amber-700">
-                      {tournament.public_at_capacity && !tournament.at_capacity
+                      {publicFull && !totalAtCapacity
                         ? 'Public registration is currently full. Your registration will be added to the waitlist and notified if sponsor-reserved or public spots open up. No payment is required until confirmed.'
                         : 'This event is at capacity. Your registration will be added to the waitlist and you will be notified if a spot opens up. No payment is required until confirmed.'}
                     </p>

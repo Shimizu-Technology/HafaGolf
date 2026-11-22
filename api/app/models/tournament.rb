@@ -303,11 +303,7 @@ class Tournament < ApplicationRecord
   end
 
   def can_register?
-    return false unless open? && registration_open? && !registration_deadline_passed?
-    return true unless public_at_capacity?
-    return false unless waitlist_enabled?
-    return true if waitlist_max.nil? || waitlist_max == 0
-    waitlist_count < waitlist_max
+    can_accept_public_registration?(player_count: 1)
   end
 
   # Single-query stats computation — replaces 8+ individual COUNT queries
@@ -335,15 +331,15 @@ class Tournament < ApplicationRecord
   end
 
   def confirmed_count
-    golfer_stats[:confirmed]
+    capacity_summary[:confirmed_units]
   end
 
   def public_confirmed_count
-    golfer_stats[:public_confirmed]
+    capacity_summary[:public_confirmed_units]
   end
 
   def sponsor_confirmed_count
-    golfer_stats[:sponsor_confirmed]
+    capacity_summary[:sponsor_confirmed_units]
   end
 
   def sponsor_reserved_slots
@@ -355,13 +351,11 @@ class Tournament < ApplicationRecord
   end
 
   def sponsor_reserved_teams
-    @sponsor_reserved_teams ||= begin
-      divisor = [team_size.to_i, 1].max
-      active_sponsors = sponsors.loaded? ? sponsors.select(&:active?) : sponsors.active.to_a
-      active_sponsors.sum do |sponsor|
-        slots = sponsor.slot_count.to_i
-        slots.positive? ? ((slots + divisor - 1) / divisor) : 0
-      end
+    divisor = [team_size.to_i, 1].max
+    active_sponsors = sponsors.loaded? ? sponsors.select(&:active?) : sponsors.active.to_a
+    active_sponsors.sum do |sponsor|
+      slots = sponsor.slot_count.to_i
+      slots.positive? ? ((slots + divisor - 1) / divisor) : 0
     end
   end
 
@@ -397,9 +391,13 @@ class Tournament < ApplicationRecord
       .where(registrations: { registration_status: "waitlist" })
       .count
 
-    # Unlinked legacy golfers (not bridged to a Registration via golfer_id)
+    # Unlinked legacy golfers (excluding bridged golfers via registrations.golfer_id
+    # AND legacy sponsor golfers belonging to sponsors already synced into Registrations)
     bridged_golfer_ids = registrations.where.not(golfer_id: nil).select(:golfer_id)
-    unlinked_golfers = golfers.where.not(id: bridged_golfer_ids)
+    synced_sponsor_ids = registrations.where.not(sponsor_id: nil).select(:sponsor_id)
+    unlinked_golfers = golfers
+      .where.not(id: bridged_golfer_ids)
+      .where("golfers.sponsor_id IS NULL OR golfers.sponsor_id NOT IN (?)", synced_sponsor_ids)
 
     legacy_row = unlinked_golfers.pick(
       Arel.sql("COUNT(*) FILTER (WHERE registration_status = 'confirmed')"),
@@ -510,7 +508,7 @@ class Tournament < ApplicationRecord
   end
 
   def waitlist_count
-    golfer_stats[:waitlist]
+    capacity_summary[:waitlist_units]
   end
 
   def checked_in_count
@@ -518,32 +516,23 @@ class Tournament < ApplicationRecord
   end
 
   def capacity_remaining
-    return nil if max_capacity.nil?
-    remaining = max_capacity - confirmed_count
-    remaining.negative? ? 0 : remaining
+    capacity_summary[:remaining]
   end
 
   def public_capacity
-    return max_capacity if max_capacity.nil?
-    reserved = [reserved_slots || 0, sponsor_reserved_teams].max
-    public_cap = max_capacity - reserved
-    public_cap.negative? ? 0 : public_cap
+    capacity_summary[:public_capacity]
   end
 
   def public_capacity_remaining
-    return public_capacity if public_capacity.nil?
-    remaining = public_capacity - public_confirmed_count
-    remaining.negative? ? 0 : remaining
+    capacity_summary[:public_remaining]
   end
 
   def public_at_capacity?
-    return false if max_capacity.nil?
-    public_confirmed_count >= public_capacity
+    capacity_summary[:public_at_capacity]
   end
 
   def at_capacity?
-    return false if max_capacity.nil?
-    confirmed_count >= max_capacity
+    capacity_summary[:at_capacity]
   end
 
   # Display helpers
@@ -601,84 +590,9 @@ class Tournament < ApplicationRecord
     update!(status: 'completed', registration_open: false, walkin_registration_open: false)
   end
 
-  # Copy tournament for next year
-  def copy_for_next_year
-    Tournament.new(
-      organization: organization,
-      event_type: event_type,
-      name: name,
-      year: year + 1,
-      edition: increment_edition,
-      status: 'draft',
-      event_date: nil,
-      registration_time: registration_time,
-      check_in_time: check_in_time,
-      start_time: start_time,
-      location_name: location_name,
-      location_address: location_address,
-      tournament_format: tournament_format,
-      scoring_type: scoring_type,
-      team_size: team_size,
-      capacity_unit: capacity_unit,
-      allow_partial_teams: allow_partial_teams,
-      shotgun_start: shotgun_start,
-      tee_times_enabled: tee_times_enabled,
-      tee_time_interval_minutes: tee_time_interval_minutes,
-      total_holes: total_holes,
-      total_par: total_par,
-      course_name: course_name,
-      tee_name: tee_name,
-      course_rating: course_rating,
-      slope_rating: slope_rating,
-      hole_pars: hole_pars,
-      hole_handicaps: hole_handicaps,
-      use_flights: use_flights,
-      flights_config: flights_config,
-      handicap_required: handicap_required,
-      handicap_max: handicap_max,
-      max_capacity: max_capacity,
-      reserved_slots: reserved_slots,
-      entry_fee: entry_fee,
-      entry_fee_display: entry_fee_display,
-      early_bird_fee: early_bird_fee,
-      employee_entry_fee: employee_entry_fee,
-      employee_discount_enabled: employee_discount_enabled,
-      format_name: format_name,
-      fee_includes: fee_includes,
-      checks_payable_to: checks_payable_to,
-      payment_instructions: payment_instructions,
-      allow_cash: allow_cash,
-      allow_check: allow_check,
-      allow_card: allow_card,
-      waitlist_enabled: waitlist_enabled,
-      waitlist_max: waitlist_max,
-      contact_name: contact_name,
-      contact_phone: contact_phone,
-      contact_email: contact_email,
-      raffle_enabled: raffle_enabled,
-      raffle_ticket_price_cents: raffle_ticket_price_cents,
-      raffle_description: raffle_description,
-      raffle_auto_draw: raffle_auto_draw,
-      raffle_max_tickets_per_person: raffle_max_tickets_per_person,
-      raffle_tickets_per_purchase: raffle_tickets_per_purchase,
-      walkin_fee: walkin_fee,
-      sponsor_edit_deadline: sponsor_edit_deadline,
-      event_schedule: event_schedule,
-      tournament_info: tournament_info,
-      public_listed: public_listed,
-      use_org_branding: use_org_branding,
-      theme_preset: theme_preset,
-      primary_color_override: primary_color_override,
-      accent_color_override: accent_color_override,
-      logo_url_override: logo_url_override,
-      signature_image_url_override: signature_image_url_override,
-      banner_url_override: banner_url_override,
-      swipe_simple_url: swipe_simple_url,
-      walkin_swipe_simple_url: walkin_swipe_simple_url,
-      registration_open: false,
-      walkin_registration_open: false,
-      config: config&.deep_dup || {}
-    )
+  # Copy tournament for next year (delegates to Tournaments::CloneService)
+  def copy_for_next_year(**options)
+    Tournaments::CloneService.new(source: self, **options).build_tournament
   end
 
   private
@@ -855,16 +769,6 @@ class Tournament < ApplicationRecord
   end
 
   def increment_edition
-    return '1st' if edition.blank?
-    
-    current_num = edition.to_i
-    next_num = current_num + 1
-    
-    case next_num
-    when 1 then '1st'
-    when 2 then '2nd'
-    when 3 then '3rd'
-    else "#{next_num}th"
-    end
+    Tournaments::CloneService.increment_edition(edition)
   end
 end

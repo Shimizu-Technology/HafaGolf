@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { getPublicFacingCapacitySummary } from './capacity';
+import {
+  getPublicFacingCapacitySummary,
+  getRegistrationStatusLabel,
+  isAtCapacity,
+  isPublicAtCapacity,
+} from './capacity';
 import {
   buildInitialPlayers,
   buildRegistrationPayload,
@@ -220,5 +225,47 @@ describe('teamRegistration helpers (1/2/4 players + partial teams)', () => {
 
     expect(summary.label).toBe('6 / 16 public spots claimed');
     expect(summary.secondaryLabel).toBe('0 / 4 sponsor-reserved spots used');
+  });
+
+  it('reads capacity_summary for BOTH teams and players modes even when legacy confirmed_count is 0', () => {
+    const teamsRecord = {
+      capacity_unit: 'teams' as const,
+      max_capacity: 10,
+      confirmed_count: 0,
+      public_confirmed_count: 0,
+      at_capacity: false,
+      public_at_capacity: false,
+      waitlist_enabled: true,
+      capacity_summary: {
+        capacity_unit: 'teams' as const,
+        team_size: 2,
+        allow_partial_teams: false,
+        max_capacity: 10,
+        reserved_slots: 0,
+        sponsor_reserved_slots: 4,
+        sponsor_reserved: 2,
+        effective_reserved: 2,
+        public_capacity: 8,
+        confirmed_units: 8,
+        public_confirmed_units: 8,
+        sponsor_confirmed_units: 0,
+        waitlist_units: 1,
+        confirmed_registrations_count: 8,
+        confirmed_players_count: 16,
+        waitlist_registrations_count: 1,
+        waitlist_players_count: 2,
+        remaining: 2,
+        public_remaining: 0,
+        at_capacity: false,
+        public_at_capacity: true,
+      },
+    };
+
+    const summary = getPublicFacingCapacitySummary(teamsRecord);
+    expect(summary.label).toBe('8 / 8 public spots claimed');
+    expect(summary.secondaryLabel).toBe('0 / 2 sponsor-reserved spots used');
+    expect(isAtCapacity(teamsRecord)).toBe(false);
+    expect(isPublicAtCapacity(teamsRecord)).toBe(true);
+    expect(getRegistrationStatusLabel(teamsRecord)).toBe('Waitlist Open');
   });
 });

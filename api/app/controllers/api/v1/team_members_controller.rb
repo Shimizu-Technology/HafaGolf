@@ -51,10 +51,26 @@ module Api
       # POST /api/v1/team_members/:id/undo_check_in
       def undo_check_in
         unchecked_now = false
+        blocked_status = nil
 
-        @team_member.with_lock do
+        ActiveRecord::Base.transaction(requires_new: true) do
+          @team_member.registration.lock!
+          @team_member.lock!
+
+          status = @team_member.registration.registration_status
+          unless status == "confirmed"
+            blocked_status = status
+            raise ActiveRecord::Rollback
+          end
+
           unchecked_now = @team_member.checked_in?
           @team_member.undo_check_in! if unchecked_now
+        end
+
+        if blocked_status.present?
+          render json: { error: "Cannot update check-in for a player whose registration is #{blocked_status}" },
+                 status: :unprocessable_entity
+          return
         end
 
         unless unchecked_now

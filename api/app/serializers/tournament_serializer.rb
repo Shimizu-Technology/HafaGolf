@@ -76,15 +76,15 @@ class TournamentSerializer < ActiveModel::Serializer
   end
 
   def confirmed_count
-    object.confirmed_count
+    memoized_capacity_summary[:confirmed_units]
   end
 
   def public_confirmed_count
-    object.public_confirmed_count
+    memoized_capacity_summary[:public_confirmed_units]
   end
 
   def sponsor_confirmed_count
-    object.sponsor_confirmed_count
+    memoized_capacity_summary[:sponsor_confirmed_units]
   end
 
   def sponsor_reserved_teams
@@ -92,27 +92,27 @@ class TournamentSerializer < ActiveModel::Serializer
   end
 
   def waitlist_count
-    object.waitlist_count
+    memoized_capacity_summary[:waitlist_units]
   end
 
   def capacity_remaining
-    object.capacity_remaining
+    memoized_capacity_summary[:remaining]
   end
 
   def at_capacity
-    object.at_capacity?
+    memoized_capacity_summary[:at_capacity]
   end
 
   def public_capacity
-    object.public_capacity
+    memoized_capacity_summary[:public_capacity]
   end
 
   def public_capacity_remaining
-    object.public_capacity_remaining
+    memoized_capacity_summary[:public_remaining]
   end
 
   def public_at_capacity
-    object.public_at_capacity?
+    memoized_capacity_summary[:public_at_capacity]
   end
 
   def checked_in_count
@@ -160,7 +160,11 @@ class TournamentSerializer < ActiveModel::Serializer
   end
 
   def capacity_summary
-    object.capacity_summary
+    memoized_capacity_summary
+  end
+
+  def memoized_capacity_summary
+    @memoized_capacity_summary ||= object.capacity_summary
   end
 
   def features

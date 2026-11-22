@@ -398,4 +398,91 @@ class Api::V1::RegistrationsControllerTest < ActionDispatch::IntegrationTest
     assert_equal target_group.id, reg_target.reload.group_id
     assert_equal 4, target_group.reload.player_count
   end
+
+  test "P1-2 & P1-3: unified capacity waitlists/blocks legacy POST /api/v1/golfers when Registrations fill tournament and syncs TournamentSerializer" do
+    # 2-team tournament using capacity_unit: 'teams'
+    t = @org_a.tournaments.create!(
+      name: "Mixed Admission Cup",
+      year: 2027,
+      status: "open",
+      registration_open: true,
+      team_size: 2,
+      capacity_unit: "teams",
+      max_capacity: 2,
+      waitlist_enabled: true,
+      entry_fee: 30000
+    )
+
+    # Fill both spots via new Registration API
+    2.times do |i|
+      t.registrations.create!(
+        organization: @org_a,
+        team_name: "New Team #{i + 1}",
+        payment_type: "stripe",
+        team_members_attributes: team_payload(2, prefix: "mx#{i}").map { |m| m.except(:waiver_accepted) }
+      )
+    end
+
+    # TournamentSerializer reports unified at_capacity / confirmed_count for teams mode
+    authenticate_as(@admin_a)
+    get "/api/v1/tournaments/#{t.id}", headers: auth_headers
+    assert_response :success
+    serialized = JSON.parse(response.body)
+    assert_equal 2, serialized["confirmed_count"]
+    assert_equal 0, serialized["public_capacity_remaining"]
+    assert_equal true, serialized["at_capacity"]
+    assert_equal true, serialized["public_at_capacity"]
+
+    # Incoming legacy POST /api/v1/golfers MUST be waitlisted (not confirmed!)
+    post "/api/v1/golfers",
+         params: {
+           tournament_id: t.id,
+           waiver_accepted: true,
+           golfer: {
+             name: "Legacy Overflow",
+             email: "legacy-ov-#{SecureRandom.hex(3)}@example.com",
+             phone: "+16715559876",
+             payment_type: "pay_on_day",
+             team_category: "Co-Ed"
+           }
+         },
+         headers: { "X-Tenant-Host" => "alpha.golf.test" },
+         as: :json
+    assert_response :created
+    assert_equal "waitlist", JSON.parse(response.body).dig("golfer", "registration_status")
+
+    # When waitlist is disabled, legacy POST /api/v1/golfers is rejected with 422!
+    t.update!(waitlist_enabled: false)
+    post "/api/v1/golfers",
+         params: {
+           tournament_id: t.id,
+           waiver_accepted: true,
+           golfer: {
+             name: "Legacy Blocked",
+             email: "legacy-blk-#{SecureRandom.hex(3)}@example.com",
+             phone: "+16715559877",
+             payment_type: "pay_on_day",
+             team_category: "Co-Ed"
+           }
+         },
+         headers: { "X-Tenant-Host" => "alpha.golf.test" },
+         as: :json
+    assert_response :unprocessable_entity
+  end
+
+  test "P2: undo_check_in rejects members on cancelled registrations with 422" do
+    reg = @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Cancel Undo Team",
+      payment_type: "stripe",
+      team_members_attributes: team_payload(2, prefix: "cu").map { |m| m.except(:waiver_accepted) }
+    )
+    member = reg.team_members.first
+    member.check_in!(admin: @admin_a)
+    reg.cancel!(admin: @admin_a, reason: "Withdrew")
+
+    authenticate_as(@volunteer_a)
+    post "/api/v1/team_members/#{member.id}/undo_check_in", headers: auth_headers
+    assert_response :unprocessable_entity
+  end
 end

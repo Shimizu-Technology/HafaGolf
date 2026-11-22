@@ -634,4 +634,53 @@ class RegistrationTest < ActiveSupport::TestCase
     legacy_score = Score.create!(tournament: t, group: group, golfer: nil, score_type: "team", hole: 1, strokes: 5)
     assert legacy_score.persisted?
   end
+
+  test "P1-1: SponsorSlotSyncer does not double-count sponsor capacity or duplicate complimentary raffle tickets" do
+    t = create_tournament(
+      team_size: 4,
+      capacity_unit: "players",
+      max_capacity: 12,
+      raffle_enabled: true,
+      config: { "raffle_include_with_registration" => true }
+    )
+    sponsor = t.sponsors.create!(name: "Zero Dupe Bank", tier: "title", slot_count: 4, active: true)
+    sponsor.sponsor_slots.order(:slot_number).each_with_index do |slot, idx|
+      slot.update!(
+        player_name: "Sponsor Player #{idx + 1}",
+        player_email: "zd#{idx + 1}-#{SecureRandom.hex(3)}@example.com",
+        player_phone: "+1671555030#{idx + 1}"
+      )
+    end
+
+    SponsorSlotSyncer.new(sponsor).sync_all
+
+    reg = t.registrations.find_by!(sponsor_id: sponsor.id)
+    assert_not_nil reg.golfer_id, "Bridged registration should link golfer_id"
+
+    summary = t.capacity_summary
+    assert_equal 4, summary[:confirmed_players_count], "Must count 4 sponsor players once, not 8"
+    assert_equal 4, summary[:sponsor_confirmed_units]
+    assert_equal 1, summary[:confirmed_registrations_count], "Must count 1 sponsor team once, not 3"
+    assert_equal 8, summary[:remaining]
+
+    # Switching to teams mode also counts 1 sponsor team, not 3
+    t.update!(capacity_unit: "teams")
+    teams_summary = t.capacity_summary
+    assert_equal 1, teams_summary[:confirmed_units]
+    assert_equal 1, teams_summary[:sponsor_confirmed_units]
+
+    # Complimentary raffle tickets issued exactly once per player (4 total, not 8!)
+    assert_equal 4, t.raffle_tickets.count
+    assert_equal 4, t.raffle_tickets.where(registration_id: reg.id).count
+    assert_equal 0, t.raffle_tickets.where(registration_id: nil).count
+  end
+
+  test "P1-3: sponsor_reserved_teams is not stale-memoized across instance lifetime" do
+    t = create_tournament(team_size: 4, capacity_unit: "teams", max_capacity: 5)
+    assert_equal 0, t.sponsor_reserved_teams
+
+    t.sponsors.create!(name: "Late Sponsor", tier: "gold", slot_count: 4, active: true)
+    assert_equal 1, t.sponsor_reserved_teams
+    assert_equal 4, t.public_capacity
+  end
 end

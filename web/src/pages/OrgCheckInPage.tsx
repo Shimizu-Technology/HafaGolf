@@ -116,14 +116,23 @@ export const OrgCheckInPage: React.FC = () => {
 
       if (data.tournament?.id) {
         try {
-          const regRes = await fetch(
-            `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${data.tournament.id}/registrations?registration_status=confirmed&per_page=200`,
-            { headers: { 'Authorization': `Bearer ${token}` } }
-          );
-          if (regRes.ok) {
+          const allRegistrations: ApiRegistration[] = [];
+          let page = 1;
+          let totalPages = 1;
+          while (page <= totalPages) {
+            const regRes = await fetch(
+              `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${data.tournament.id}/registrations?registration_status=confirmed&per_page=200&page=${page}`,
+              { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            if (!regRes.ok) break;
             const regData = await regRes.json();
-            setRegistrations(Array.isArray(regData.registrations) ? regData.registrations : []);
+            if (Array.isArray(regData.registrations)) {
+              allRegistrations.push(...regData.registrations);
+            }
+            totalPages = Number(regData.meta?.total_pages) || 1;
+            page += 1;
           }
+          setRegistrations(allRegistrations);
         } catch {
           // Non-fatal: legacy golfer check-in remains available
         }

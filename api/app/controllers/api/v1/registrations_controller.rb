@@ -258,6 +258,7 @@ module Api
 
         ActiveRecord::Base.transaction(requires_new: true) do
           group.lock!
+          @registration.lock!
           if group.can_add_registration?(@registration)
             @registration.update!(group: group)
             assigned = true

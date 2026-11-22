@@ -19,7 +19,7 @@ module Api
 
       # GET /api/v1/groups/:id
       def show
-        group = Group.includes(:golfers).find(params[:id])
+        group = Group.includes(:golfers, registrations: :team_members).find(params[:id])
         render json: group, include: "golfers"
       end
 
@@ -128,7 +128,7 @@ module Api
 
         ActiveRecord::Base.transaction do
           tournament.lock!
-          group = Group.lock.includes(:golfers, :tournament).find(params[:id])
+          group = Group.lock.includes(:golfers, :tournament, registrations: :team_members).find(params[:id])
           label_changes = tracked_label_changes(tournament, positions_to_track)
 
           merge_target = nil
@@ -137,7 +137,7 @@ module Api
              attributes[:hole_number].present? &&
              !group.empty_slot?
             groups_at_target_start = Group.lock
-                                          .includes(:golfers, :registrations)
+                                          .includes(:golfers, registrations: :team_members)
                                           .for_start_position(
                                             tournament: tournament,
                                             course_key: attributes[:starting_course_key],
@@ -263,7 +263,7 @@ module Api
         removed_group_id = nil
 
         ActiveRecord::Base.transaction do
-          locked_groups = Group.lock.includes(:golfers, :registrations).where(id: [params[:id], params[:target_group_id]]).order(:id).to_a
+          locked_groups = Group.lock.includes(:golfers, registrations: :team_members).where(id: [params[:id], params[:target_group_id]]).order(:id).to_a
           source_group = locked_groups.find { |group| group.id == params[:id].to_i }
           target_group = locked_groups.find { |group| group.id == params[:target_group_id].to_i }
 
@@ -680,9 +680,7 @@ module Api
           raise ActiveRecord::RecordInvalid, golfer unless golfer.assign_to_group(group: target_group, position: next_position)
         end
 
-        source_group.registrations.order(:id).each do |registration|
-          registration.update!(group: target_group)
-        end
+        source_group.registrations.update_all(group_id: target_group.id, updated_at: Time.current)
 
         source_group.scores.destroy_all
         source_group.destroy!
@@ -778,7 +776,7 @@ module Api
       end
 
       def serialize_group_payload(group)
-        fresh_group = Group.includes(:tournament, golfers: :sponsor).find(group.id)
+        fresh_group = Group.includes(:tournament, { golfers: :sponsor }, { registrations: :team_members }).find(group.id)
         preload_group_position_letters([fresh_group])
         ActiveModelSerializers::SerializableResource.new(fresh_group, include: "golfers").as_json
       end

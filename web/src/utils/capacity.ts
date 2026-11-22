@@ -16,53 +16,69 @@ type CapacityRecord = {
 };
 
 export function getTotalConfirmed(record: CapacityRecord) {
-  if (record.capacity_unit === 'players' && record.capacity_summary) {
-    return record.capacity_summary.confirmed_players_count ?? record.capacity_summary.confirmed_units ?? 0;
+  if (record.capacity_summary) {
+    return record.capacity_summary.confirmed_units ?? 0;
   }
   return record.confirmed_count ?? 0;
 }
 
 export function getPublicConfirmed(record: CapacityRecord) {
-  if (record.capacity_unit === 'players' && record.capacity_summary) {
+  if (record.capacity_summary) {
     return record.capacity_summary.public_confirmed_units ?? getTotalConfirmed(record);
   }
   return record.public_confirmed_count ?? getTotalConfirmed(record);
 }
 
 export function getSponsorConfirmed(record: CapacityRecord) {
-  if (record.capacity_unit === 'players' && record.capacity_summary) {
+  if (record.capacity_summary) {
     return record.capacity_summary.sponsor_confirmed_units ?? 0;
   }
   return record.sponsor_confirmed_count ?? 0;
 }
 
 export function getSponsorReservedTeams(record: CapacityRecord) {
-  if (record.capacity_unit === 'players' && record.capacity_summary) {
-    return record.capacity_summary.sponsor_reserved_slots ?? record.capacity_summary.sponsor_reserved ?? 0;
+  if (record.capacity_summary) {
+    return record.capacity_summary.sponsor_reserved ?? 0;
   }
   return record.sponsor_reserved_teams ?? 0;
 }
 
 export function getPublicCapacity(record: CapacityRecord) {
-  if (record.capacity_unit === 'players' && record.capacity_summary) {
+  if (record.capacity_summary) {
     return record.capacity_summary.public_capacity ?? record.capacity_summary.max_capacity ?? record.max_capacity ?? null;
   }
   return record.public_capacity ?? record.max_capacity ?? null;
 }
 
+export function isAtCapacity(record: CapacityRecord) {
+  if (record.capacity_summary) {
+    return record.capacity_summary.at_capacity === true;
+  }
+  return record.at_capacity === true;
+}
+
+export function isPublicAtCapacity(record: CapacityRecord) {
+  if (record.capacity_summary) {
+    return record.capacity_summary.public_at_capacity === true;
+  }
+  return record.public_at_capacity === true;
+}
+
 export function usesReservedPublicCapacity(record: CapacityRecord) {
   const publicCapacity = getPublicCapacity(record);
-  const maxCapacity = record.max_capacity ?? null;
+  const maxCapacity = record.capacity_summary?.max_capacity ?? record.max_capacity ?? null;
   return publicCapacity != null && maxCapacity != null && publicCapacity < maxCapacity;
 }
 
 export function getPublicFacingCapacitySummary(record: CapacityRecord) {
-  const unitLabel = record.capacity_unit === 'players' ? 'players' : 'teams';
+  const unit = record.capacity_summary?.capacity_unit ?? record.capacity_unit;
+  const unitLabel = unit === 'players' ? 'players' : 'teams';
   const publicCapacity = getPublicCapacity(record);
   const publicConfirmed = getPublicConfirmed(record);
   const sponsorReserved = getSponsorReservedTeams(record);
   const sponsorConfirmed = getSponsorConfirmed(record);
   const usesReservedCapacity = usesReservedPublicCapacity(record);
+  const maxCapacity = record.capacity_summary?.max_capacity ?? record.max_capacity ?? null;
 
   if (publicCapacity == null) {
     return {
@@ -72,7 +88,7 @@ export function getPublicFacingCapacitySummary(record: CapacityRecord) {
     };
   }
 
-  const denominator = usesReservedCapacity ? publicCapacity : (record.max_capacity ?? publicCapacity);
+  const denominator = usesReservedCapacity ? publicCapacity : (maxCapacity ?? publicCapacity);
   const numerator = usesReservedCapacity ? publicConfirmed : getTotalConfirmed(record);
   const label = usesReservedCapacity
     ? `${numerator} / ${denominator} public spots claimed`
@@ -88,8 +104,8 @@ export function getPublicFacingCapacitySummary(record: CapacityRecord) {
 }
 
 export function getRegistrationStatusLabel(record: CapacityRecord) {
-  const totalFull = record.at_capacity === true;
-  const publicFull = record.public_at_capacity === true;
+  const totalFull = isAtCapacity(record);
+  const publicFull = isPublicAtCapacity(record);
   const waitlistEnabled = record.waitlist_enabled === true;
 
   if (totalFull) {

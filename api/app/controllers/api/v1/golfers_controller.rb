@@ -91,14 +91,15 @@ module Api
             # Lock the tournament row to prevent concurrent capacity checks
             tournament.lock!
 
-            # Re-check registration status after acquiring lock
-            unless tournament.can_register?
+            golfer = tournament.golfers.new(golfer_params)
+            golfer.waiver_accepted_at = Time.current if params[:waiver_accepted]
+            incoming_players = golfer.partner_name.present? ? 2 : 1
+
+            # Re-check unified registration capacity (golfers + registrations/team_members) after acquiring lock
+            unless tournament.can_accept_public_registration?(player_count: incoming_players)
               error_response = { errors: ["Registration is currently closed."], status: :unprocessable_entity }
               raise ActiveRecord::Rollback
             end
-
-            golfer = tournament.golfers.new(golfer_params)
-            golfer.waiver_accepted_at = Time.current if params[:waiver_accepted]
 
             if golfer.save
               if %w[stripe swipe_simple walk_in].include?(golfer.payment_type)
