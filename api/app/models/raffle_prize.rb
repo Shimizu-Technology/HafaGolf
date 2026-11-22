@@ -35,42 +35,53 @@ class RafflePrize < ApplicationRecord
     (value_cents || 0) / 100.0
   end
 
-  # Draw a winner from available tickets
+  # Draw a winner from available tickets.
+  # Commits the draw transaction and releases row locks BEFORE ActionCable broadcasts
+  # and Resend/ClickSend notifications run.
   def draw_winner!
     winner_drawn = false
     draw_id = SecureRandom.uuid
     eligible_snapshot = nil
+    org_id = tournament&.organization_id
 
-    transaction do
-      lock!
-      unless won?
-        # Lock eligible tickets while selecting so simultaneous draw requests cannot
-        # award the same ticket or redraw the same prize.
-        available_tickets = tournament.raffle_tickets.eligible_for_draw.order(:id).lock("FOR UPDATE OF raffle_tickets").to_a
-        eligible_snapshot = eligible_ticket_snapshot(available_tickets)
-        winning_ticket = available_tickets.empty? ? nil : available_tickets[random_ticket_index(available_tickets.length)]
+    run_draw = lambda do
+      transaction(requires_new: true) do
+        lock!
+        unless won?
+          # Lock eligible tickets while selecting so simultaneous draw requests cannot
+          # award the same ticket or redraw the same prize.
+          available_tickets = tournament.raffle_tickets.eligible_for_draw.order(:id).lock("FOR UPDATE OF raffle_tickets").to_a
+          eligible_snapshot = eligible_ticket_snapshot(available_tickets)
+          winning_ticket = available_tickets.empty? ? nil : available_tickets[random_ticket_index(available_tickets.length)]
 
-        if winning_ticket
-          winning_ticket.update!(
-            is_winner: true,
-            drawn_at: Time.current,
-            raffle_prize: self
-          )
+          if winning_ticket
+            winning_ticket.update!(
+              is_winner: true,
+              drawn_at: Time.current,
+              raffle_prize: self
+            )
 
-          update!(
-            won: true,
-            won_at: Time.current,
-            draw_id: draw_id,
-            draw_eligible_ticket_count: eligible_snapshot[:count],
-            draw_preview_ticket_numbers: eligible_snapshot[:preview_numbers],
-            winning_ticket: winning_ticket,
-            winner_name: winning_ticket.purchaser_name,
-            winner_email: winning_ticket.purchaser_email,
-            winner_phone: winning_ticket.purchaser_phone
-          )
-          winner_drawn = true
+            update!(
+              won: true,
+              won_at: Time.current,
+              draw_id: draw_id,
+              draw_eligible_ticket_count: eligible_snapshot[:count],
+              draw_preview_ticket_numbers: eligible_snapshot[:preview_numbers],
+              winning_ticket: winning_ticket,
+              winner_name: winning_ticket.purchaser_name,
+              winner_email: winning_ticket.purchaser_email,
+              winner_phone: winning_ticket.purchaser_phone
+            )
+            winner_drawn = true
+          end
         end
       end
+    end
+
+    if org_id.present?
+      TenantContext.with_organization(org_id, &run_draw)
+    else
+      run_draw.call
     end
 
     return false unless winner_drawn

@@ -337,24 +337,33 @@ class Golfer < ApplicationRecord
 
     Stripe.api_key = stripe_secret
 
-    # Process the refund through Stripe
+    # Process the refund through Stripe OUTSIDE any DB transaction
     refund = Stripe::Refund.create({
       payment_intent: stripe_payment_intent_id,
       reason: "requested_by_customer"
     })
 
-    ActiveRecord::Base.transaction do
-      clear_group_assignment! if clear_group_assignment && group_id.present?
+    persist_refund = lambda do
+      ActiveRecord::Base.transaction(requires_new: true) do
+        clear_group_assignment! if clear_group_assignment && group_id.present?
 
-      update!(
-        registration_status: "cancelled",
-        payment_status: "refunded",
-        stripe_refund_id: refund.id,
-        refund_amount_cents: refund.amount,
-        refund_reason: reason,
-        refunded_at: Time.current,
-        refunded_by: admin
-      )
+        update!(
+          registration_status: "cancelled",
+          payment_status: "refunded",
+          stripe_refund_id: refund.id,
+          refund_amount_cents: refund.amount,
+          refund_reason: reason,
+          refunded_at: Time.current,
+          refunded_by: admin
+        )
+      end
+    end
+
+    org_id = tournament&.organization_id
+    if org_id.present?
+      TenantContext.with_organization(org_id, &persist_refund)
+    else
+      persist_refund.call
     end
 
     # Send refund notification email

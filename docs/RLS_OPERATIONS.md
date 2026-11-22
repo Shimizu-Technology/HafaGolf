@@ -23,8 +23,15 @@ bundle exec rails db:rls:setup_app_role
 ### 2. Configure Runtime Connection (`DATABASE_APP_URL`)
 
 `api/config/database.yml` connects `production` (and `cable`) to `ENV["DATABASE_APP_URL"]` when set, falling back to `ENV["DATABASE_URL"]`.
-- Keep `DATABASE_URL` pointing to the migration/owner role for `bundle exec rails db:migrate`.
+- Keep `DATABASE_URL` pointing to the migration/owner role.
 - Set `DATABASE_APP_URL` on Render to the Neon pooled `-pooler` URL using the `hafagolf_app` credentials.
+- **Migrations MUST clear `DATABASE_APP_URL`** so DDL runs as the owner role (`DATABASE_URL`), not `hafagolf_app`:
+  ```bash
+  DATABASE_APP_URL="" bundle exec rails db:migrate
+  ```
+  (`api/render.yaml` sets `buildCommand: bundle install && DATABASE_APP_URL="" bundle exec rails db:migrate` automatically.)
+
+> **Authorization scope note:** Tournament-assigned admins receive an org-level UUID allowlist (`app.accessible_organization_ids`) at the database RLS layer, while controller-level `require_tournament_admin!` enforces per-tournament assignment boundaries.
 
 ### 3. Verify Enforcement
 

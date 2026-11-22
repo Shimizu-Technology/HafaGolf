@@ -9,18 +9,37 @@ class MessageDeliveryTracker
         messageable: messageable
       )
 
-      MessageDelivery.create!(
-        provider: provider,
-        channel: channel,
-        purpose: purpose,
-        recipient: recipient,
-        organization: resolved_organization,
-        tournament: tournament,
-        messageable: messageable,
-        request_payload: request_payload || {},
-        metadata: metadata || {},
-        status: "pending"
-      )
+      if resolved_organization.present?
+        TenantContext.with_organization(resolved_organization) do
+          MessageDelivery.create!(
+            provider: provider,
+            channel: channel,
+            purpose: purpose,
+            recipient: recipient,
+            organization: resolved_organization,
+            tournament: tournament,
+            messageable: messageable,
+            request_payload: request_payload || {},
+            metadata: metadata || {},
+            status: "pending"
+          )
+        end
+      else
+        TenantContext.with_platform_access do
+          MessageDelivery.create!(
+            provider: provider,
+            channel: channel,
+            purpose: purpose,
+            recipient: recipient,
+            organization: resolved_organization,
+            tournament: tournament,
+            messageable: messageable,
+            request_payload: request_payload || {},
+            metadata: metadata || {},
+            status: "pending"
+          )
+        end
+      end
     rescue => e
       Rails.logger.error(
         "[MessageDeliveryTracker] failed to create delivery record " \
@@ -33,7 +52,15 @@ class MessageDeliveryTracker
       return result if delivery.blank?
 
       normalized = normalize_result(result)
-      delivery.mark_from_result!(normalized)
+      if delivery.organization_id.present?
+        TenantContext.with_organization(delivery.organization_id) do
+          delivery.mark_from_result!(normalized)
+        end
+      else
+        TenantContext.with_platform_access do
+          delivery.mark_from_result!(normalized)
+        end
+      end
       normalized
     rescue => e
       Rails.logger.error("[MessageDeliveryTracker] failed to update delivery #{delivery&.id}: #{e.message}")

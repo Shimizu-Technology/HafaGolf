@@ -308,6 +308,50 @@ class TenantIsolationTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "raffle draw commits before winner notification so post-draw failures cannot roll back a notified winner" do
+    authenticate_as(@admin_a)
+
+    prize = @tournament_a.raffle_prizes.create!(name: "Banquet Prize", tier: "grand", value_cents: 50000)
+    @tournament_a.raffle_tickets.create!(
+      purchaser_name: "Lucky Winner",
+      purchaser_email: "lucky@example.com",
+      purchaser_phone: "671-555-8899",
+      payment_status: "paid",
+      purchased_at: Time.current,
+      price_cents: 1000
+    )
+
+    baseline_tx_depth = ActiveRecord::Base.connection.open_transactions
+    tx_depth_during_notify = nil
+
+    orig_notify = RafflePrize.instance_method(:notify_winner)
+    RafflePrize.define_method(:notify_winner) do
+      tx_depth_during_notify = ActiveRecord::Base.connection.open_transactions
+      orig_notify.bind_call(self)
+    end
+
+    orig_log = ActivityLog.method(:log)
+    ActivityLog.define_singleton_method(:log) do |**kwargs|
+      raise ActiveRecord::StatementInvalid, "Simulated post-draw audit failure" if kwargs[:action] == "raffle_prize_drawn"
+
+      orig_log.call(**kwargs)
+    end
+
+    begin
+      assert_raises(ActiveRecord::StatementInvalid) do
+        post "/api/v1/tournaments/#{@tournament_a.id}/raffle/prizes/#{prize.id}/draw", headers: auth_headers
+      end
+
+      assert_equal baseline_tx_depth, tx_depth_during_notify,
+                   "RafflePrize#notify_winner must run outside any extra controller DB transaction"
+      assert prize.reload.won?,
+             "Committed raffle draw must NOT roll back if post-draw activity logging fails after winner notification"
+    ensure
+      RafflePrize.define_method(:notify_winner, orig_notify)
+      ActivityLog.define_singleton_method(:log, orig_log)
+    end
+  end
+
   test "public token routes reject cross-tenant host mismatches" do
     @golfer_b.generate_payment_token!
     @golfer_b.generate_magic_link!

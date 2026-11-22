@@ -21,17 +21,23 @@ class ApplicationController < ActionController::API
   # - Unauthenticated hostless request (including spoofed Bearer headers) -> fail-closed (0 rows)
   def with_tenant_rls_context(&block)
     if respond_to?(:current_user, true) && current_user.present?
-      if current_user.super_admin?
-        TenantContext.with_platform_access(&block)
-      else
-        TenantContext.with_organizations(current_user.accessible_organization_ids, &block)
-      end
+      with_user_rls_context(&block)
     elsif instance_variable_defined?(:@current_golfer) && @current_golfer.present?
       TenantContext.with_organization(@current_golfer.tournament.organization_id, &block)
     elsif instance_variable_defined?(:@sponsor) && @sponsor.present?
       TenantContext.with_organization(@sponsor.tournament.organization_id, &block)
     elsif Current.organization.present?
       TenantContext.with_organization(Current.organization, &block)
+    else
+      TenantContext.with_closed_access(&block)
+    end
+  end
+
+  def with_user_rls_context(&block)
+    if current_user&.super_admin?
+      TenantContext.with_platform_access(&block)
+    elsif current_user.present?
+      TenantContext.with_organizations(current_user.accessible_organization_ids, &block)
     else
       TenantContext.with_closed_access(&block)
     end

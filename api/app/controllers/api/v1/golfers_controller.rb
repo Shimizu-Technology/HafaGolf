@@ -2,7 +2,7 @@ module Api
   module V1
     class GolfersController < BaseController
       skip_before_action :authenticate_user!, only: [:create, :registration_status]
-      skip_around_action :with_tenant_rls_context, only: [:create]
+      skip_around_action :with_tenant_rls_context, only: [:create, :refund]
       before_action :authorize_collection_volunteer_access!, only: [:index]
       before_action :authorize_collection_tournament_access!, only: [:stats, :bulk_send_payment_links]
       before_action :authorize_golfer_volunteer_access!, only: [:check_in, :undo_check_in, :verify_payment]
@@ -127,11 +127,16 @@ module Api
         if error_response
           render json: { errors: error_response[:errors] }, status: error_response[:status]
         elsif result
+          # Serialize inside org RLS context so lazy associations work under non-owner RLS
+          serialized_golfer = TenantContext.with_organization(result[:golfer].tournament.organization_id) do
+            GolferSerializer.new(result[:golfer]).as_json
+          end
+
           # Broadcast after transaction commits (non-critical)
           broadcast_golfer_update(result[:golfer])
 
           render json: {
-            golfer: GolferSerializer.new(result[:golfer]),
+            golfer: serialized_golfer,
             message: result[:message]
           }, status: :created
         end
@@ -255,9 +260,15 @@ module Api
       end
 
       # POST /api/v1/golfers/:id/refund
-      # Process a refund through Stripe and cancel the registration
+      # Process a refund through Stripe and cancel the registration.
+      # Runs OUTSIDE any outer request transaction so Stripe::Refund.create never holds a DB transaction.
       def refund
-        golfer = Golfer.find(params[:id])
+        golfer = nil
+        old_group = nil
+        with_user_rls_context do
+          golfer = Golfer.includes(:group, :tournament).find(params[:id])
+          old_group = golfer.group
+        end
 
         unless golfer.can_refund?
           if golfer.refunded?
@@ -273,22 +284,21 @@ module Api
         end
 
         reason = params[:reason]
-        old_group = golfer.group
 
         begin
-          # CRITICAL: Process the refund first and only clear the group
-          # after the refund succeeds so a Stripe failure leaves the pairing intact.
+          # CRITICAL: Process the refund first (Stripe HTTP outside DB tx, then short org-scoped DB tx)
           stripe_refund = golfer.process_refund!(
             admin: current_admin,
             reason: reason,
             clear_group_assignment: old_group.present?
           )
 
+          serialized_golfer = with_user_rls_context { GolferSerializer.new(golfer).as_json }
+
           # CRITICAL: Return success response FIRST before non-critical operations
-          # This ensures user sees success even if activity log or broadcast fails
           render json: {
             success: true,
-            golfer: GolferSerializer.new(golfer),
+            golfer: serialized_golfer,
             refund: {
               id: stripe_refund.id,
               amount: stripe_refund.amount,
@@ -297,38 +307,39 @@ module Api
             message: "Refund processed successfully"
           }
 
-          # NON-CRITICAL: Log group removal if applicable
-          if old_group.present?
+          # NON-CRITICAL: Log group removal & refund inside short RLS context (wrapped in rescue)
+          with_user_rls_context do
+            if old_group.present?
+              begin
+                ActivityLog.log(
+                  admin: current_admin,
+                  action: 'golfer_removed_from_group',
+                  target: golfer,
+                  details: "Removed #{golfer.name} from #{old_group.hole_position_label} (refunded)"
+                )
+              rescue StandardError => e
+                Rails.logger.error("Failed to log group removal: #{e.message}")
+              end
+            end
+
             begin
               ActivityLog.log(
                 admin: current_admin,
-                action: 'golfer_removed_from_group',
+                action: 'golfer_refunded',
                 target: golfer,
-                details: "Removed #{golfer.name} from #{old_group.hole_position_label} (refunded)"
+                details: "Refunded #{golfer.name} - $#{'%.2f' % (stripe_refund.amount / 100.0)}",
+                metadata: {
+                  reason: reason,
+                  refund_id: stripe_refund.id,
+                  amount_cents: stripe_refund.amount
+                }
               )
             rescue StandardError => e
-              Rails.logger.error("Failed to log group removal: #{e.message}")
+              Rails.logger.error("Failed to log refund activity: #{e.message}")
             end
           end
 
-          # NON-CRITICAL: Log activity (wrapped in rescue)
-          begin
-            ActivityLog.log(
-              admin: current_admin,
-              action: 'golfer_refunded',
-              target: golfer,
-              details: "Refunded #{golfer.name} - $#{'%.2f' % (stripe_refund.amount / 100.0)}",
-              metadata: { 
-                reason: reason, 
-                refund_id: stripe_refund.id,
-                amount_cents: stripe_refund.amount
-              }
-            )
-          rescue StandardError => e
-            Rails.logger.error("Failed to log refund activity: #{e.message}")
-          end
-
-          # NON-CRITICAL: Broadcast update (already wrapped in rescue in helper method)
+          # NON-CRITICAL: Broadcast update AFTER commit (already wrapped in rescue in helper method)
           broadcast_golfer_update(golfer)
 
         rescue Stripe::StripeError => e
@@ -938,7 +949,11 @@ module Api
       end
 
       def authorize_golfer_access!
-        golfer = Golfer.find(params[:id])
+        golfer = if action_name == "refund"
+          with_user_rls_context { Golfer.includes(:tournament).find(params[:id]) }
+        else
+          Golfer.find(params[:id])
+        end
         require_tournament_admin!(golfer.tournament)
       end
 
