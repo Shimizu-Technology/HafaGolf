@@ -257,6 +257,7 @@ class PerOrgPaymentsTest < ActionDispatch::IntegrationTest
       data: {
         object: {
           id: "cs_cross_org",
+          payment_status: "paid",
           payment_intent: "pi_cross_org",
           metadata: { golfer_id: @golfer_a.id.to_s }
         }
@@ -275,6 +276,7 @@ class PerOrgPaymentsTest < ActionDispatch::IntegrationTest
       data: {
         object: {
           id: "cs_own_org_b",
+          payment_status: "paid",
           payment_intent: "pi_own_org_b",
           amount_total: 20000,
           metadata: { golfer_id: @golfer_b.id.to_s, organization_id: @org_b.id.to_s }
@@ -353,12 +355,17 @@ class PerOrgPaymentsTest < ActionDispatch::IntegrationTest
 
     before_count_b = @tournament_b.golfers.count
 
-    with_singleton_method(Stripe::Checkout::Session, :retrieve, ->(_sid, _opts = {}) { forged_session }) do
+    captured_api_key = nil
+    with_singleton_method(Stripe::Checkout::Session, :retrieve, ->(_sid, opts = {}) {
+      captured_api_key = opts[:api_key]
+      forged_session
+    }) do
       post "/api/v1/checkout/confirm",
            params: { session_id: "cs_forged_cross_org_1", organization_slug: @org_a.slug },
            headers: { "X-Tenant-Host" => "unmapped-host.example.com" }
     end
 
+    assert_equal "sk_test_attacker_a", captured_api_key
     assert_response :not_found
     assert_equal before_count_b, @tournament_b.golfers.reload.count, "Must NEVER create golfer in Org B from Org A session"
   end

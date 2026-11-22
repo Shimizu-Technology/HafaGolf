@@ -160,8 +160,8 @@ module Api
       def handle_checkout_session_completed(session, scope_organization_id:, expected_mode:, account_origin:)
         Rails.logger.info("Checkout session completed: #{session.id}")
 
-        if session.respond_to?(:payment_status) && session.payment_status.present? && session.payment_status != "paid"
-          Rails.logger.info("Ignoring checkout.session.completed #{session.id} with payment_status=#{session.payment_status}")
+        unless session.respond_to?(:payment_status) && session.payment_status == "paid"
+          Rails.logger.info("Ignoring checkout.session.completed #{session.id} with payment_status=#{session.respond_to?(:payment_status) ? session.payment_status.inspect : 'missing'}")
           return
         end
 

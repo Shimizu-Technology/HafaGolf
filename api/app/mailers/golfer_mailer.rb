@@ -15,8 +15,7 @@ class GolferMailer < ApplicationMailer
     @is_swipe_simple = golfer.payment_type == "swipe_simple"
     @is_employee = golfer.is_employee
     @swipe_simple_url = @tournament&.swipe_simple_url.presence ||
-                        @organization&.effective_payment_config&.external_checkout_url.presence ||
-                        ENV["SWIPE_SIMPLE_PAYMENT_URL"].presence
+                        @organization&.effective_payment_config&.external_checkout_url.presence
     set_org_branding
 
     tournament_name = @tournament&.name || "the tournament"
@@ -69,8 +68,7 @@ class GolferMailer < ApplicationMailer
     @organization = @tournament&.organization
     @entry_fee = calculate_entry_fee(golfer)
     @swipe_simple_url = @tournament&.swipe_simple_url.presence ||
-                        @organization&.effective_payment_config&.external_checkout_url.presence ||
-                        ENV["SWIPE_SIMPLE_PAYMENT_URL"].presence
+                        @organization&.effective_payment_config&.external_checkout_url.presence
     set_org_branding
 
     tournament_name = @tournament&.name || "the event"
