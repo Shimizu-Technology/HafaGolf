@@ -39,10 +39,12 @@ export function OrganizationLandingPage() {
     return featured?.theme_preset;
   }, [tournaments]);
 
-  const branding = useApplyBranding(
-    organization,
-    featuredThemePreset ? { theme_preset: featuredThemePreset, use_org_branding: true } : null
+  const featuredTournamentBranding = useMemo(
+    () => (featuredThemePreset ? { theme_preset: featuredThemePreset, use_org_branding: true } : null),
+    [featuredThemePreset]
   );
+
+  const branding = useApplyBranding(organization, featuredTournamentBranding);
   const pack = branding.themePack;
 
   useEffect(() => {

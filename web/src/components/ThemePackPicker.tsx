@@ -146,6 +146,8 @@ function ThemePackLivePreview({
   );
 }
 
+const LEGACY_PRESET_VALUES = new Set(['classic', 'premium', 'minimal', 'event']);
+
 export const ThemePackPicker: React.FC<ThemePackPickerProps> = ({
   value,
   onChange,
@@ -156,7 +158,8 @@ export const ThemePackPicker: React.FC<ThemePackPickerProps> = ({
   entryFeeLabel,
 }) => {
   const activePack = resolveThemePack(value);
-  const isLegacyClassic = value?.trim().toLowerCase() === 'classic';
+  const normalizedValue = value?.trim().toLowerCase() ?? '';
+  const isLegacyPreset = LEGACY_PRESET_VALUES.has(normalizedValue);
 
   return (
     <div className="space-y-4">
@@ -203,9 +206,9 @@ export const ThemePackPicker: React.FC<ThemePackPickerProps> = ({
         })}
       </div>
 
-      {isLegacyClassic && (
+      {isLegacyPreset && (
         <p className="text-xs text-gray-500">
-          This event currently uses the legacy <span className="font-mono">classic</span> preset, which maps automatically to <span className="font-medium text-gray-700">Default Clean</span>.
+          This event currently uses the legacy <span className="font-mono">{normalizedValue}</span> preset, which maps automatically to <span className="font-medium text-gray-700">Default Clean</span>.
         </p>
       )}
 

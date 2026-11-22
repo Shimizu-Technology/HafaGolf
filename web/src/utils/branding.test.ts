@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ACCENT_COLOR,
@@ -16,7 +18,10 @@ import {
   relativeLuminance,
   resetBrandingOnDocument,
   resolveTournamentBranding,
+  useApplyBranding,
 } from './branding';
+
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('normalizeHexColor', () => {
   it('normalizes 6-digit and 3-digit hex values with or without leading #', () => {
@@ -247,5 +252,42 @@ describe('CSS variable generation and DOM application', () => {
     expect(meta.getAttribute('content')).toBe(DEFAULT_PRIMARY_COLOR);
 
     meta.remove();
+  });
+
+  it('preserves tournament theme pack across re-renders with fresh inline tournament objects and resets on unmount', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const org = { primary_color: '#7f1d1d', accent_color: '#eab308' };
+
+    function Probe({ tick }: { tick: number }) {
+      // Intentionally passes a fresh object literal on every render
+      useApplyBranding(org, { theme_preset: 'crest-classic', use_org_branding: true });
+      return React.createElement('span', null, String(tick));
+    }
+
+    act(() => {
+      root.render(React.createElement(Probe, { tick: 1 }));
+    });
+    expect(document.documentElement.dataset.themePack).toBe('crest-classic');
+    expect(document.documentElement.style.getPropertyValue('--theme-pack-border-width')).toBe('2px');
+
+    // Re-render with a new inline tournament object — must NOT reset to default-clean
+    act(() => {
+      root.render(React.createElement(Probe, { tick: 2 }));
+    });
+    expect(document.documentElement.dataset.themePack).toBe('crest-classic');
+    expect(document.documentElement.style.getPropertyValue('--theme-pack-border-width')).toBe('2px');
+
+    // Unmounting resets back to organization-level defaults
+    act(() => {
+      root.unmount();
+    });
+    expect(document.documentElement.dataset.themePack).toBe('default-clean');
+    expect(document.documentElement.style.getPropertyValue('--brand-600')).toBe('#7f1d1d');
+
+    container.remove();
+    resetBrandingOnDocument(document);
   });
 });

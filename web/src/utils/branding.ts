@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import {
   buildThemePackCssVariables,
   isThemePackId,
@@ -378,16 +378,20 @@ export function useApplyBranding(
     ]
   );
 
+  const latestOrganizationRef = useRef(organization);
+  latestOrganizationRef.current = organization;
+  const hasTournament = Boolean(tournament);
+
   useEffect(() => {
     applyBrandingToDocument(branding);
   }, [branding]);
 
   useEffect(() => {
-    if (!tournament) return;
+    if (!hasTournament) return;
     return () => {
-      applyBrandingToDocument(resolveTournamentBranding(organization, null));
+      applyBrandingToDocument(resolveTournamentBranding(latestOrganizationRef.current, null));
     };
-  }, [organization, tournament]);
+  }, [hasTournament]);
 
   return branding;
 }
