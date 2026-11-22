@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -60,6 +60,25 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
     t.index ["organization_id"], name: "index_activity_logs_on_organization_id"
     t.index ["target_type", "target_id"], name: "index_activity_logs_on_target_type_and_target_id"
     t.index ["tournament_id"], name: "index_activity_logs_on_tournament_id"
+  end
+
+  create_table "employee_numbers", force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id", null: false
+    t.string "employee_number", null: false
+    t.string "employee_name"
+    t.boolean "used", default: false, null: false
+    t.bigint "used_by_golfer_id"
+    t.datetime "used_at"
+    t.string "legacy_source"
+    t.string "legacy_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index "tournament_id, lower((employee_number)::text)", name: "index_employee_numbers_on_tournament_and_lower_number", unique: true
+    t.index ["legacy_source", "legacy_id"], name: "index_employee_numbers_on_legacy_source_and_legacy_id", unique: true, where: "(legacy_source IS NOT NULL)"
+    t.index ["organization_id"], name: "index_employee_numbers_on_organization_id"
+    t.index ["tournament_id"], name: "index_employee_numbers_on_tournament_id"
+    t.index ["used_by_golfer_id"], name: "index_employee_numbers_on_used_by_golfer_id"
   end
 
   create_table "golfers", force: :cascade do |t|
@@ -118,6 +137,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
     t.string "tshirt_size"
     t.datetime "updated_at", null: false
     t.datetime "waiver_accepted_at"
+    t.bigint "employee_number_record_id"
+    t.index ["employee_number_record_id"], name: "index_golfers_on_employee_number_record_id"
     t.index ["group_id"], name: "index_golfers_on_group_id"
     t.index ["magic_link_token"], name: "index_golfers_on_magic_link_token", unique: true, where: "(magic_link_token IS NOT NULL)"
     t.index ["paid_at"], name: "index_golfers_on_paid_at"
@@ -510,6 +531,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "activity_logs", "tournaments"
   add_foreign_key "activity_logs", "users", column: "admin_id"
+  add_foreign_key "employee_numbers", "golfers", column: "used_by_golfer_id", on_delete: :nullify
+  add_foreign_key "employee_numbers", "organizations", on_delete: :cascade
+  add_foreign_key "employee_numbers", "tournaments", on_delete: :cascade
+  add_foreign_key "golfers", "employee_numbers", column: "employee_number_record_id", on_delete: :nullify
   add_foreign_key "golfers", "groups"
   add_foreign_key "golfers", "sponsors"
   add_foreign_key "golfers", "tournaments"

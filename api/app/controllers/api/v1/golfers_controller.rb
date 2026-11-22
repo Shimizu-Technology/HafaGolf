@@ -5,12 +5,16 @@ module Api
       skip_around_action :with_tenant_rls_context, only: [:create, :refund]
       before_action :authorize_collection_volunteer_access!, only: [:index]
       before_action :authorize_collection_tournament_access!, only: [:stats, :bulk_send_payment_links]
-      before_action :authorize_golfer_volunteer_access!, only: [:check_in, :undo_check_in, :verify_payment]
+      before_action :authorize_golfer_volunteer_access!, only: [:check_in, :undo_check_in, :verify_payment, :promote_and_checkin]
       before_action :authorize_golfer_access!, only: [
         :show, :update, :destroy, :cancel, :refund, :mark_refunded,
         :payment_details, :promote, :demote,
         :send_payment_link, :update_payment_status, :mark_paid
       ]
+
+      VALID_CHECKIN_PAYMENT_METHODS = %w[
+        cash check credit card stripe swipe_simple swipe_simple_confirmed other
+      ].freeze
 
       # GET /api/v1/golfers
       def index
@@ -77,12 +81,29 @@ module Api
         error_response = nil
         tournament_missing = false
 
+        raw_employee_number = params[:employee_number].presence || params.dig(:golfer, :employee_number).presence
+        requested_employee = ActiveModel::Type::Boolean.new.cast(params[:is_employee]) ||
+                             ActiveModel::Type::Boolean.new.cast(params.dig(:golfer, :is_employee)) ||
+                             raw_employee_number.present?
+
         run_in_public_rls_context(org) do
           # Find specific tournament scoped to resolved tenant organization
           tournament = resolve_public_tournament(tournament_id: params[:tournament_id])
 
           unless tournament
             tournament_missing = true
+            next
+          end
+
+          employee_pricing_enabled = Features.for(tournament.organization, tournament).enabled?(:employee_pricing)
+
+          if requested_employee && !employee_pricing_enabled
+            error_response = {
+              error: "Feature 'employee_pricing' is disabled for this event",
+              errors: ["Feature 'employee_pricing' is disabled for this event"],
+              feature: "employee_pricing",
+              status: :forbidden
+            }
             next
           end
 
@@ -97,10 +118,48 @@ module Api
               raise ActiveRecord::Rollback
             end
 
+            employee_record = nil
+            if requested_employee
+              if raw_employee_number.blank?
+                error_response = { errors: ["Employee number is required for employee pricing."], status: :unprocessable_entity }
+                raise ActiveRecord::Rollback
+              end
+
+              employee_record = EmployeeNumber.find_for_tournament(tournament, raw_employee_number)
+              unless employee_record
+                error_response = { errors: ["Invalid employee number."], status: :unprocessable_entity }
+                raise ActiveRecord::Rollback
+              end
+
+              employee_record.lock!
+              if employee_record.used?
+                error_response = { errors: ["This employee number has already been used."], status: :unprocessable_entity }
+                raise ActiveRecord::Rollback
+              end
+            end
+
             golfer = tournament.golfers.new(golfer_params)
             golfer.waiver_accepted_at = Time.current if params[:waiver_accepted]
 
+            if employee_record
+              golfer.is_employee = true
+              golfer.employee_number_record = employee_record
+              golfer.payment_amount_cents = tournament.employee_entry_fee if tournament.employee_entry_fee.present?
+            else
+              golfer.is_employee = false
+              golfer.employee_number_record = nil
+            end
+
             if golfer.save
+              if employee_record
+                begin
+                  employee_record.claim!(golfer)
+                rescue EmployeeNumber::AlreadyClaimedError
+                  error_response = { errors: ["This employee number has already been used."], status: :unprocessable_entity }
+                  raise ActiveRecord::Rollback
+                end
+              end
+
               if %w[stripe swipe_simple walk_in].include?(golfer.payment_type)
                 golfer.generate_payment_token!
               end
@@ -125,7 +184,10 @@ module Api
 
         # Handle response & broadcasts AFTER transaction commits
         if error_response
-          render json: { errors: error_response[:errors] }, status: error_response[:status]
+          payload = { errors: error_response[:errors] }
+          payload[:error] = error_response[:error] if error_response[:error].present?
+          payload[:feature] = error_response[:feature] if error_response[:feature].present?
+          render json: payload, status: error_response[:status]
         elsif result
           # Serialize inside org RLS context so lazy associations work under non-owner RLS
           serialized_golfer = TenantContext.with_organization(result[:golfer].tournament.organization_id) do
@@ -159,6 +221,9 @@ module Api
         end
 
         if golfer.update(permitted)
+          if permitted.key?(:is_employee) && ActiveModel::Type::Boolean.new.cast(permitted[:is_employee]) == false
+            golfer.release_employee_number!
+          end
           # Log activity for meaningful changes
           log_golfer_update(golfer, old_values)
           broadcast_golfer_update(golfer)
@@ -375,6 +440,7 @@ module Api
         Golfer.transaction do
           # CRITICAL: Remove from group first (refunded golfers shouldn't hold spots)
           golfer.clear_group_assignment! if old_group.present?
+          golfer.release_employee_number!
 
           # CRITICAL: Update the golfer record
           golfer.update!(
@@ -521,8 +587,7 @@ module Api
         old_status = golfer.payment_status
         
         # Calculate the payment amount
-        tournament = golfer.tournament
-        payment_amount = tournament&.entry_fee || 12500
+        payment_amount = golfer.expected_entry_fee_cents
 
         golfer.update!(
           golfer.paid_registration_attributes(
@@ -581,6 +646,142 @@ module Api
           )
         rescue => e
           Rails.logger.warn("Failed to log golfer_promoted activity: #{e.message}")
+        end
+
+        broadcast_golfer_update(golfer)
+        render json: golfer
+      end
+
+      # POST /api/v1/golfers/:id/promote_and_checkin
+      # Atomically promotes a waitlisted golfer, optionally records payment, and checks them in.
+      def promote_and_checkin
+        golfer = Golfer.includes(:tournament, :group, :employee_number_record).find(params[:id])
+        error_response = nil
+        newly_paid = false
+
+        ActiveRecord::Base.transaction(requires_new: true) do
+          golfer.lock!
+
+          if golfer.cancelled?
+            error_response = { error: "Cannot promote a cancelled golfer", status: :unprocessable_entity }
+            raise ActiveRecord::Rollback
+          end
+
+          should_mark_paid = if params.key?(:mark_paid)
+            ActiveModel::Type::Boolean.new.cast(params[:mark_paid])
+          else
+            params[:payment_method].present? ||
+              params[:payment_amount_cents].present? ||
+              params[:receipt_number].present?
+          end
+
+          now = Time.current
+          admin_name = current_admin&.name || current_admin&.email
+          previous_registration_status = golfer.registration_status
+          previous_payment_status = golfer.payment_status
+
+          attrs = {
+            registration_status: "confirmed",
+            checked_in_at: golfer.checked_in_at || now,
+            checked_in_by_id: golfer.checked_in_by_id || current_admin&.id,
+            checked_in_by_name: golfer.checked_in_by_name || admin_name
+          }
+
+          if should_mark_paid
+            payment_method = params[:payment_method].to_s.strip.presence
+            if payment_method.blank?
+              error_response = { error: "Payment method is required when recording payment", status: :unprocessable_entity }
+              raise ActiveRecord::Rollback
+            end
+
+            unless VALID_CHECKIN_PAYMENT_METHODS.include?(payment_method)
+              error_response = {
+                error: "Invalid payment method '#{payment_method}'",
+                status: :unprocessable_entity
+              }
+              raise ActiveRecord::Rollback
+            end
+
+            amount_cents = if params.key?(:payment_amount_cents) && params[:payment_amount_cents].present?
+              raw_amount = params[:payment_amount_cents]
+              unless raw_amount.is_a?(Integer) || raw_amount.to_s.match?(/\A\d+\z/)
+                error_response = {
+                  error: "Payment amount must be a non-negative integer (in cents)",
+                  status: :unprocessable_entity
+                }
+                raise ActiveRecord::Rollback
+              end
+              raw_amount.to_i
+            else
+              golfer.payment_amount_cents.presence || golfer.expected_entry_fee_cents
+            end
+
+            if amount_cents.negative?
+              error_response = {
+                error: "Payment amount must be a non-negative integer (in cents)",
+                status: :unprocessable_entity
+              }
+              raise ActiveRecord::Rollback
+            end
+
+            newly_paid = golfer.payment_status != "paid"
+            attrs.merge!(
+              payment_status: "paid",
+              payment_method: payment_method,
+              receipt_number: params[:receipt_number].presence || golfer.receipt_number,
+              payment_notes: params[:payment_notes].presence || golfer.payment_notes,
+              payment_amount_cents: amount_cents,
+              paid_at: golfer.paid_at || now,
+              payment_verified_by_id: current_admin&.id,
+              payment_verified_by_name: admin_name,
+              payment_verified_at: now
+            )
+          end
+
+          golfer.assign_attributes(attrs)
+          unless golfer.save
+            error_response = {
+              error: golfer.errors.full_messages.join(", "),
+              errors: golfer.errors.full_messages,
+              status: :unprocessable_entity
+            }
+            raise ActiveRecord::Rollback
+          end
+
+          details_parts = ["Promoted"]
+          details_parts << "paid (#{attrs[:payment_method]})" if should_mark_paid
+          details_parts << "checked in"
+          ActivityLog.log(
+            admin: current_admin,
+            action: "golfer_promoted_and_checked_in",
+            target: golfer,
+            tournament: golfer.tournament,
+            details: "#{details_parts.join(', ')} #{golfer.name}",
+            metadata: {
+              previous_registration_status: previous_registration_status,
+              previous_payment_status: previous_payment_status,
+              marked_paid: should_mark_paid,
+              payment_method: attrs[:payment_method],
+              receipt_number: attrs[:receipt_number],
+              payment_amount_cents: attrs[:payment_amount_cents]
+            }
+          )
+        end
+
+        if error_response
+          payload = { error: error_response[:error] }
+          payload[:errors] = error_response[:errors] if error_response[:errors].present?
+          render json: payload, status: error_response[:status]
+          return
+        end
+
+        if newly_paid
+          begin
+            golfer.create_raffle_tickets!
+            golfer.create_purchased_raffle_tickets!
+          rescue StandardError => e
+            Rails.logger.warn("Failed to create raffle tickets for #{golfer.name}: #{e.message}")
+          end
         end
 
         broadcast_golfer_update(golfer)
@@ -685,7 +886,7 @@ module Api
             payment_method: params[:payment_method],
             payment_notes: params[:payment_notes],
             receipt_number: params[:receipt_number],
-            payment_amount_cents: params[:payment_amount_cents] || golfer.tournament&.entry_fee || 0,
+            payment_amount_cents: params[:payment_amount_cents] || golfer.expected_entry_fee_cents || 0,
             payment_verified_by_id: current_admin&.id,
             payment_verified_by_name: admin_name,
             payment_verified_at: Time.current
@@ -872,6 +1073,9 @@ module Api
             registration_open: tournament.can_register?,
             entry_fee_cents: tournament.entry_fee || 12500,
             entry_fee_dollars: tournament.entry_fee_dollars,
+            employee_pricing_enabled: Features.for(tournament.organization, tournament).enabled?(:employee_pricing),
+            employee_entry_fee_cents: tournament.employee_entry_fee,
+            employee_entry_fee_dollars: tournament.employee_entry_fee_dollars,
             # Tournament configuration for landing page
             tournament_year: tournament.year,
             tournament_edition: tournament.edition,
@@ -991,7 +1195,8 @@ module Api
           :group_id, :hole_number, :position, :notes,
           :payment_method, :receipt_number, :payment_notes,
           :partner_name, :partner_email, :partner_phone,
-          :team_category, :sponsor_id, :sponsor_name
+          :team_category, :sponsor_id, :sponsor_name,
+          :is_employee
         )
       end
 

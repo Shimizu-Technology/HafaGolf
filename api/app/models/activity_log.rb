@@ -15,6 +15,7 @@ class ActivityLog < ApplicationRecord
     golfer_checked_in
     golfer_unchecked
     golfer_promoted
+    golfer_promoted_and_checked_in
     golfer_demoted
     golfer_cancelled
     golfer_refunded

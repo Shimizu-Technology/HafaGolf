@@ -3,10 +3,11 @@ import { useParams, Link } from 'react-router-dom';
 import { useAuthToken } from '../hooks/useAuthToken';
 import { useOrganization } from '../components/OrganizationProvider';
 import { useGolferChannel } from '../hooks/useGolferChannel';
-import type { Golfer as ApiGolfer } from '../services/api';
+import type { Golfer as ApiGolfer, Tournament } from '../services/api';
 import {
   Search,
   UserCheck,
+  UserPlus,
   ArrowLeft,
   RefreshCw,
   CheckCircle,
@@ -21,18 +22,29 @@ import {
   Flag,
   ChevronRight,
   Building2,
+  BadgeCheck,
+  Clock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { adminEventPath } from '../utils/adminRoutes';
 import { formatDateTime } from '../utils/dates';
+import { isFeatureEnabled } from '../utils/features';
+import {
+  ALPHA_LANES,
+  type AlphaLane,
+  compareByLastName,
+  countByAlphaLane,
+  matchesAlphaLane,
+} from '../utils/checkInLanes';
 
-type QueueTab = 'not_checked_in' | 'paid' | 'not_paid' | 'checked_in' | 'all';
+type QueueTab = 'not_checked_in' | 'paid' | 'not_paid' | 'checked_in' | 'waitlist' | 'all';
 
-const QUEUE_CONFIG: { key: QueueTab; label: string; activeColor: string }[] = [
+const BASE_QUEUE_CONFIG: { key: QueueTab; label: string; activeColor: string }[] = [
   { key: 'not_checked_in', label: 'Ready', activeColor: 'bg-brand-600 text-white' },
   { key: 'paid', label: 'Paid', activeColor: 'bg-green-600 text-white' },
   { key: 'not_paid', label: 'Not Paid', activeColor: 'bg-amber-500 text-white' },
   { key: 'checked_in', label: 'Checked In', activeColor: 'bg-brand-500 text-white' },
+  { key: 'waitlist', label: 'Waitlist', activeColor: 'bg-purple-600 text-white' },
   { key: 'all', label: 'All', activeColor: 'bg-gray-700 text-white' },
 ];
 
@@ -54,10 +66,12 @@ export const OrgCheckInPage: React.FC = () => {
   const { getToken } = useAuthToken();
 
   const [golfers, setGolfers] = useState<ApiGolfer[]>([]);
+  const [tournament, setTournament] = useState<Tournament | null>(null);
   const [tournamentName, setTournamentName] = useState('');
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeQueue, setActiveQueue] = useState<QueueTab>('not_checked_in');
+  const [activeLane, setActiveLane] = useState<AlphaLane>('all');
   const [checkingIn, setCheckingIn] = useState<number | null>(null);
   const [selectedGolfer, setSelectedGolfer] = useState<ApiGolfer | null>(null);
   const [verifyingPayment, setVerifyingPayment] = useState(false);
@@ -66,14 +80,39 @@ export const OrgCheckInPage: React.FC = () => {
   const [revenue, setRevenue] = useState<number>(0);
   const [confirmingCheckIn, setConfirmingCheckIn] = useState<ApiGolfer | null>(null);
 
+  // Atomic Promote + Pay + Check-In modal state
+  const [promotingGolfer, setPromotingGolfer] = useState<ApiGolfer | null>(null);
+  const [promoteMarkPaid, setPromoteMarkPaid] = useState(true);
+  const [promoteMethod, setPromoteMethod] = useState('cash');
+  const [promoteAmountDollars, setPromoteAmountDollars] = useState('');
+  const [promoteReceipt, setPromoteReceipt] = useState('');
+  const [promoteNotes, setPromoteNotes] = useState('');
+  const [submittingPromote, setSubmittingPromote] = useState(false);
+
+  const eventFeatures = tournament?.features ?? organization?.features;
+  const alphaLanesEnabled = isFeatureEnabled(eventFeatures, 'checkin_alpha_lanes', false);
+  const waitlistEnabled = isFeatureEnabled(eventFeatures, 'waitlist', true);
+
+  useEffect(() => {
+    if (!alphaLanesEnabled && activeLane !== 'all') {
+      setActiveLane('all');
+    }
+  }, [alphaLanesEnabled, activeLane]);
+
   useGolferChannel({
     onGolferUpdated: (updatedGolfer) => {
-      setGolfers(prev => prev.map(g =>
-        g.id === updatedGolfer.id ? { ...g, ...updatedGolfer } : g
-      ));
+      if (updatedGolfer.registration_status === 'cancelled') {
+        setGolfers(prev => prev.filter(g => g.id !== updatedGolfer.id));
+        return;
+      }
+      setGolfers(prev => {
+        const exists = prev.some(g => g.id === updatedGolfer.id);
+        if (!exists) return [...prev, updatedGolfer];
+        return prev.map(g => (g.id === updatedGolfer.id ? { ...g, ...updatedGolfer } : g));
+      });
     },
     onGolferCreated: (newGolfer) => {
-      if (newGolfer.registration_status === 'confirmed') {
+      if (newGolfer.registration_status === 'confirmed' || newGolfer.registration_status === 'waitlist') {
         setGolfers(prev => [...prev.filter(g => g.id !== newGolfer.id), newGolfer]);
       }
     },
@@ -97,18 +136,19 @@ export const OrgCheckInPage: React.FC = () => {
       if (!response.ok) throw new Error('Failed to fetch data');
 
       const data = await response.json();
+      setTournament(data.tournament || null);
       setTournamentName(data.tournament?.name || '');
       
       if (data.stats?.revenue != null) {
         setRevenue(data.stats.revenue);
       }
 
-      const confirmed = (data.golfers || []).filter(
-        (g: ApiGolfer) => g.registration_status === 'confirmed'
+      const active = (data.golfers || []).filter(
+        (g: ApiGolfer) => g.registration_status === 'confirmed' || g.registration_status === 'waitlist'
       );
-      setGolfers(confirmed);
+      setGolfers(active);
       setSelectedGolfer((current) => (
-        current ? confirmed.find((g: ApiGolfer) => g.id === current.id) || null : current
+        current ? active.find((g: ApiGolfer) => g.id === current.id) || null : current
       ));
     } catch {
       toast.error('Failed to load golfers');
@@ -123,38 +163,66 @@ export const OrgCheckInPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  const confirmedGolfers = useMemo(
+    () => golfers.filter((g) => g.registration_status === 'confirmed'),
+    [golfers]
+  );
+
+  const waitlistedGolfers = useMemo(
+    () => golfers.filter((g) => g.registration_status === 'waitlist'),
+    [golfers]
+  );
+
+  const queueConfig = useMemo(
+    () => BASE_QUEUE_CONFIG.filter((q) => q.key !== 'waitlist' || waitlistEnabled || waitlistedGolfers.length > 0),
+    [waitlistEnabled, waitlistedGolfers.length]
+  );
+
   const stats = useMemo(() => {
-    const total = golfers.length;
-    const checkedIn = golfers.filter(g => g.checked_in_at).length;
-    const paid = golfers.filter(g => g.payment_status === 'paid').length;
-    const notPaid = golfers.filter(g => g.payment_status !== 'paid').length;
-    return { total, checkedIn, paid, notPaid };
-  }, [golfers]);
+    const total = confirmedGolfers.length;
+    const checkedIn = confirmedGolfers.filter(g => g.checked_in_at).length;
+    const paid = confirmedGolfers.filter(g => g.payment_status === 'paid').length;
+    const notPaid = confirmedGolfers.filter(g => g.payment_status !== 'paid').length;
+    return { total, checkedIn, paid, notPaid, waitlist: waitlistedGolfers.length };
+  }, [confirmedGolfers, waitlistedGolfers]);
 
   const queueCounts: Record<QueueTab, number> = useMemo(() => ({
-    not_checked_in: golfers.filter(g => !g.checked_in_at).length,
-    paid: golfers.filter(g => g.payment_status === 'paid' && !g.checked_in_at).length,
-    not_paid: golfers.filter(g => g.payment_status !== 'paid').length,
-    checked_in: golfers.filter(g => g.checked_in_at).length,
-    all: golfers.length,
-  }), [golfers]);
+    not_checked_in: confirmedGolfers.filter(g => !g.checked_in_at).length,
+    paid: confirmedGolfers.filter(g => g.payment_status === 'paid' && !g.checked_in_at).length,
+    not_paid: confirmedGolfers.filter(g => g.payment_status !== 'paid').length,
+    checked_in: confirmedGolfers.filter(g => g.checked_in_at).length,
+    waitlist: waitlistedGolfers.length,
+    all: confirmedGolfers.length,
+  }), [confirmedGolfers, waitlistedGolfers]);
 
-  const filteredGolfers = useMemo(() => {
-    let filtered = [...golfers];
-
+  const queueBaseGolfers = useMemo(() => {
     switch (activeQueue) {
       case 'not_checked_in':
-        filtered = filtered.filter(g => !g.checked_in_at);
-        break;
+        return confirmedGolfers.filter(g => !g.checked_in_at);
       case 'paid':
-        filtered = filtered.filter(g => g.payment_status === 'paid' && !g.checked_in_at);
-        break;
+        return confirmedGolfers.filter(g => g.payment_status === 'paid' && !g.checked_in_at);
       case 'not_paid':
-        filtered = filtered.filter(g => g.payment_status !== 'paid');
-        break;
+        return confirmedGolfers.filter(g => g.payment_status !== 'paid');
       case 'checked_in':
-        filtered = filtered.filter(g => g.checked_in_at);
-        break;
+        return confirmedGolfers.filter(g => g.checked_in_at);
+      case 'waitlist':
+        return waitlistedGolfers;
+      case 'all':
+      default:
+        return confirmedGolfers;
+    }
+  }, [confirmedGolfers, waitlistedGolfers, activeQueue]);
+
+  const laneCounts = useMemo(
+    () => countByAlphaLane(queueBaseGolfers),
+    [queueBaseGolfers]
+  );
+
+  const filteredGolfers = useMemo(() => {
+    let filtered = [...queueBaseGolfers];
+
+    if (alphaLanesEnabled && activeLane !== 'all') {
+      filtered = filtered.filter((g) => matchesAlphaLane(g, activeLane));
     }
 
     if (searchTerm) {
@@ -165,18 +233,96 @@ export const OrgCheckInPage: React.FC = () => {
         g.phone.includes(term) ||
         (g.company && g.company.toLowerCase().includes(term)) ||
         (g.partner_name && g.partner_name.toLowerCase().includes(term)) ||
-        (g.team_name && g.team_name.toLowerCase().includes(term))
+        (g.team_name && g.team_name.toLowerCase().includes(term)) ||
+        (g.employee_number && g.employee_number.toLowerCase().includes(term))
       );
     }
 
     filtered.sort((a, b) => {
       if (a.checked_in_at && !b.checked_in_at) return 1;
       if (!a.checked_in_at && b.checked_in_at) return -1;
-      return a.name.localeCompare(b.name);
+      return alphaLanesEnabled ? compareByLastName(a, b) : a.name.localeCompare(b.name);
     });
 
     return filtered;
-  }, [golfers, activeQueue, searchTerm]);
+  }, [queueBaseGolfers, alphaLanesEnabled, activeLane, searchTerm]);
+
+  const openPromoteModal = (golfer: ApiGolfer) => {
+    const defaultCents =
+      golfer.expected_entry_fee_cents ??
+      golfer.payment_amount_cents ??
+      (golfer.is_employee && typeof tournament?.employee_entry_fee === 'number'
+        ? tournament.employee_entry_fee
+        : tournament?.entry_fee ?? 0);
+
+    setPromotingGolfer(golfer);
+    setPromoteMarkPaid(golfer.payment_status !== 'paid');
+    setPromoteMethod('cash');
+    setPromoteAmountDollars((defaultCents / 100).toFixed(2));
+    setPromoteReceipt('');
+    setPromoteNotes('');
+  };
+
+  const handlePromoteAndCheckIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!promotingGolfer) return;
+
+    const payload: {
+      mark_paid: boolean;
+      payment_method?: string;
+      receipt_number?: string;
+      payment_amount_cents?: number;
+      payment_notes?: string;
+    } = {
+      mark_paid: promoteMarkPaid,
+    };
+
+    if (promoteMarkPaid) {
+      const parsedDollars = Number(promoteAmountDollars);
+      if (Number.isNaN(parsedDollars) || parsedDollars < 0) {
+        toast.error('Enter a valid non-negative payment amount');
+        return;
+      }
+      payload.payment_method = promoteMethod;
+      payload.payment_amount_cents = Math.round(parsedDollars * 100);
+      if (promoteReceipt.trim()) payload.receipt_number = promoteReceipt.trim();
+      if (promoteNotes.trim()) payload.payment_notes = promoteNotes.trim();
+    }
+
+    setSubmittingPromote(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/v1/golfers/${promotingGolfer.id}/promote_and_checkin`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || errData.errors?.[0] || 'Failed to promote and check in');
+      }
+
+      toast.success(
+        promoteMarkPaid
+          ? `${promotingGolfer.name} promoted, marked paid, and checked in!`
+          : `${promotingGolfer.name} promoted and checked in!`,
+        { duration: 2500 }
+      );
+      setPromotingGolfer(null);
+      setSelectedGolfer(null);
+      await fetchData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to promote and check in');
+    } finally {
+      setSubmittingPromote(false);
+    }
+  };
 
   const requestCheckIn = (golfer: ApiGolfer) => {
     if (golfer.checked_in_at) return;
@@ -279,6 +425,9 @@ export const OrgCheckInPage: React.FC = () => {
   };
 
   const getRowStyle = (golfer: ApiGolfer) => {
+    if (golfer.registration_status === 'waitlist') {
+      return 'bg-white hover:bg-purple-50/40 border border-gray-200 border-l-4 border-l-purple-500';
+    }
     if (golfer.checked_in_at) return 'bg-gray-50 opacity-60';
     if (golfer.payment_status === 'paid') return 'bg-white hover:bg-gray-50 border border-gray-200';
     return 'bg-white hover:bg-gray-50 border border-gray-200 border-l-4 border-l-amber-500';
@@ -375,10 +524,10 @@ export const OrgCheckInPage: React.FC = () => {
         </div>
       </section>
 
-      {/* Queue Tabs */}
-      <div className="rounded-[28px] border border-gray-200 bg-white px-4 py-3">
+      {/* Queue Tabs + Optional Alpha Lanes */}
+      <div className="rounded-[28px] border border-gray-200 bg-white px-4 py-3 space-y-3">
         <div className="max-w-6xl mx-auto flex gap-2 overflow-x-auto pb-1 -mb-1">
-          {QUEUE_CONFIG.map((q) => (
+          {queueConfig.map((q) => (
             <button
               key={q.key}
               onClick={() => setActiveQueue(q.key)}
@@ -393,6 +542,39 @@ export const OrgCheckInPage: React.FC = () => {
             </button>
           ))}
         </div>
+
+        {alphaLanesEnabled && (
+          <div className="max-w-6xl mx-auto flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mr-1">
+              Check-In Lane
+            </span>
+            {ALPHA_LANES.map((lane) => {
+              const isActive = activeLane === lane.key;
+              return (
+                <button
+                  key={lane.key}
+                  type="button"
+                  onClick={() => setActiveLane(lane.key)}
+                  className={`min-h-[44px] px-4 py-2 rounded-xl text-sm font-semibold transition inline-flex items-center gap-2 ${
+                    isActive
+                      ? 'bg-brand-600 text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                  aria-pressed={isActive}
+                >
+                  <span>{lane.label}</span>
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded-full ${
+                      isActive ? 'bg-white/20 text-white' : 'bg-white text-gray-600'
+                    }`}
+                  >
+                    {laneCounts[lane.key]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Search */}
@@ -434,13 +616,17 @@ export const OrgCheckInPage: React.FC = () => {
                 }`}
               >
                 <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    golfer.checked_in_at
+                    golfer.registration_status === 'waitlist'
+                    ? 'bg-purple-100 text-purple-600'
+                    : golfer.checked_in_at
                     ? 'bg-green-100 text-green-600'
                     : golfer.payment_status === 'paid'
                     ? 'bg-brand-50 text-brand-600'
                     : 'bg-amber-100 text-amber-600'
                 }`}>
-                  {golfer.checked_in_at ? (
+                  {golfer.registration_status === 'waitlist' ? (
+                    <Clock className="w-4 h-4 sm:w-5 sm:h-5" />
+                  ) : golfer.checked_in_at ? (
                     <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5" />
                   ) : golfer.payment_status !== 'paid' ? (
                     <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -457,6 +643,15 @@ export const OrgCheckInPage: React.FC = () => {
                         <span className="text-gray-400 font-normal"> &amp; {golfer.partner_name}</span>
                       )}
                     </h3>
+                    {golfer.registration_status === 'waitlist' && (
+                      <span className="text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 flex-shrink-0">Waitlist</span>
+                    )}
+                    {golfer.is_employee && (
+                      <span className="inline-flex items-center gap-1 text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full bg-brand-100 text-brand-700 flex-shrink-0">
+                        <BadgeCheck className="w-3 h-3" />
+                        {golfer.employee_number || 'Employee'}
+                      </span>
+                    )}
                     {golfer.checked_in_at && (
                       <span className="text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full bg-green-100 text-green-700 flex-shrink-0">Done</span>
                     )}
@@ -465,7 +660,7 @@ export const OrgCheckInPage: React.FC = () => {
                         golfer.payment_type === 'sponsor' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
                       }`}>{golfer.payment_type === 'sponsor' ? 'Sponsored' : 'Paid'}</span>
                     )}
-                    {golfer.payment_status !== 'paid' && (
+                    {golfer.payment_status !== 'paid' && golfer.registration_status !== 'waitlist' && (
                       <span className="text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex-shrink-0">Unpaid</span>
                     )}
                   </div>
@@ -486,7 +681,16 @@ export const OrgCheckInPage: React.FC = () => {
                   )}
                 </div>
 
-                {!golfer.checked_in_at && golfer.payment_status === 'paid' && (
+                {golfer.registration_status === 'waitlist' && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); openPromoteModal(golfer); }}
+                    className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-medium text-sm transition flex-shrink-0"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    Promote, Pay &amp; Check In
+                  </button>
+                )}
+                {golfer.registration_status !== 'waitlist' && !golfer.checked_in_at && golfer.payment_status === 'paid' && (
                   <button
                     onClick={(e) => { e.stopPropagation(); requestCheckIn(golfer); }}
                     disabled={checkingIn === golfer.id}
@@ -496,7 +700,7 @@ export const OrgCheckInPage: React.FC = () => {
                     Check In
                   </button>
                 )}
-                {!golfer.checked_in_at && golfer.payment_status !== 'paid' && (
+                {golfer.registration_status !== 'waitlist' && !golfer.checked_in_at && golfer.payment_status !== 'paid' && (
                   <button
                     onClick={(e) => { e.stopPropagation(); setSelectedGolfer(golfer); setVerifyingPayment(true); }}
                     className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-medium text-sm transition flex-shrink-0"
@@ -608,7 +812,17 @@ export const OrgCheckInPage: React.FC = () => {
 
               {/* Actions */}
               <div className="p-5 border-t border-gray-200 space-y-3">
-                {selectedGolfer.payment_status !== 'paid' && !selectedGolfer.checked_in_at && (
+                {selectedGolfer.registration_status === 'waitlist' && (
+                  <button
+                    onClick={() => openPromoteModal(selectedGolfer)}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-500 font-semibold"
+                  >
+                    <UserPlus className="w-5 h-5" />
+                    Promote, Pay &amp; Check In
+                  </button>
+                )}
+
+                {selectedGolfer.registration_status !== 'waitlist' && selectedGolfer.payment_status !== 'paid' && !selectedGolfer.checked_in_at && (
                   <>
                     {verifyingPayment ? (
                       <div className="space-y-3">
@@ -658,7 +872,7 @@ export const OrgCheckInPage: React.FC = () => {
                   </>
                 )}
 
-                {selectedGolfer.payment_status === 'paid' && !selectedGolfer.checked_in_at && (
+                {selectedGolfer.registration_status !== 'waitlist' && selectedGolfer.payment_status === 'paid' && !selectedGolfer.checked_in_at && (
                   <button
                     onClick={() => requestCheckIn(selectedGolfer)}
                     disabled={checkingIn === selectedGolfer.id}
@@ -890,7 +1104,16 @@ export const OrgCheckInPage: React.FC = () => {
 
           {/* Footer Actions */}
           <div className="p-4 pb-8 border-t border-gray-200">
-            {!verifyingPayment && selectedGolfer.payment_status !== 'paid' && !selectedGolfer.checked_in_at && (
+            {selectedGolfer.registration_status === 'waitlist' && (
+              <button
+                onClick={() => openPromoteModal(selectedGolfer)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-purple-600 text-white rounded-xl font-semibold text-base"
+              >
+                <UserPlus className="w-5 h-5" />
+                Promote, Pay &amp; Check In
+              </button>
+            )}
+            {selectedGolfer.registration_status !== 'waitlist' && !verifyingPayment && selectedGolfer.payment_status !== 'paid' && !selectedGolfer.checked_in_at && (
               <button
                 onClick={() => setVerifyingPayment(true)}
                 className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-amber-600 text-white rounded-xl font-semibold text-base"
@@ -899,7 +1122,7 @@ export const OrgCheckInPage: React.FC = () => {
                 Verify Payment
               </button>
             )}
-            {selectedGolfer.payment_status === 'paid' && !selectedGolfer.checked_in_at && (
+            {selectedGolfer.registration_status !== 'waitlist' && selectedGolfer.payment_status === 'paid' && !selectedGolfer.checked_in_at && (
               <button
                 onClick={() => requestCheckIn(selectedGolfer)}
                 disabled={checkingIn === selectedGolfer.id}
@@ -926,6 +1149,151 @@ export const OrgCheckInPage: React.FC = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Atomic Promote, Pay & Check-In Modal */}
+      {promotingGolfer && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4"
+          onClick={() => !submittingPromote && setPromotingGolfer(null)}
+        >
+          <form
+            onSubmit={handlePromoteAndCheckIn}
+            className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-purple-600" />
+                <h3 className="text-lg font-semibold text-gray-900">Promote, Pay &amp; Check In</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPromotingGolfer(null)}
+                disabled={submittingPromote}
+                className="p-1 text-gray-400 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="rounded-xl bg-purple-50 border border-purple-200 p-3.5">
+                <p className="font-semibold text-gray-900">{promotingGolfer.name}</p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {promotingGolfer.email} &bull; {promotingGolfer.phone}
+                </p>
+                {promotingGolfer.is_employee && (
+                  <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
+                    <BadgeCheck className="w-3.5 h-3.5" />
+                    Employee Rate ({promotingGolfer.employee_number || 'Verified'})
+                  </span>
+                )}
+              </div>
+
+              <label className="flex items-center gap-3 rounded-xl border border-gray-200 p-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={promoteMarkPaid}
+                  onChange={(e) => setPromoteMarkPaid(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 accent-purple-600"
+                />
+                <div>
+                  <span className="text-sm font-medium text-gray-900">Record payment now</span>
+                  <p className="text-xs text-gray-500">
+                    Atomically promotes from waitlist, marks paid, and checks in.
+                  </p>
+                </div>
+              </label>
+
+              {promoteMarkPaid && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Payment Method
+                      </label>
+                      <select
+                        value={promoteMethod}
+                        onChange={(e) => setPromoteMethod(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-gray-900 text-sm focus:ring-2 focus:ring-purple-500"
+                      >
+                        <option value="cash">Cash</option>
+                        <option value="check">Check</option>
+                        <option value="credit">Credit Card</option>
+                        <option value="swipe_simple_confirmed">SwipeSimple</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Amount (USD)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={promoteAmountDollars}
+                        onChange={(e) => setPromoteAmountDollars(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-gray-900 text-sm focus:ring-2 focus:ring-purple-500"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      Receipt Number (optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={promoteReceipt}
+                      onChange={(e) => setPromoteReceipt(e.target.value)}
+                      placeholder="e.g. RCPT-104"
+                      className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-gray-900 text-sm focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      Notes (optional)
+                    </label>
+                    <textarea
+                      value={promoteNotes}
+                      onChange={(e) => setPromoteNotes(e.target.value)}
+                      rows={2}
+                      placeholder="Optional check-in payment notes..."
+                      className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-gray-900 text-sm resize-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setPromotingGolfer(null)}
+                disabled={submittingPromote}
+                className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submittingPromote}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-500 text-sm font-semibold disabled:opacity-50"
+              >
+                {submittingPromote ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <UserCheck className="w-4 h-4" />
+                )}
+                {promoteMarkPaid ? 'Promote, Pay & Check In' : 'Promote & Check In'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

@@ -2,11 +2,14 @@ class Golfer < ApplicationRecord
   belongs_to :tournament
   belongs_to :group, optional: true
   belongs_to :sponsor, optional: true
+  belongs_to :employee_number_record, class_name: "EmployeeNumber", optional: true
   belongs_to :refunded_by, class_name: "User", optional: true
   belongs_to :payment_verified_by, class_name: "User", foreign_key: :payment_verified_by_id, optional: true
   belongs_to :checked_in_by, class_name: "User", foreign_key: :checked_in_by_id, optional: true
   has_many :scores, dependent: :destroy
   has_many :raffle_tickets, dependent: :nullify
+
+  before_destroy :release_employee_number!
 
   # Validations
   validates :name, presence: true
@@ -214,9 +217,42 @@ class Golfer < ApplicationRecord
       payment_verified_by_name: admin.name || admin.email,
       payment_verified_at: Time.current
     )
-    attrs[:payment_amount_cents] = tournament&.entry_fee if payment_amount_cents.blank?
+    attrs[:payment_amount_cents] = expected_entry_fee_cents if payment_amount_cents.blank?
     assign_attributes(attrs)
     save!(validate: false)
+  end
+
+  def employee_number
+    employee_number_record&.employee_number
+  end
+
+  def last_name
+    return nil if name.blank?
+
+    name.split.last
+  end
+
+  def expected_entry_fee_cents
+    return 0 if sponsored?
+
+    if is_employee? &&
+       tournament&.employee_entry_fee.present? &&
+       Features.for(tournament.organization, tournament).enabled?(:employee_pricing)
+      tournament.employee_entry_fee
+    else
+      tournament&.current_fee || tournament&.entry_fee || 12500
+    end
+  end
+
+  def release_employee_number!
+    record = employee_number_record || EmployeeNumber.find_by(used_by_golfer_id: id)
+    if record
+      record.release!(clear_golfer: false)
+    end
+    if persisted? && !destroyed? && (employee_number_record_id.present? || is_employee?)
+      assign_attributes(employee_number_record_id: nil, is_employee: false)
+      save!(validate: false)
+    end
   end
 
   def paid_registration_attributes(attributes)
@@ -316,6 +352,7 @@ class Golfer < ApplicationRecord
 
   # Cancel a golfer's registration (without refund - for unpaid or non-Stripe payments)
   def cancel!(admin: nil, reason: nil)
+    release_employee_number!
     assign_attributes(
       registration_status: "cancelled",
       refund_reason: reason,
@@ -346,6 +383,7 @@ class Golfer < ApplicationRecord
     persist_refund = lambda do
       ActiveRecord::Base.transaction(requires_new: true) do
         clear_group_assignment! if clear_group_assignment && group_id.present?
+        release_employee_number!
 
         update!(
           registration_status: "cancelled",

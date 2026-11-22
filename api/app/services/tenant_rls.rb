@@ -19,6 +19,7 @@ module TenantRls
   DIRECT_ORG_TABLES = %w[
     tournaments
     message_deliveries
+    employee_numbers
   ].freeze
 
   # Tables scoped to an organization through `tournament_id -> tournaments.organization_id`

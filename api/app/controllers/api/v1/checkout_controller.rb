@@ -34,9 +34,9 @@ module Api
         # Set Stripe API key (ENV first, legacy Setting fallback)
         Stripe.api_key = stripe_secret
 
-        # Entry fee from the golfer's tournament
+        # Entry fee from the golfer's tournament (respecting employee pricing when enabled)
         tournament = golfer.tournament
-        entry_fee = tournament&.entry_fee || 12500
+        entry_fee = golfer.expected_entry_fee_cents
 
         begin
           # Create a Stripe Checkout Session

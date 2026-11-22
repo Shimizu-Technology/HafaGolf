@@ -12,6 +12,7 @@ class Tournament < ApplicationRecord
   has_many :raffle_sale_batches, dependent: :destroy
   has_many :raffle_tickets, dependent: :destroy
   has_many :sponsors, dependent: :destroy
+  has_many :employee_numbers, dependent: :destroy
   has_many :activity_logs, dependent: :nullify
   has_many :message_deliveries, dependent: :nullify
   has_many :tournament_assignments, dependent: :destroy
@@ -23,6 +24,7 @@ class Tournament < ApplicationRecord
   validates :status, presence: true, inclusion: { in: %w[draft open closed in_progress completed archived] }
   validates :max_capacity, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
   validates :entry_fee, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
+  validates :employee_entry_fee, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
   validates :slug, uniqueness: { scope: :organization_id, case_sensitive: false }, allow_blank: true
   validates :event_type, presence: true, inclusion: { in: %w[golf_tournament gala] }
   validate :course_configs_are_valid
@@ -245,6 +247,11 @@ class Tournament < ApplicationRecord
   def entry_fee_dollars
     return 0.00 if entry_fee.nil?
     entry_fee / 100.0
+  end
+
+  def employee_entry_fee_dollars
+    return nil if employee_entry_fee.nil?
+    employee_entry_fee / 100.0
   end
 
   def early_bird_fee_dollars

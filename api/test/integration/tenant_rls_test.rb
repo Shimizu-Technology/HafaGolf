@@ -59,6 +59,17 @@ class TenantRlsTest < ActiveSupport::TestCase
         recipient: "+16715553002",
         status: "delivered"
       )
+
+      @emp_a = @tournament_a.employee_numbers.create!(
+        organization: @org_a,
+        employee_number: "RLS-A-001",
+        employee_name: "RLS Employee A"
+      )
+      @emp_b = @tournament_b.employee_numbers.create!(
+        organization: @org_b,
+        employee_number: "RLS-B-001",
+        employee_name: "RLS Employee B"
+      )
     end
   end
 
@@ -72,6 +83,7 @@ class TenantRlsTest < ActiveSupport::TestCase
       Score.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
       RaffleTicket.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
       MessageDelivery.where(organization_id: org_ids).delete_all if org_ids.any?
+      EmployeeNumber.where(organization_id: org_ids).delete_all if org_ids.any?
       Golfer.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
       TournamentAssignment.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
       Tournament.where(id: tournament_ids).delete_all if tournament_ids.any?
@@ -84,10 +96,12 @@ class TenantRlsTest < ActiveSupport::TestCase
       assert_equal 0, Tournament.where(id: [@tournament_a.id, @tournament_b.id]).count
       assert_equal 0, Golfer.where(id: [@golfer_a.id, @golfer_b.id]).count
       assert_equal 0, MessageDelivery.where(id: [@delivery_a.id, @delivery_b.id]).count
+      assert_equal 0, EmployeeNumber.where(id: [@emp_a.id, @emp_b.id]).count
 
       TenantContext.with_closed_access do
         assert_equal 0, Tournament.where(id: [@tournament_a.id, @tournament_b.id]).count
         assert_equal 0, Golfer.where(id: [@golfer_a.id, @golfer_b.id]).count
+        assert_equal 0, EmployeeNumber.where(id: [@emp_a.id, @emp_b.id]).count
       end
     end
   end
@@ -103,6 +117,22 @@ class TenantRlsTest < ActiveSupport::TestCase
 
         visible_deliveries = MessageDelivery.where(id: [@delivery_a.id, @delivery_b.id]).pluck(:id)
         assert_equal [@delivery_a.id], visible_deliveries
+
+        visible_emp_numbers = EmployeeNumber.where(id: [@emp_a.id, @emp_b.id]).pluck(:id)
+        assert_equal [@emp_a.id], visible_emp_numbers
+
+        # Cross-tenant UPDATE on employee_numbers affects 0 rows
+        assert_equal 0, EmployeeNumber.where(id: @emp_b.id).update_all(employee_name: "Hacked")
+
+        # Cross-tenant INSERT on employee_numbers is rejected by RLS WITH CHECK
+        assert_raises(ActiveRecord::StatementInvalid) do
+          ActiveRecord::Base.transaction(requires_new: true) do
+            @tournament_b.employee_numbers.create!(
+              organization: @org_b,
+              employee_number: "CROSS-999"
+            )
+          end
+        end
 
         # Org-scoped activity log with tournament_id: nil succeeds under org context
         org_log = ActivityLog.log(

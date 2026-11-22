@@ -3,7 +3,7 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import { Button, Card } from '../components/ui';
 import { LiabilityWaiver } from '../components/LiabilityWaiver';
 import { PublicHero } from '../components/PublicHero';
-import { Trophy, AlertCircle, Loader2, Calendar, MapPin, ChevronLeft, Check, DollarSign, ChevronRight } from 'lucide-react';
+import { Trophy, AlertCircle, Loader2, Calendar, MapPin, ChevronLeft, Check, DollarSign, ChevronRight, BadgeCheck, CheckCircle2 } from 'lucide-react';
 import { api, Tournament } from '../services/api';
 import { useOrganization } from '../components/OrganizationProvider';
 import { formatEventDate } from '../utils/dates';
@@ -11,6 +11,13 @@ import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { getPublicFacingCapacitySummary } from '../utils/capacity';
 import { useApplyBranding } from '../utils/branding';
 import { getDefaultOrgSlug } from '../utils/tenant';
+import { isFeatureEnabled } from '../utils/features';
+import {
+  calculateEffectiveEntryFeeCents,
+  calculateEmployeeSavingsCents,
+  formatUsdFromCents,
+  normalizeEmployeeNumber,
+} from '../utils/employeePricing';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -92,6 +99,81 @@ export const OrgRegistrationPage: React.FC = () => {
 
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
 
+  // Employee discount pricing state (only active when :employee_pricing feature is enabled)
+  const [isEmployee, setIsEmployee] = useState(false);
+  const [employeeNumberInput, setEmployeeNumberInput] = useState('');
+  const [employeeValidation, setEmployeeValidation] = useState<{
+    status: 'idle' | 'checking' | 'valid' | 'invalid';
+    employeeNumber?: string;
+    employeeName?: string | null;
+    employeeEntryFeeCents?: number | null;
+    message?: string;
+  }>({ status: 'idle' });
+  const [employeeError, setEmployeeError] = useState<string | null>(null);
+
+  const employeePricingEnabled = isFeatureEnabled(
+    tournament?.features ?? organization?.features,
+    'employee_pricing',
+    false
+  );
+
+  const isEmployeeValidated =
+    employeePricingEnabled && isEmployee && employeeValidation.status === 'valid';
+
+  const effectiveFeeCents = calculateEffectiveEntryFeeCents({
+    entryFeeCents: tournament?.entry_fee,
+    employeeEntryFeeCents:
+      employeeValidation.employeeEntryFeeCents ?? tournament?.employee_entry_fee,
+    employeePricingEnabled,
+    isEmployeeValidated,
+  });
+
+  const employeeSavingsCents = calculateEmployeeSavingsCents({
+    entryFeeCents: tournament?.entry_fee,
+    employeeEntryFeeCents:
+      employeeValidation.employeeEntryFeeCents ?? tournament?.employee_entry_fee,
+    employeePricingEnabled,
+    isEmployeeValidated,
+  });
+
+  const handleValidateEmployeeNumber = async (rawValue?: string) => {
+    if (!tournament || !employeePricingEnabled) return;
+    const normalized = normalizeEmployeeNumber(rawValue ?? employeeNumberInput);
+    if (!normalized) {
+      setEmployeeValidation({ status: 'idle' });
+      setEmployeeError('Please enter your employee number');
+      return;
+    }
+
+    setEmployeeError(null);
+    setEmployeeValidation({ status: 'checking' });
+
+    try {
+      const result = await api.validateEmployeeNumber(normalized, tournament.id, orgSlug);
+      if (result.valid && result.available) {
+        setEmployeeValidation({
+          status: 'valid',
+          employeeNumber: result.employee_number || normalized,
+          employeeName: result.employee_name,
+          employeeEntryFeeCents: result.employee_entry_fee_cents,
+          message: result.employee_name
+            ? `Verified employee: ${result.employee_name}`
+            : 'Employee number verified',
+        });
+      } else {
+        setEmployeeValidation({
+          status: 'invalid',
+          message: result.message || result.error || 'Employee number is invalid or already used',
+        });
+      }
+    } catch (err) {
+      setEmployeeValidation({
+        status: 'invalid',
+        message: err instanceof Error ? err.message : 'Unable to validate employee number',
+      });
+    }
+  };
+
   useEffect(() => {
     async function fetchTournament() {
       if (!orgSlug || !tournamentSlug) return;
@@ -137,6 +219,19 @@ export const OrgRegistrationPage: React.FC = () => {
       if (!formData.player1Phone.trim() || !formData.player1Phone.startsWith('+') || formData.player1Phone.replace(/\D/g, '').length < 10) {
         newErrors.player1Phone = 'Phone number must start with + and have at least 10 digits';
       }
+      if (employeePricingEnabled && isEmployee) {
+        if (!employeeNumberInput.trim()) {
+          setEmployeeError('Employee number is required when employee discount is selected');
+          setErrors(newErrors);
+          return false;
+        }
+        if (employeeValidation.status !== 'valid') {
+          setEmployeeError('Please verify a valid, available employee number before continuing');
+          setErrors(newErrors);
+          return false;
+        }
+      }
+      setEmployeeError(null);
     }
 
     if (step === 2) {
@@ -190,6 +285,12 @@ export const OrgRegistrationPage: React.FC = () => {
         },
         waiver_accepted: true,
         tournament_id: tournament.id,
+        ...(isEmployeeValidated && employeeValidation.employeeNumber
+          ? {
+              is_employee: true,
+              employee_number: employeeValidation.employeeNumber,
+            }
+          : {}),
       });
 
       const isWaitlisted = result.golfer.registration_status === 'waitlist';
@@ -417,6 +518,96 @@ export const OrgRegistrationPage: React.FC = () => {
                         />
                         {errors.player1Phone && <p className="text-red-500 text-xs mt-1">{errors.player1Phone}</p>}
                       </div>
+
+                      {employeePricingEnabled && (
+                        <div className="mt-2 rounded-2xl border border-brand-200 bg-brand-50/40 p-4 space-y-3">
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isEmployee}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setIsEmployee(checked);
+                                setEmployeeError(null);
+                                if (!checked) {
+                                  setEmployeeNumberInput('');
+                                  setEmployeeValidation({ status: 'idle' });
+                                }
+                              }}
+                              className="mt-0.5 h-5 w-5 rounded border-neutral-300 accent-brand-600"
+                            />
+                            <div>
+                              <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-neutral-900">
+                                <BadgeCheck className="h-4 w-4 text-brand-600" />
+                                Apply Employee Discount
+                              </span>
+                              <p className="text-xs text-neutral-600 mt-0.5">
+                                {typeof tournament.employee_entry_fee === 'number'
+                                  ? `Eligible employees pay ${formatUsdFromCents(tournament.employee_entry_fee)} instead of ${formatUsdFromCents(tournament.entry_fee || 0)}.`
+                                  : 'Enter your assigned employee number to apply discounted pricing.'}
+                              </p>
+                            </div>
+                          </label>
+
+                          {isEmployee && (
+                            <div className="space-y-2 pt-1">
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={employeeNumberInput}
+                                  onChange={(e) => {
+                                    setEmployeeNumberInput(e.target.value);
+                                    setEmployeeError(null);
+                                    if (employeeValidation.status !== 'idle') {
+                                      setEmployeeValidation({ status: 'idle' });
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    if (employeeNumberInput.trim() && employeeValidation.status === 'idle') {
+                                      handleValidateEmployeeNumber(employeeNumberInput);
+                                    }
+                                  }}
+                                  placeholder="Enter employee number"
+                                  className={`${inputClass} bg-white font-mono uppercase`}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleValidateEmployeeNumber()}
+                                  disabled={employeeValidation.status === 'checking' || !employeeNumberInput.trim()}
+                                  className="shrink-0 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50 min-h-[44px]"
+                                >
+                                  {employeeValidation.status === 'checking' ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    'Verify'
+                                  )}
+                                </button>
+                              </div>
+
+                              {employeeValidation.status === 'valid' && (
+                                <div className="flex items-center gap-2 rounded-xl bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-800">
+                                  <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                                  <span>
+                                    {employeeValidation.message}
+                                    {employeeSavingsCents > 0 && ` — saving ${formatUsdFromCents(employeeSavingsCents)}`}
+                                  </span>
+                                </div>
+                              )}
+
+                              {employeeValidation.status === 'invalid' && (
+                                <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                                  <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
+                                  <span>{employeeValidation.message}</span>
+                                </div>
+                              )}
+
+                              {employeeError && (
+                                <p className="text-xs text-red-600">{employeeError}</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -588,15 +779,39 @@ export const OrgRegistrationPage: React.FC = () => {
                         </div>
                         <div className="flex justify-between items-baseline">
                           <span className="text-sm text-neutral-500">Entry Fee</span>
-                          <span className="text-lg font-bold text-neutral-900">{tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}</span>
+                          <span className="text-lg font-bold text-neutral-900">
+                            {isEmployeeValidated ? (
+                              <span className="inline-flex items-baseline gap-2">
+                                {employeeSavingsCents > 0 && (
+                                  <span className="text-sm font-normal text-neutral-400 line-through">
+                                    {formatUsdFromCents(tournament.entry_fee || 0)}
+                                  </span>
+                                )}
+                                <span className="text-green-700">{formatUsdFromCents(effectiveFeeCents)}</span>
+                              </span>
+                            ) : (
+                              tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`
+                            )}
+                          </span>
                         </div>
+                        {isEmployeeValidated && employeeValidation.employeeNumber && (
+                          <div className="mt-2 flex items-center justify-between text-xs text-green-700">
+                            <span className="inline-flex items-center gap-1 font-medium">
+                              <BadgeCheck className="h-3.5 w-3.5" />
+                              Employee Discount ({employeeValidation.employeeNumber})
+                            </span>
+                            {employeeSavingsCents > 0 && (
+                              <span>-{formatUsdFromCents(employeeSavingsCents)}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       {/* Order total */}
                       <div className="p-4 bg-neutral-100 rounded-2xl">
                         <div className="flex justify-between items-baseline">
                           <span className="text-sm font-medium text-neutral-700">Total</span>
-                          <span className="text-xl font-bold text-neutral-900">${((tournament.entry_fee || 0) / 100).toFixed(0)}</span>
+                          <span className="text-xl font-bold text-neutral-900">{formatUsdFromCents(effectiveFeeCents)}</span>
                         </div>
                       </div>
 
@@ -715,9 +930,29 @@ export const OrgRegistrationPage: React.FC = () => {
                 <div className="border-t border-neutral-100 pt-4 mb-6">
                   <div className="flex justify-between items-baseline mb-2">
                     <span className="text-neutral-500 text-sm">Entry Fee</span>
-                    <span className="text-2xl font-bold text-neutral-900">{tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}</span>
+                    {isEmployeeValidated ? (
+                      <div className="text-right">
+                        {employeeSavingsCents > 0 && (
+                          <span className="text-sm text-neutral-400 line-through mr-2">
+                            {formatUsdFromCents(tournament.entry_fee || 0)}
+                          </span>
+                        )}
+                        <span className="text-2xl font-bold text-green-700">
+                          {formatUsdFromCents(effectiveFeeCents)}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-2xl font-bold text-neutral-900">{tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}</span>
+                    )}
                   </div>
-                  <p className="text-xs text-neutral-400">per team (2 players)</p>
+                  {isEmployeeValidated ? (
+                    <p className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+                      <BadgeCheck className="h-3.5 w-3.5" />
+                      Employee rate applied ({employeeValidation.employeeNumber})
+                    </p>
+                  ) : (
+                    <p className="text-xs text-neutral-400">per team (2 players)</p>
+                  )}
 
                   {capacitySummary.label && (
                     <div className="mt-4 space-y-1.5">

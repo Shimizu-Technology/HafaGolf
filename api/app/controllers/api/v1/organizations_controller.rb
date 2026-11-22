@@ -476,7 +476,7 @@ module Api
         return if performed?
 
         tournament = organization.tournaments.includes(:organization, :sponsors).find_by!(slug: params[:tournament_slug])
-        golfers = tournament.golfers.includes(:group, :sponsor).order(created_at: :desc).to_a
+        golfers = tournament.golfers.includes(:group, :sponsor, :employee_number_record).order(created_at: :desc).to_a
 
         hole_labels = bulk_hole_position_labels(tournament.id, golfers)
 
@@ -531,11 +531,15 @@ module Api
               only: [:id, :name, :email, :phone, :company, :registration_status,
                      :payment_status, :payment_method, :payment_type, :checked_in_at, :created_at,
                      :paid_at, :payment_verified_by_name, :payment_verified_at,
-                     :checked_in_by_name, :payment_notes,
+                     :checked_in_by_name, :payment_notes, :payment_amount_cents, :receipt_number,
                      :partner_name, :partner_email, :partner_phone,
                      :team_name, :team_category, :registration_source, :group_id,
-                     :sponsor_id, :sponsor_name, :notes]
+                     :sponsor_id, :sponsor_name, :notes,
+                     :is_employee, :employee_number_record_id]
             ).merge(
+              "last_name" => g.last_name,
+              "employee_number" => g.employee_number,
+              "expected_entry_fee_cents" => g.expected_entry_fee_cents,
               "hole_position_label" => hole_labels[g.id],
               "starting_hole_description" => g.group&.starting_hole_description,
               "sponsor_display_name" => g.sponsor_name.presence || g.sponsor&.name

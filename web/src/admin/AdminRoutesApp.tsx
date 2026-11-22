@@ -21,6 +21,7 @@ import { OrgCheckInPage } from '../pages/OrgCheckInPage';
 import { GroupManagementPage } from '../pages/GroupManagementPage';
 import { RaffleManagementPage } from '../pages/RaffleManagementPage';
 import { SponsorManagementPage } from '../pages/SponsorManagementPage';
+import { EmployeeNumbersPage } from '../pages/EmployeeNumbersPage';
 import { OrgSettingsPage } from '../pages/OrgSettingsPage';
 import { ReportsPage } from '../pages/ReportsPage';
 import { SponsorsOverviewPage } from '../pages/SponsorsOverviewPage';
@@ -141,6 +142,7 @@ export default function AdminRoutesApp() {
           <Route path="events/:tournamentSlug/groups" element={<AdminShellPage><AdminOnlyRoute><GroupManagementPage /></AdminOnlyRoute></AdminShellPage>} />
           <Route path="events/:tournamentSlug/raffle" element={<AdminShellPage><RaffleManagementPage /></AdminShellPage>} />
           <Route path="events/:tournamentSlug/sponsors" element={<AdminShellPage><AdminOnlyRoute><SponsorManagementPage /></AdminOnlyRoute></AdminShellPage>} />
+          <Route path="events/:tournamentSlug/employee-numbers" element={<AdminShellPage><AdminOnlyRoute><EmployeeNumbersPage /></AdminOnlyRoute></AdminShellPage>} />
           <Route path="events/:tournamentSlug/settings" element={<AdminShellPage><AdminOnlyRoute><OrgSettingsPage /></AdminOnlyRoute></AdminShellPage>} />
           <Route path="events/:tournamentSlug/reports" element={<AdminShellPage><AdminOnlyRoute><ReportsPage /></AdminOnlyRoute></AdminShellPage>} />
           <Route path="sponsors" element={<AdminShellPage><AdminOnlyRoute><SponsorsOverviewPage /></AdminOnlyRoute></AdminShellPage>} />

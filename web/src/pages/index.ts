@@ -14,6 +14,7 @@ export { GroupManagementPage } from './GroupManagementPage';
 export { RaffleBoardPage } from './RaffleBoardPage';
 export { RaffleManagementPage } from './RaffleManagementPage';
 export { SponsorManagementPage } from './SponsorManagementPage';
+export { EmployeeNumbersPage } from './EmployeeNumbersPage';
 export { SponsorPortalPage } from './SponsorPortalPage';
 export { OrgAdminDashboard } from './OrgAdminDashboard';
 export { OrgTournamentAdmin } from './OrgTournamentAdmin';

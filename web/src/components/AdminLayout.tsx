@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { UserButton, useUser } from '@clerk/clerk-react';
 import {
+  BadgeCheck,
   BarChart3,
   Building2,
   Calendar,
@@ -113,6 +114,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const eventFeatures = activeTournament?.features ?? organization?.features;
   const eventRaffleEnabled = isFeatureEnabled(eventFeatures, 'raffle', true);
   const eventSponsorsEnabled = isFeatureEnabled(eventFeatures, 'sponsors', true);
+  const eventEmployeePricingEnabled = isFeatureEnabled(eventFeatures, 'employee_pricing', false);
 
   const allOrganizationNav: NavItem[] = [
     {
@@ -214,6 +216,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 path: adminEventPath(activeTournament.slug, 'sponsors'),
                 icon: HandCoins,
                 match: () => routeSection === 'sponsors',
+              },
+            ]
+          : []),
+        ...(eventEmployeePricingEnabled
+          ? [
+              {
+                label: 'Employee Numbers',
+                path: adminEventPath(activeTournament.slug, 'employee-numbers'),
+                icon: BadgeCheck,
+                match: () => routeSection === 'employee-numbers',
               },
             ]
           : []),
