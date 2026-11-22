@@ -544,10 +544,23 @@ module Api
                               .order(event_date: :desc)
                               .to_a
 
+        tournament_ids = loaded.map(&:id)
+        bridged_golfer_ids_by_tournament = Golfer.where(tournament_id: tournament_ids).pluck(:tournament_id, :id).group_by(&:first).transform_values { |pairs| pairs.map(&:last).to_set }
+        reg_rows_by_tournament = Registration.where(tournament_id: tournament_ids, registration_status: "confirmed")
+                                             .pluck(:tournament_id, :golfer_id, :payment_status, :payment_type, :payment_amount_cents)
+                                             .group_by(&:first)
+
         tournament_data = loaded.map do |t|
-          confirmed_count = t.read_attribute(:confirmed_count).to_i
-          pending_count = t.read_attribute(:pending_count).to_i
+          golfer_ids = bridged_golfer_ids_by_tournament.fetch(t.id, Set.new)
+          standalone_regs = reg_rows_by_tournament.fetch(t.id, []).reject { |(_, gid, _, _, _)| gid.present? && golfer_ids.include?(gid) }
+
+          capacity_summary = t.capacity_summary
+          confirmed_count = capacity_summary[:confirmed_units].to_i
+          reg_pending = standalone_regs.count { |(_, _, ps, pt, _)| ps != "paid" && pt.to_s != "sponsor" }
+          pending_count = t.read_attribute(:pending_count).to_i + reg_pending
           paying_count = t.read_attribute(:paying_count).to_i
+          reg_paid_revenue = standalone_regs.sum { |(_, _, ps, pt, amt)| (ps == "paid" && pt.to_s != "sponsor") ? amt.to_i : 0 }
+          tournament_revenue = (paying_count * (t.entry_fee || 0)) + reg_paid_revenue
           sponsor_teams = t.read_attribute(:sponsor_teams_count).to_i
 
           {
@@ -562,9 +575,11 @@ module Api
             event_type: t.event_type,
             status: t.status,
             registration_count: confirmed_count,
+            confirmed_count: confirmed_count,
+            capacity_summary: capacity_summary,
             pending_count: pending_count,
             capacity: t.max_capacity,
-            revenue: paying_count * (t.entry_fee || 0),
+            revenue: tournament_revenue,
             sponsor_reserved_teams: sponsor_teams,
             walkin_fee: t.walkin_fee,
             swipe_simple_url: t.swipe_simple_url,
@@ -577,8 +592,8 @@ module Api
           }
         end
 
-        total_revenue = loaded.sum { |t| t.read_attribute(:paying_count).to_i * (t.entry_fee || 0) }
-        total_registrations = loaded.sum { |t| t.read_attribute(:confirmed_count).to_i }
+        total_revenue = tournament_data.sum { |td| td[:revenue].to_i }
+        total_registrations = tournament_data.sum { |td| td[:registration_count].to_i }
         active_count = loaded.count { |t| %w[open in_progress].include?(t.status) }
 
         stats = {

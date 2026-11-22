@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useAuth, useClerk, useUser } from '@clerk/clerk-react';
+import { useAuth, useClerk, useUser } from '@clerk/react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAdmin } from '../contexts';

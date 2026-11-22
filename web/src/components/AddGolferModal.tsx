@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuth } from '@clerk/react';
 import { X, Loader2, CreditCard, Banknote, Building2, Users, Send, CheckCircle, Smartphone } from 'lucide-react';
 import toast from 'react-hot-toast';
 

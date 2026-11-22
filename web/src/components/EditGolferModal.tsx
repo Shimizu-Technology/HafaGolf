@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuth } from '@clerk/react';
 import type { Golfer } from '../services/api';
 import { X, Loader2, Save, Banknote, CreditCard, Building2, AlertTriangle, Star, Flag } from 'lucide-react';
 import toast from 'react-hot-toast';

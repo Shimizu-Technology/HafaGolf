@@ -235,7 +235,7 @@ export const RafflePreDrawModal: React.FC<RafflePreDrawModalProps> = ({
 
               {/* Status Cards ("Everyone got their numbers") */}
               <div>
-                <div className="mb-2.5 flex items-center justify-between">
+                <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                     Everyone Got Their Numbers
                   </p>

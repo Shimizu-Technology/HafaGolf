@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { SignIn, useAuth } from '@clerk/clerk-react';
+import { SignIn, useAuth } from '@clerk/react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Flag } from 'lucide-react';
 

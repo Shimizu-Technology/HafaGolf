@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuth } from '@clerk/react';
 import { useOrganization } from '../components/OrganizationProvider';
 import { getDefaultOrgSlug } from '../utils/tenant';
 import {

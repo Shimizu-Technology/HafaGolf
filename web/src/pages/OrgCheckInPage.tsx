@@ -211,22 +211,82 @@ export const OrgCheckInPage: React.FC = () => {
     [waitlistEnabled, waitlistedGolfers.length]
   );
 
+  const golferIdSet = useMemo(
+    () => new Set(golfers.map((g) => g.id)),
+    [golfers]
+  );
+
+  const standaloneRegistrations = useMemo(
+    () =>
+      registrations.filter((reg) => {
+        const bridgedId = (reg as ApiRegistration & { golfer_id?: number | null }).golfer_id;
+        return !bridgedId || !golferIdSet.has(bridgedId);
+      }),
+    [registrations, golferIdSet]
+  );
+
+  const matchesRegistrationLane = useCallback((reg: ApiRegistration, lane: AlphaLane): boolean => {
+    if (lane === 'all') return true;
+    const captain = reg.team_members.find((m) => m.is_captain) || reg.team_members[0];
+    if (captain && matchesAlphaLane({ name: captain.name }, lane)) return true;
+    if (reg.team_members.some((m) => matchesAlphaLane({ name: m.name }, lane))) return true;
+    return matchesAlphaLane({ name: reg.contact_name || reg.display_team_name }, lane);
+  }, []);
+
+  const queueBaseRegistrations = useMemo(() => {
+    switch (activeQueue) {
+      case 'not_checked_in':
+        return registrations.filter((reg) => !reg.all_checked_in);
+      case 'paid':
+        return registrations.filter((reg) => reg.payment_status === 'paid' && !reg.all_checked_in);
+      case 'not_paid':
+        return registrations.filter((reg) => reg.payment_status !== 'paid');
+      case 'checked_in':
+        return registrations.filter((reg) => reg.checked_in_count > 0);
+      case 'waitlist':
+        return [];
+      case 'all':
+      default:
+        return registrations;
+    }
+  }, [registrations, activeQueue]);
+
   const stats = useMemo(() => {
-    const total = confirmedGolfers.length;
-    const checkedIn = confirmedGolfers.filter(g => g.checked_in_at).length;
-    const paid = confirmedGolfers.filter(g => g.payment_status === 'paid').length;
-    const notPaid = confirmedGolfers.filter(g => g.payment_status !== 'paid').length;
+    const regPlayerCount = (reg: ApiRegistration) =>
+      reg.team_members.length > 0 ? reg.team_members.length : Math.max(reg.player_count || 1, 1);
+
+    const regTotal = standaloneRegistrations.reduce((sum, reg) => sum + regPlayerCount(reg), 0);
+    const regCheckedIn = standaloneRegistrations.reduce((sum, reg) => sum + (reg.checked_in_count || 0), 0);
+    const regPaid = standaloneRegistrations
+      .filter((reg) => reg.payment_status === 'paid')
+      .reduce((sum, reg) => sum + regPlayerCount(reg), 0);
+    const regNotPaid = standaloneRegistrations
+      .filter((reg) => reg.payment_status !== 'paid')
+      .reduce((sum, reg) => sum + regPlayerCount(reg), 0);
+
+    const total = confirmedGolfers.length + regTotal;
+    const checkedIn = confirmedGolfers.filter(g => g.checked_in_at).length + regCheckedIn;
+    const paid = confirmedGolfers.filter(g => g.payment_status === 'paid').length + regPaid;
+    const notPaid = confirmedGolfers.filter(g => g.payment_status !== 'paid').length + regNotPaid;
     return { total, checkedIn, paid, notPaid, waitlist: waitlistedGolfers.length };
-  }, [confirmedGolfers, waitlistedGolfers]);
+  }, [confirmedGolfers, waitlistedGolfers, standaloneRegistrations]);
 
   const queueCounts: Record<QueueTab, number> = useMemo(() => ({
-    not_checked_in: confirmedGolfers.filter(g => !g.checked_in_at).length,
-    paid: confirmedGolfers.filter(g => g.payment_status === 'paid' && !g.checked_in_at).length,
-    not_paid: confirmedGolfers.filter(g => g.payment_status !== 'paid').length,
-    checked_in: confirmedGolfers.filter(g => g.checked_in_at).length,
+    not_checked_in:
+      confirmedGolfers.filter(g => !g.checked_in_at).length +
+      standaloneRegistrations.filter(r => !r.all_checked_in).length,
+    paid:
+      confirmedGolfers.filter(g => g.payment_status === 'paid' && !g.checked_in_at).length +
+      standaloneRegistrations.filter(r => r.payment_status === 'paid' && !r.all_checked_in).length,
+    not_paid:
+      confirmedGolfers.filter(g => g.payment_status !== 'paid').length +
+      standaloneRegistrations.filter(r => r.payment_status !== 'paid').length,
+    checked_in:
+      confirmedGolfers.filter(g => g.checked_in_at).length +
+      standaloneRegistrations.filter(r => r.checked_in_count > 0).length,
     waitlist: waitlistedGolfers.length,
-    all: confirmedGolfers.length,
-  }), [confirmedGolfers, waitlistedGolfers]);
+    all: confirmedGolfers.length + standaloneRegistrations.length,
+  }), [confirmedGolfers, waitlistedGolfers, standaloneRegistrations]);
 
   const queueBaseGolfers = useMemo(() => {
     switch (activeQueue) {
@@ -246,10 +306,23 @@ export const OrgCheckInPage: React.FC = () => {
     }
   }, [confirmedGolfers, waitlistedGolfers, activeQueue]);
 
-  const laneCounts = useMemo(
-    () => countByAlphaLane(queueBaseGolfers),
-    [queueBaseGolfers]
-  );
+  const laneCounts = useMemo(() => {
+    const golferLanes = countByAlphaLane(queueBaseGolfers);
+    const standaloneQueueRegs = queueBaseRegistrations.filter((reg) => {
+      const bridgedId = (reg as ApiRegistration & { golfer_id?: number | null }).golfer_id;
+      return !bridgedId || !golferIdSet.has(bridgedId);
+    });
+    const regTargets = standaloneQueueRegs.map((reg) => {
+      const captain = reg.team_members.find((m) => m.is_captain) || reg.team_members[0];
+      return { name: captain?.name || reg.contact_name || reg.display_team_name };
+    });
+    const regLanes = countByAlphaLane(regTargets);
+    return {
+      all: golferLanes.all + regLanes.all,
+      a_j: golferLanes.a_j + regLanes.a_j,
+      k_z: golferLanes.k_z + regLanes.k_z,
+    };
+  }, [queueBaseGolfers, queueBaseRegistrations, golferIdSet]);
 
   const filteredGolfers = useMemo(() => {
     let filtered = [...queueBaseGolfers];
@@ -359,21 +432,10 @@ export const OrgCheckInPage: React.FC = () => {
   };
 
   const filteredRegistrations = useMemo(() => {
-    let filtered = [...registrations];
+    let filtered = [...queueBaseRegistrations];
 
-    switch (activeQueue) {
-      case 'not_checked_in':
-        filtered = filtered.filter((reg) => !reg.all_checked_in);
-        break;
-      case 'paid':
-        filtered = filtered.filter((reg) => reg.payment_status === 'paid' && !reg.all_checked_in);
-        break;
-      case 'not_paid':
-        filtered = filtered.filter((reg) => reg.payment_status !== 'paid');
-        break;
-      case 'checked_in':
-        filtered = filtered.filter((reg) => reg.checked_in_count > 0);
-        break;
+    if (alphaLanesEnabled && activeLane !== 'all') {
+      filtered = filtered.filter((reg) => matchesRegistrationLane(reg, activeLane));
     }
 
     if (searchTerm) {
@@ -394,7 +456,7 @@ export const OrgCheckInPage: React.FC = () => {
     }
 
     return filtered;
-  }, [registrations, activeQueue, searchTerm]);
+  }, [queueBaseRegistrations, alphaLanesEnabled, activeLane, matchesRegistrationLane, searchTerm]);
 
   const handleTeamMemberCheckIn = async (registration: ApiRegistration, member: ApiTeamMember) => {
     if (registration.payment_status !== 'paid') {
@@ -755,7 +817,7 @@ export const OrgCheckInPage: React.FC = () => {
             {filteredRegistrations.map((reg) => (
               <div
                 key={reg.id}
-                className={`rounded-2xl border bg-white p-4 shadow-sm ${
+                className={`min-w-0 overflow-hidden rounded-2xl border bg-white p-4 shadow-sm ${
                   reg.payment_status !== 'paid'
                     ? 'border-gray-200 border-l-4 border-l-amber-500'
                     : reg.all_checked_in
@@ -763,10 +825,10 @@ export const OrgCheckInPage: React.FC = () => {
                       : 'border-gray-200'
                 }`}
               >
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <div className="min-w-0">
+                <div className="flex flex-wrap items-start justify-between gap-2 sm:flex-nowrap sm:gap-3 mb-3">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-gray-900 truncate">{reg.display_team_name}</h3>
+                      <h3 className="font-semibold text-gray-900 truncate max-w-full">{reg.display_team_name}</h3>
                       <span
                         className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                           reg.all_checked_in
@@ -823,18 +885,18 @@ export const OrgCheckInPage: React.FC = () => {
                   {reg.team_members.map((member) => (
                     <div
                       key={member.id}
-                      className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 ${
+                      className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 min-w-0 ${
                         member.checked_in ? 'bg-green-50 border border-green-100' : 'bg-gray-50'
                       }`}
                     >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
                           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-100 text-brand-700 text-[10px] font-bold shrink-0">
                             {member.position}
                           </span>
                           <span className="text-sm font-medium text-gray-900 truncate">{member.name}</span>
                           {member.is_captain && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 font-medium">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 font-medium shrink-0">
                               Captain
                             </span>
                           )}
@@ -875,6 +937,7 @@ export const OrgCheckInPage: React.FC = () => {
       )}
 
       {/* Two-Column Layout */}
+      {(filteredGolfers.length > 0 || filteredRegistrations.length === 0) && (
       <div className="max-w-6xl mx-auto grid lg:grid-cols-[1fr_380px] gap-4">
         {/* Left: Player List */}
         <div className="space-y-2">
@@ -1190,6 +1253,7 @@ export const OrgCheckInPage: React.FC = () => {
           )}
         </div>
       </div>
+      )}
 
       {/* Check-In Confirmation Dialog */}
       {confirmingCheckIn && (

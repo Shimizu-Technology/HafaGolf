@@ -14,7 +14,7 @@ import {
   isDedicatedAdminHost,
 } from './utils/adminHost';
 
-// Import public pages directly (NOT via ./pages barrel) so admin pages and @clerk/clerk-react
+// Import public pages directly (NOT via ./pages barrel) so admin pages and @clerk/react
 // are completely excluded from the public client domain bundle.
 import { OrganizationLandingPage } from './pages/OrganizationLandingPage';
 import { SponsorPortalPage } from './pages/SponsorPortalPage';
