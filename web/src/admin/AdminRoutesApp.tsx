@@ -68,6 +68,15 @@ function PostHogClerkIdentitySync() {
     }
   }, [posthogClient, isReady, isLoaded, isSignedIn, user]);
 
+  useEffect(() => {
+    return () => {
+      if (posthogClient && previouslySignedInRef.current) {
+        posthogClient.reset();
+        previouslySignedInRef.current = false;
+      }
+    };
+  }, [posthogClient]);
+
   return null;
 }
 

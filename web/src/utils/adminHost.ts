@@ -85,7 +85,7 @@ export function buildAdminRedirectUrl(
   orgSlug?: string | null
 ): string {
   const origin = getAdminOrigin(configuredOrigin);
-  const safePath = pathname.startsWith('/admin') ? pathname : '/admin';
+  const safePath = pathname === '/admin' || pathname.startsWith('/admin/') ? pathname : '/admin';
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
   if (orgSlug && !params.has('org')) {
     params.set('org', orgSlug);

@@ -601,7 +601,7 @@ export class ApiClient {
   private currentTournamentId: number | null = null;
   private userEmail: string | null = null;
 
-  setAuthTokenGetter(getter: () => Promise<string | null>) {
+  setAuthTokenGetter(getter: (() => Promise<string | null>) | null) {
     this.getAuthToken = getter;
   }
 

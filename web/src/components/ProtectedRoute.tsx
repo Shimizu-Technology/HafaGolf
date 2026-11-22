@@ -24,11 +24,18 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   useEffect(() => {
     api.setAuthTokenGetter(() => getToken());
     authSetupRef.current = true;
+    return () => {
+      api.setAuthTokenGetter(null);
+      authSetupRef.current = false;
+    };
   }, [getToken]);
 
   useEffect(() => {
     const email = user?.primaryEmailAddress?.emailAddress || null;
     api.setUserEmail(email);
+    return () => {
+      api.setUserEmail(null);
+    };
   }, [user]);
 
   useEffect(() => {

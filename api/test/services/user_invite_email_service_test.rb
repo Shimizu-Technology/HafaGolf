@@ -175,6 +175,19 @@ class UserInviteEmailServiceTest < ActiveSupport::TestCase
     assert_not_includes js_html, "<img "
     assert_includes js_html, "background: #0f172a"
     assert_includes js_html, "https://golf.shimizu-technology.com/admin/login?org=bright-charity"
+
+    data_html = UserInviteEmailService.send(
+      :invite_html,
+      user: invitee,
+      invited_by: nil,
+      role_label: "volunteer",
+      org_name: "Data URI Org",
+      brand_color: "#1e3a8a",
+      org_slug: "data-uri-org",
+      logo_url: "data:image/svg+xml,<svg/>"
+    )
+    assert_not_includes data_html, "data:image"
+    assert_not_includes data_html, "<img "
   end
 
   private
