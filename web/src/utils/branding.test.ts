@@ -226,11 +226,24 @@ describe('CSS variable generation and DOM application', () => {
     expect(document.documentElement.style.getPropertyValue('--accent-600')).toBe('#f59e0b');
     expect(document.documentElement.style.getPropertyValue('--accent-foreground')).toBe('#020617');
     expect(document.documentElement.dataset.themePreset).toBe('minimal');
+    expect(document.documentElement.dataset.themePack).toBe('default-clean');
     expect(meta.getAttribute('content')).toBe('#7f1d1d');
+
+    const packBranding = resolveTournamentBranding(
+      { primary_color: '#1e3a5f', accent_color: '#c29a3b' },
+      { theme_preset: 'memorial-formal' }
+    );
+    expect(packBranding.themePreset).toBe('memorial-formal');
+    expect(packBranding.themePackId).toBe('memorial-formal');
+    applyBrandingToDocument(packBranding, document);
+    expect(document.documentElement.dataset.themePreset).toBe('memorial-formal');
+    expect(document.documentElement.dataset.themePack).toBe('memorial-formal');
+    expect(document.documentElement.style.getPropertyValue('--theme-pack-heading-font')).toContain('Playfair Display');
 
     resetBrandingOnDocument(document);
     expect(document.documentElement.style.getPropertyValue('--brand-600')).toBe(DEFAULT_PRIMARY_COLOR);
     expect(document.documentElement.dataset.themePreset).toBe('classic');
+    expect(document.documentElement.dataset.themePack).toBe('default-clean');
     expect(meta.getAttribute('content')).toBe(DEFAULT_PRIMARY_COLOR);
 
     meta.remove();

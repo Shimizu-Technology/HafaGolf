@@ -263,4 +263,45 @@ class TournamentTest < ActiveSupport::TestCase
     assert_not tournament.valid?
     assert_includes tournament.errors[:config], "Start positions per hole must be blank or an integer between 1 and 26"
   end
+
+  test "accepts all four theme pack IDs and legacy classic preset" do
+    tournament = tournaments(:tournament_one)
+
+    %w[default-clean charity-bright memorial-formal crest-classic classic].each do |preset|
+      tournament.theme_preset = preset
+      assert tournament.valid?, "Expected theme_preset '#{preset}' to be valid"
+      assert tournament.save
+      assert_equal preset, tournament.reload.theme_preset
+    end
+  end
+
+  test "rejects invalid or blank theme_preset values" do
+    tournament = tournaments(:tournament_one)
+
+    [nil, "", "neon-party", "custom-pack"].each do |invalid_preset|
+      tournament.theme_preset = invalid_preset
+      assert_not tournament.valid?, "Expected theme_preset #{invalid_preset.inspect} to be invalid"
+      assert tournament.errors[:theme_preset].any?
+    end
+  end
+
+  test "resolved_theme_pack maps legacy classic to default-clean and preserves canonical packs" do
+    tournament = tournaments(:tournament_one)
+
+    tournament.theme_preset = "classic"
+    assert_equal "default-clean", tournament.resolved_theme_pack
+
+    %w[default-clean charity-bright memorial-formal crest-classic].each do |pack_id|
+      tournament.theme_preset = pack_id
+      assert_equal pack_id, tournament.resolved_theme_pack
+    end
+  end
+
+  test "copy_for_next_year preserves theme_preset" do
+    original = tournaments(:tournament_one)
+    original.update!(theme_preset: "crest-classic")
+
+    copy = original.copy_for_next_year
+    assert_equal "crest-classic", copy.theme_preset
+  end
 end

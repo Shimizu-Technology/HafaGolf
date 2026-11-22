@@ -42,6 +42,17 @@ class Tournament < ApplicationRecord
   # Status constants
   STATUSES = %w[draft open closed in_progress completed archived].freeze
   EVENT_TYPES = %w[golf_tournament gala].freeze
+  CANONICAL_THEME_PACKS = %w[default-clean charity-bright memorial-formal crest-classic].freeze
+  THEME_PRESETS = (CANONICAL_THEME_PACKS + %w[classic]).freeze
+
+  validates :theme_preset, presence: true, inclusion: { in: THEME_PRESETS }
+
+  def resolved_theme_pack
+    return 'default-clean' if theme_preset.blank? || theme_preset == 'classic'
+    return theme_preset if CANONICAL_THEME_PACKS.include?(theme_preset)
+
+    'default-clean'
+  end
   
   # Default sponsor tier definitions
   DEFAULT_SPONSOR_TIERS = [
