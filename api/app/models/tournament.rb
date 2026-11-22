@@ -436,83 +436,9 @@ class Tournament < ApplicationRecord
     update!(status: 'completed', registration_open: false, walkin_registration_open: false)
   end
 
-  # Copy tournament for next year
-  def copy_for_next_year
-    Tournament.new(
-      organization: organization,
-      event_type: event_type,
-      name: name,
-      year: year + 1,
-      edition: increment_edition,
-      status: 'draft',
-      event_date: nil,
-      registration_time: registration_time,
-      check_in_time: check_in_time,
-      start_time: start_time,
-      location_name: location_name,
-      location_address: location_address,
-      tournament_format: tournament_format,
-      scoring_type: scoring_type,
-      team_size: team_size,
-      allow_partial_teams: allow_partial_teams,
-      shotgun_start: shotgun_start,
-      tee_times_enabled: tee_times_enabled,
-      tee_time_interval_minutes: tee_time_interval_minutes,
-      total_holes: total_holes,
-      total_par: total_par,
-      course_name: course_name,
-      tee_name: tee_name,
-      course_rating: course_rating,
-      slope_rating: slope_rating,
-      hole_pars: hole_pars,
-      hole_handicaps: hole_handicaps,
-      use_flights: use_flights,
-      flights_config: flights_config,
-      handicap_required: handicap_required,
-      handicap_max: handicap_max,
-      max_capacity: max_capacity,
-      reserved_slots: reserved_slots,
-      entry_fee: entry_fee,
-      entry_fee_display: entry_fee_display,
-      early_bird_fee: early_bird_fee,
-      employee_entry_fee: employee_entry_fee,
-      employee_discount_enabled: employee_discount_enabled,
-      format_name: format_name,
-      fee_includes: fee_includes,
-      checks_payable_to: checks_payable_to,
-      payment_instructions: payment_instructions,
-      allow_cash: allow_cash,
-      allow_check: allow_check,
-      allow_card: allow_card,
-      waitlist_enabled: waitlist_enabled,
-      waitlist_max: waitlist_max,
-      contact_name: contact_name,
-      contact_phone: contact_phone,
-      contact_email: contact_email,
-      raffle_enabled: raffle_enabled,
-      raffle_ticket_price_cents: raffle_ticket_price_cents,
-      raffle_description: raffle_description,
-      raffle_auto_draw: raffle_auto_draw,
-      raffle_max_tickets_per_person: raffle_max_tickets_per_person,
-      raffle_tickets_per_purchase: raffle_tickets_per_purchase,
-      walkin_fee: walkin_fee,
-      sponsor_edit_deadline: sponsor_edit_deadline,
-      event_schedule: event_schedule,
-      tournament_info: tournament_info,
-      public_listed: public_listed,
-      use_org_branding: use_org_branding,
-      theme_preset: theme_preset,
-      primary_color_override: primary_color_override,
-      accent_color_override: accent_color_override,
-      logo_url_override: logo_url_override,
-      signature_image_url_override: signature_image_url_override,
-      banner_url_override: banner_url_override,
-      swipe_simple_url: swipe_simple_url,
-      walkin_swipe_simple_url: walkin_swipe_simple_url,
-      registration_open: false,
-      walkin_registration_open: false,
-      config: config&.deep_dup || {}
-    )
+  # Copy tournament for next year (delegates to Tournaments::CloneService)
+  def copy_for_next_year(**options)
+    Tournaments::CloneService.new(source: self, **options).build_tournament
   end
 
   private
@@ -651,16 +577,6 @@ class Tournament < ApplicationRecord
   end
 
   def increment_edition
-    return '1st' if edition.blank?
-    
-    current_num = edition.to_i
-    next_num = current_num + 1
-    
-    case next_num
-    when 1 then '1st'
-    when 2 then '2nd'
-    when 3 then '3rd'
-    else "#{next_num}th"
-    end
+    Tournaments::CloneService.increment_edition(edition)
   end
 end

@@ -34,6 +34,7 @@ class ActivityLog < ApplicationRecord
     admin_created
     admin_deleted
     tournament_created
+    tournament_cloned
     tournament_updated
     tournament_archived
     bulk_payment_links_sent
