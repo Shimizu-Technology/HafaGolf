@@ -1,10 +1,8 @@
-import { ClerkProvider } from '@clerk/clerk-react';
 import App from './App';
 import { useBackendAvailability } from './hooks/useBackendAvailability';
 import { OffseasonPage } from './pages/OffseasonPage';
 import { PostHogProvider } from './providers/PostHogProvider';
 
-const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const HEALTH_URL = `${API_BASE_URL}/health`;
 
@@ -23,13 +21,10 @@ export function ServiceCheck() {
   }
 
   if (status === 'unavailable') return <OffseasonPage onRetry={retry} />;
-  if (!PUBLISHABLE_KEY) {
-    throw new Error('Missing Clerk Publishable Key. Add VITE_CLERK_PUBLISHABLE_KEY to your .env.local file.');
-  }
 
   return (
-    <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/">
-      <PostHogProvider><App /></PostHogProvider>
-    </ClerkProvider>
+    <PostHogProvider>
+      <App />
+    </PostHogProvider>
   );
 }

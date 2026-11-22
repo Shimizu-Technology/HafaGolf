@@ -1,43 +1,36 @@
-import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { Suspense, lazy, useEffect, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
+import { ExternalLink } from 'lucide-react';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { ProtectedRoute } from './components/ProtectedRoute';
-import { AdminLayout } from './components/AdminLayout';
-import { AdminOnlyRoute } from './components/AdminRouteGuard';
-import { OrganizationProvider, useOrganization } from './components/OrganizationProvider';
-import { TournamentProvider, AdminProvider } from './contexts';
-import { GolferAuthProvider } from './contexts';
-import {
-  AdminLoginPage,
-  CreateTournamentPage,
-  EventsManagementPage,
-  GolferDashboardPage,
-  GolferLoginPage,
-  GolferVerifyPage,
-  LeaderboardPage,
-  OrgAdminDashboard,
-  OrgCheckInPage,
-  OrgRegistrationPage,
-  OrgRegistrationSuccessPage,
-  OrgSettingsPage,
-  OrgTournamentAdmin,
-  OrgTournamentPage,
-  OrganizationLandingPage,
-  PaymentCancelPage,
-  PaymentSuccessPage,
-  RaffleBoardPage,
-  RaffleManagementPage,
-  ScorecardPage,
-  GroupManagementPage,
-  SponsorManagementPage,
-  SponsorPortalPage,
-  SponsorsOverviewPage,
-  ReportsPage,
-} from './pages';
-import { PaymentReconciliationPage } from './pages/PaymentReconciliationPage';
-import { ActivityLogPage } from './pages/ActivityLogPage';
-import { SuperAdminDashboard } from './pages/SuperAdminDashboard';
+import { OrganizationProvider } from './components/OrganizationProvider';
+import { GolferAuthProvider } from './contexts/GolferAuthContext';
 import { PostHogPageView } from './providers/PostHogProvider';
+import { api } from './services/api';
+import { useOrganizationStore } from './stores/organizationStore';
+import {
+  buildAdminRedirectUrl,
+  isAdminHost,
+  isDedicatedAdminHost,
+} from './utils/adminHost';
+
+// Import public pages directly (NOT via ./pages barrel) so admin pages and @clerk/clerk-react
+// are completely excluded from the public client domain bundle.
+import { OrganizationLandingPage } from './pages/OrganizationLandingPage';
+import { SponsorPortalPage } from './pages/SponsorPortalPage';
+import { PaymentSuccessPage } from './pages/PaymentSuccessPage';
+import { PaymentCancelPage } from './pages/PaymentCancelPage';
+import { GolferLoginPage } from './pages/GolferLoginPage';
+import { GolferVerifyPage } from './pages/GolferVerifyPage';
+import { GolferDashboardPage } from './pages/GolferDashboardPage';
+import { ScorecardPage } from './pages/ScorecardPage';
+import { OrgTournamentPage } from './pages/OrgTournamentPage';
+import { OrgRegistrationPage } from './pages/OrgRegistrationPage';
+import { OrgRegistrationSuccessPage } from './pages/OrgRegistrationSuccessPage';
+import { LeaderboardPage } from './pages/LeaderboardPage';
+import { RaffleBoardPage } from './pages/RaffleBoardPage';
+
+const LazyAdminRoutesApp = lazy(() => import('./admin/AdminRoutesApp'));
 
 function TenantPublicWrapper({ children }: { children: React.ReactNode }) {
   return (
@@ -47,28 +40,106 @@ function TenantPublicWrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AdminShellPage({ children }: { children: React.ReactNode }) {
+function AdminOriginRedirect() {
+  const location = useLocation();
+  const storedOrgSlug = useOrganizationStore((state) => state.organization?.slug);
+  const existingOrgParam = new URLSearchParams(location.search).get('org');
+  const [resolvedSlug, setResolvedSlug] = useState<string | undefined>(storedOrgSlug);
+  const [readyToRedirect, setReadyToRedirect] = useState<boolean>(Boolean(storedOrgSlug || existingOrgParam));
+
+  useEffect(() => {
+    if (storedOrgSlug || existingOrgParam) {
+      setResolvedSlug(storedOrgSlug);
+      setReadyToRedirect(true);
+      return;
+    }
+
+    let cancelled = false;
+    api
+      .resolveTenant()
+      .then((res) => {
+        if (!cancelled && res.organization?.slug) {
+          setResolvedSlug(res.organization.slug);
+        }
+      })
+      .catch(() => {
+        // Proceed with redirect even if host lookup fails
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setReadyToRedirect(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storedOrgSlug, existingOrgParam]);
+
+  const targetUrl = buildAdminRedirectUrl(
+    location.pathname,
+    location.search,
+    location.hash,
+    undefined,
+    resolvedSlug
+  );
+
+  useEffect(() => {
+    if (!readyToRedirect) return;
+    window.location.replace(targetUrl);
+  }, [readyToRedirect, targetUrl]);
+
   return (
-    <AdminProvider>
-      <ProtectedRoute>
-        <OrganizationProvider mode="admin" fallbackPath="">
-          <AdminTournamentShell>
-            <AdminLayout>{children}</AdminLayout>
-          </AdminTournamentShell>
-        </OrganizationProvider>
-      </ProtectedRoute>
-    </AdminProvider>
+    <main className="min-h-screen flex items-center justify-center bg-neutral-50 px-6">
+      <div className="max-w-md text-center">
+        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
+        <h1 className="mt-4 text-lg font-semibold text-neutral-900">Redirecting to Admin Console…</h1>
+        <p className="mt-2 text-sm text-neutral-600">
+          Tournament administration is hosted on the HafaGolf admin portal.
+        </p>
+        <a
+          href={targetUrl}
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
+        >
+          <span>Continue to Admin Console</span>
+          <ExternalLink className="h-4 w-4" />
+        </a>
+      </div>
+    </main>
   );
 }
 
-function AdminTournamentShell({ children }: { children: React.ReactNode }) {
-  const { organization } = useOrganization();
-  return <TournamentProvider orgSlug={organization?.slug}>{children}</TournamentProvider>;
+function AdminBoundaryRoute() {
+  if (!isAdminHost()) {
+    return <AdminOriginRedirect />;
+  }
+
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+          <div className="text-center">
+            <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
+            <p className="mt-4 text-sm text-neutral-600">Loading Admin Console…</p>
+          </div>
+        </div>
+      }
+    >
+      <LazyAdminRoutesApp />
+    </Suspense>
+  );
 }
 
-function LegacyTournamentRedirect({ suffix = '' }: { suffix?: string }) {
-  const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
-  return <Navigate to={tournamentSlug ? `/admin/events/${tournamentSlug}${suffix}` : '/admin/events'} replace />;
+function RootRoute() {
+  if (isDedicatedAdminHost()) {
+    return <Navigate to="/admin" replace />;
+  }
+
+  return (
+    <TenantPublicWrapper>
+      <OrganizationLandingPage />
+    </TenantPublicWrapper>
+  );
 }
 
 function App() {
@@ -79,36 +150,12 @@ function App() {
         <div className="min-h-screen flex flex-col">
           <Toaster position="top-right" />
           <Routes>
-            <Route path="/" element={<TenantPublicWrapper><OrganizationLandingPage /></TenantPublicWrapper>} />
+            <Route path="/" element={<RootRoute />} />
 
             <Route path="/sponsor-portal" element={<TenantPublicWrapper><SponsorPortalPage /></TenantPublicWrapper>} />
             <Route path="/sponsor-portal/login" element={<TenantPublicWrapper><SponsorPortalPage /></TenantPublicWrapper>} />
 
-            <Route path="/admin/login" element={<AdminLoginPage />} />
-            <Route path="/admin" element={<AdminShellPage><OrgAdminDashboard /></AdminShellPage>} />
-            <Route path="/admin/organizations" element={<AdminShellPage><AdminOnlyRoute><SuperAdminDashboard /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/events" element={<AdminShellPage><AdminOnlyRoute><EventsManagementPage /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/events/new" element={<AdminShellPage><AdminOnlyRoute><CreateTournamentPage /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/events/:tournamentSlug" element={<AdminShellPage><AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/events/:tournamentSlug/registrations" element={<AdminShellPage><AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/events/:tournamentSlug/payments" element={<AdminShellPage><AdminOnlyRoute><PaymentReconciliationPage /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/events/:tournamentSlug/checkin" element={<AdminShellPage><OrgCheckInPage /></AdminShellPage>} />
-            <Route path="/admin/events/:tournamentSlug/groups" element={<AdminShellPage><AdminOnlyRoute><GroupManagementPage /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/events/:tournamentSlug/raffle" element={<AdminShellPage><RaffleManagementPage /></AdminShellPage>} />
-            <Route path="/admin/events/:tournamentSlug/sponsors" element={<AdminShellPage><AdminOnlyRoute><SponsorManagementPage /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/events/:tournamentSlug/settings" element={<AdminShellPage><AdminOnlyRoute><OrgSettingsPage /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/events/:tournamentSlug/reports" element={<AdminShellPage><AdminOnlyRoute><ReportsPage /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/sponsors" element={<AdminShellPage><AdminOnlyRoute><SponsorsOverviewPage /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/settings" element={<AdminShellPage><AdminOnlyRoute><OrgSettingsPage /></AdminOnlyRoute></AdminShellPage>} />
-            <Route path="/admin/activity" element={<AdminShellPage><AdminOnlyRoute><ActivityLogPage /></AdminOnlyRoute></AdminShellPage>} />
-
-            <Route path="/admin/tournaments/new" element={<Navigate to="/admin/events/new" replace />} />
-            <Route path="/admin/tournaments/:tournamentSlug" element={<LegacyTournamentRedirect />} />
-            <Route path="/admin/tournaments/:tournamentSlug/checkin" element={<LegacyTournamentRedirect suffix="/checkin" />} />
-            <Route path="/admin/tournaments/:tournamentSlug/payments" element={<LegacyTournamentRedirect suffix="/payments" />} />
-            <Route path="/admin/tournaments/:tournamentSlug/scorecard" element={<LegacyTournamentRedirect suffix="/groups" />} />
-            <Route path="/admin/tournaments/:tournamentSlug/raffle" element={<LegacyTournamentRedirect suffix="/raffle" />} />
-            <Route path="/admin/tournaments/:tournamentSlug/sponsors" element={<LegacyTournamentRedirect suffix="/sponsors" />} />
+            <Route path="/admin/*" element={<AdminBoundaryRoute />} />
 
             <Route path="/payment/success" element={<PaymentSuccessPage />} />
             <Route path="/payment/cancel" element={<PaymentCancelPage />} />

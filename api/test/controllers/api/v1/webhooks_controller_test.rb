@@ -45,14 +45,14 @@ class Api::V1::WebhooksControllerTest < ActionDispatch::IntegrationTest
     }.to_json
 
     original_env = Rails.env
-    Rails.singleton_class.send(:define_method, :env) { ActiveSupport::StringInquirer.new("production") }
+    Rails.env = ActiveSupport::StringInquirer.new("production")
 
     begin
       post "/api/v1/webhooks/stripe",
            params: payload,
            headers: { "CONTENT_TYPE" => "application/json" }
     ensure
-      Rails.singleton_class.send(:define_method, :env) { original_env }
+      Rails.env = original_env
     end
 
     assert_response :bad_request

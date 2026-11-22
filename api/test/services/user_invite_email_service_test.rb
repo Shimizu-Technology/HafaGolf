@@ -1,6 +1,17 @@
+# frozen_string_literal: true
+
 require "test_helper"
 
 class UserInviteEmailServiceTest < ActiveSupport::TestCase
+  setup do
+    @previous_admin_origin = ENV["ADMIN_ORIGIN"]
+    ENV["ADMIN_ORIGIN"] = "https://golf.shimizu-technology.com"
+  end
+
+  teardown do
+    ENV["ADMIN_ORIGIN"] = @previous_admin_origin
+  end
+
   test "send invite records Resend soft API errors as failed" do
     previous_key = ENV["RESEND_API_KEY"]
     previous_from = ENV["RESEND_FROM_EMAIL"]
@@ -29,7 +40,7 @@ class UserInviteEmailServiceTest < ActiveSupport::TestCase
     ENV["RESEND_FROM_EMAIL"] = previous_from
   end
 
-  test "send invite records successful Resend responses as accepted" do
+  test "send invite records successful Resend responses as accepted with org logo and ADMIN_ORIGIN link" do
     previous_key = ENV["RESEND_API_KEY"]
     previous_from = ENV["RESEND_FROM_EMAIL"]
     ENV["RESEND_API_KEY"] = "test_resend_key"
@@ -37,6 +48,7 @@ class UserInviteEmailServiceTest < ActiveSupport::TestCase
 
     captured_payload = nil
     org = organizations(:org_one)
+    org.update!(logo_url: "https://cdn.example.com/org-logo.png", primary_color: "#1e3a8a")
 
     with_singleton_method(Resend::Emails, :send, ->(payload) {
       captured_payload = payload
@@ -56,6 +68,11 @@ class UserInviteEmailServiceTest < ActiveSupport::TestCase
       assert_equal "email_invite_123", delivery.provider_message_id
       assert_equal org.id, delivery.organization_id
       assert_equal [ { name: "delivery_id", value: delivery.id.to_s } ], captured_payload.fetch(:tags)
+
+      html = captured_payload.fetch(:html)
+      assert_includes html, "https://cdn.example.com/org-logo.png"
+      assert_includes html, "https://golf.shimizu-technology.com/admin/login?org=#{org.slug}"
+      assert_includes html, "background: #1e3a8a"
     end
   ensure
     ENV["RESEND_API_KEY"] = previous_key
@@ -111,6 +128,66 @@ class UserInviteEmailServiceTest < ActiveSupport::TestCase
   ensure
     ENV["RESEND_API_KEY"] = previous_key
     ENV["RESEND_FROM_EMAIL"] = previous_from
+  end
+
+  test "invite_html accepts HTTPS logos and omits HTTP and unsafe logo URLs" do
+    invitee = User.new(email: "volunteer@example.com")
+
+    https_html = UserInviteEmailService.send(
+      :invite_html,
+      user: invitee,
+      invited_by: nil,
+      role_label: "volunteer",
+      org_name: "Pacific Crest Golf",
+      brand_color: "#1e3a8a",
+      org_slug: "pacific-crest",
+      logo_url: "https://cdn.example.com/logo.png"
+    )
+    assert_includes https_html, "https://cdn.example.com/logo.png"
+    assert_includes https_html, "background: #1e3a8a"
+
+    http_html = UserInviteEmailService.send(
+      :invite_html,
+      user: invitee,
+      invited_by: nil,
+      role_label: "volunteer",
+      org_name: "Insecure Logo Org",
+      brand_color: "#ffffff",
+      org_slug: "insecure-logo",
+      logo_url: "http://cdn.example.com/logo.png"
+    )
+    assert_not_includes http_html, "http://cdn.example.com/logo.png"
+    assert_not_includes http_html, "<img "
+    assert_includes http_html, "background: #0f172a"
+    refute_includes http_html, "background: #ffffff; border-radius"
+
+    js_html = UserInviteEmailService.send(
+      :invite_html,
+      user: invitee,
+      invited_by: nil,
+      role_label: "volunteer",
+      org_name: "Bright Charity",
+      brand_color: "#ffffff",
+      org_slug: "bright-charity",
+      logo_url: "javascript:alert(1)"
+    )
+    assert_not_includes js_html, "javascript:"
+    assert_not_includes js_html, "<img "
+    assert_includes js_html, "background: #0f172a"
+    assert_includes js_html, "https://golf.shimizu-technology.com/admin/login?org=bright-charity"
+
+    data_html = UserInviteEmailService.send(
+      :invite_html,
+      user: invitee,
+      invited_by: nil,
+      role_label: "volunteer",
+      org_name: "Data URI Org",
+      brand_color: "#1e3a8a",
+      org_slug: "data-uri-org",
+      logo_url: "data:image/svg+xml,<svg/>"
+    )
+    assert_not_includes data_html, "data:image"
+    assert_not_includes data_html, "<img "
   end
 
   private
