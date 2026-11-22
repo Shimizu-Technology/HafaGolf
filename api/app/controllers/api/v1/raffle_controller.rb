@@ -12,6 +12,7 @@ module Api
 
       skip_before_action :authenticate_user!, only: [:prizes, :tickets, :board]
       before_action :set_tournament
+      before_action :authorize_public_tournament_access!, only: [:prizes, :tickets, :board]
       before_action :authorize_tournament_admin!, only: [
         :create_prize, :update_prize, :destroy_prize,
         :draw, :draw_all, :reset_prize, :claim_prize,
@@ -1088,6 +1089,14 @@ module Api
 
       def failed_delivery_result(error)
         { success: false, skipped: false, error: error.presence || 'Delivery failed' }
+      end
+
+      def authorize_public_tournament_access!
+        return unless verify_tenant_match!(@tournament.organization_id, status: :not_found, message: 'Tournament not found')
+
+        unless @tournament.public_listed? && !@tournament.draft? && !@tournament.archived?
+          render json: { error: 'Tournament not found' }, status: :not_found
+        end
       end
 
       def delivery_success?(result)

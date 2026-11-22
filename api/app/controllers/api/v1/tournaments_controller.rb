@@ -18,9 +18,9 @@ module Api
       end
 
       # GET /api/v1/tournaments/current
-      # Get the current open tournament (for public registration)
+      # Get the current open tournament for the resolved tenant organization
       def current
-        tournament = Tournament.current
+        tournament = resolve_public_tournament(tournament_id: params[:tournament_id], require_listed: true)
         
         if tournament
           render json: tournament, serializer: TournamentSerializer

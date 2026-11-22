@@ -12,6 +12,9 @@ module Api
         end
 
         sponsors = Sponsor.active.where("LOWER(login_email) = ?", email)
+        if Current.organization.present?
+          sponsors = sponsors.joins(:tournament).where(tournaments: { organization_id: Current.organization.id })
+        end
         if sponsors.empty?
           render json: { message: "If that email is associated with a sponsor account, you will receive an access link." }
           return
@@ -38,7 +41,7 @@ module Api
         token = params[:token]
         sponsor = Sponsor.find_by_access_token(token)
 
-        unless sponsor
+        unless sponsor && (Current.organization.blank? || sponsor.tournament.organization_id == Current.organization.id)
           render json: { error: "Invalid or expired access link" }, status: :unauthorized
           return
         end
@@ -58,7 +61,7 @@ module Api
 
         sponsor = Sponsor.find_by_access_token(token)
 
-        unless sponsor
+        unless sponsor && (Current.organization.blank? || sponsor.tournament.organization_id == Current.organization.id)
           render json: { error: "Invalid or expired access link" }, status: :unauthorized
           return
         end

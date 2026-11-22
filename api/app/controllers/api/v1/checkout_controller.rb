@@ -7,6 +7,7 @@ module Api
       # Create a Stripe checkout session for a golfer (or simulate in test mode)
       def create
         golfer = Golfer.find(params[:golfer_id])
+        return unless verify_tenant_match!(golfer.tournament.organization_id, status: :not_found, message: "Golfer not found")
 
         # Ensure golfer hasn't already paid
         if golfer.payment_status == "paid"
@@ -31,9 +32,6 @@ module Api
         # Set Stripe API key (ENV first, legacy Setting fallback)
         Stripe.api_key = stripe_secret
 
-        # Get the frontend URL for success/cancel redirects
-        frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
-        
         # Entry fee from the golfer's tournament
         tournament = golfer.tournament
         entry_fee = tournament&.entry_fee || 12500
@@ -54,8 +52,8 @@ module Api
               quantity: 1,
             }],
             mode: "payment",
-            success_url: "#{frontend_url}/payment/success?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url: "#{frontend_url}/payment/cancel?golfer_id=#{golfer.id}",
+            success_url: OrgUrlBuilder.public_url(tournament&.organization, "/payment/success?session_id={CHECKOUT_SESSION_ID}"),
+            cancel_url: OrgUrlBuilder.public_url(tournament&.organization, "/payment/cancel?golfer_id=#{golfer.id}"),
             customer_email: golfer.email,
             metadata: {
               golfer_id: golfer.id.to_s,
@@ -84,11 +82,7 @@ module Api
       # Create a checkout session for embedded checkout (golfer not created yet)
       def create_embedded
         setting = Setting.instance
-        tournament = if params[:tournament_id].present?
-          Tournament.find_by(id: params[:tournament_id])
-        else
-          Tournament.current
-        end
+        tournament = resolve_public_tournament(tournament_id: params[:tournament_id])
 
         unless tournament&.can_register?
           render json: { error: "Registration is currently closed." }, status: :unprocessable_entity
@@ -123,7 +117,6 @@ module Api
         end
 
         Stripe.api_key = stripe_secret
-        frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
 
         begin
           # Create a Stripe Checkout Session for embedded checkout
@@ -142,7 +135,7 @@ module Api
               quantity: 1,
             }],
             mode: "payment",
-            return_url: "#{frontend_url}/registration/success?session_id={CHECKOUT_SESSION_ID}",
+            return_url: OrgUrlBuilder.public_url(tournament.organization, "/registration/success?session_id={CHECKOUT_SESSION_ID}"),
             customer_email: golfer_data[:email],
             metadata: {
               tournament_id: tournament.id.to_s,
@@ -221,6 +214,8 @@ module Api
             render json: { error: "Could not find or create golfer for this session" }, status: :unprocessable_entity
             return
           end
+
+          return unless verify_tenant_match!(golfer.tournament.organization_id, status: :not_found, message: "Session not found")
 
           # Use database-level locking to prevent race conditions from duplicate requests
           should_send_emails = false
@@ -321,6 +316,7 @@ module Api
       # Redirect golfer to SwipeSimple payment link
       def swipe_simple_redirect
         golfer = Golfer.find(params[:golfer_id])
+        return unless verify_tenant_match!(golfer.tournament.organization_id, status: :not_found, message: "Golfer not found")
 
         if golfer.payment_status == "paid"
           render json: { error: "Already paid" }, status: :unprocessable_entity
@@ -357,6 +353,9 @@ module Api
         begin
           session = Stripe::Checkout::Session.retrieve(session_id)
           golfer = Golfer.find_by(stripe_checkout_session_id: session_id)
+          if golfer
+            return unless verify_tenant_match!(golfer.tournament.organization_id, status: :not_found, message: "Session not found")
+          end
 
           render json: {
             session_id: session.id,
@@ -445,10 +444,8 @@ module Api
         test_session_id = "test_session_#{SecureRandom.hex(16)}"
         golfer.update!(stripe_checkout_session_id: test_session_id)
 
-        frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
-
         render json: {
-          checkout_url: "#{frontend_url}/payment/success?session_id=#{test_session_id}",
+          checkout_url: OrgUrlBuilder.public_url(golfer.tournament&.organization, "/payment/success?session_id=#{test_session_id}"),
           session_id: test_session_id,
           golfer_id: golfer.id,
           test_mode: true,

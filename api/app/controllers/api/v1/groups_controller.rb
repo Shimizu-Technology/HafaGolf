@@ -207,8 +207,8 @@ module Api
         golfer = nil
 
         ActiveRecord::Base.transaction do
-          golfer = Golfer.lock.find(params[:golfer_id])
-          group = Group.lock.includes(:golfers).find(params[:id])
+          group = Group.lock.includes(:golfers, :tournament).find(params[:id])
+          golfer = group.tournament.golfers.lock.find(params[:golfer_id])
 
           if golfer.tournament_id != group.tournament_id
             raise PlacementError, "Golfer and group must belong to the same tournament"
@@ -316,8 +316,8 @@ module Api
         tournament = nil
 
         ActiveRecord::Base.transaction do
-          golfer = Golfer.lock.find(params[:golfer_id])
-          group = Group.lock.find(params[:id])
+          group = Group.lock.includes(:tournament).find(params[:id])
+          golfer = group.tournament.golfers.lock.find(params[:golfer_id])
 
           unless golfer.group_id == group.id
             raise PlacementError, "Golfer is not in this group"
@@ -378,15 +378,18 @@ module Api
       # For drag-and-drop reordering
       def update_positions
         updates = params[:updates] || []
-        tournament = nil
+        tournament = @update_positions_tournament
 
         ActiveRecord::Base.transaction do
           updates.each do |update|
-            golfer = Golfer.find(update[:golfer_id])
-            tournament ||= golfer.tournament
+            golfer = tournament.golfers.find(update[:golfer_id])
+            target_group_id = update[:group_id].presence
+            if target_group_id.present? && !tournament.groups.exists?(id: target_group_id)
+              raise ActiveRecord::RecordNotFound, "Group not found in tournament"
+            end
 
             golfer.update!(
-              group_id: update[:group_id],
+              group_id: target_group_id,
               position: update[:position]
             )
           end
@@ -603,21 +606,40 @@ module Api
           return
         end
 
-        first_update = updates.first
-        golfer = Golfer.find_by(id: first_update[:golfer_id])
-        unless golfer
+        golfer_ids = updates.filter_map { |u| u[:golfer_id] }.uniq
+        golfers = Golfer.includes(:tournament).where(id: golfer_ids).to_a
+        if golfers.length != golfer_ids.length || golfers.empty?
           render json: { error: "Golfer not found" }, status: :not_found
           return
         end
 
-        require_tournament_admin!(golfer.tournament)
+        tournaments = golfers.map(&:tournament).uniq
+        if tournaments.length > 1
+          render json: { error: "All golfers in update_positions must belong to the same tournament" }, status: :forbidden
+          return
+        end
+
+        tournament = tournaments.first
+        require_tournament_admin!(tournament)
+        return if performed?
+
+        target_group_ids = updates.filter_map { |u| u[:group_id].presence }.uniq
+        if target_group_ids.any?
+          matching_count = tournament.groups.where(id: target_group_ids).count
+          if matching_count != target_group_ids.length
+            render json: { error: "Target group does not belong to this tournament" }, status: :forbidden
+            return
+          end
+        end
+
+        @update_positions_tournament = tournament
       end
 
       def find_tournament
         if params[:tournament_id].present?
           Tournament.find(params[:tournament_id])
         else
-          Tournament.current
+          current_user&.accessible_tournaments&.recent&.first
         end
       end
 
@@ -772,7 +794,7 @@ module Api
         return unless tournament
         
         groups = preload_group_position_letters(tournament.groups.with_golfers)
-        ActionCable.server.broadcast("groups_channel", {
+        ActionCable.server.broadcast("tournament_#{tournament.id}_groups", {
           action: "updated",
           tournament_id: tournament.id,
           groups: ActiveModelSerializers::SerializableResource.new(groups, each_serializer: GroupSerializer, include: "golfers").as_json

@@ -9,11 +9,13 @@ module Api
       skip_before_action :authenticate_user!
       
       before_action :set_tournament
+      before_action :authorize_public_tournament_access!, only: [:index, :leaderboard]
       before_action :set_score, only: [:update, :destroy, :verify]
       
       # Public endpoints (no auth)
       # Auth required endpoints use authenticate_golfer_or_admin!
       before_action :authenticate_golfer_or_admin!, only: [:create, :update, :destroy, :verify, :batch, :scorecard]
+      before_action :authorize_admin_for_tournament!, only: [:create, :update, :destroy, :verify, :batch, :scorecard]
       before_action :verify_group_access_for_golfer!, only: [:batch, :scorecard]
       before_action :verify_golfer_owns_score!, only: [:update, :destroy, :verify]
 
@@ -69,6 +71,11 @@ module Api
         @score.entered_by = score_entered_by
         assign_group_for_score!(@score)
 
+        unless score_references_belong_to_tournament?(@score)
+          render json: { error: 'Group and golfer must belong to this tournament' }, status: :unprocessable_entity
+          return
+        end
+
         if golfer_authenticated? && !golfer_can_access_score?(@score)
           render json: { success: false, error: 'You can only enter scores for your own group' }, status: :forbidden
           return
@@ -87,7 +94,13 @@ module Api
       # PATCH /api/v1/tournaments/:tournament_id/scores/:id
       # Auth required - update a score
       def update
-        if @score.update(update_score_params)
+        @score.assign_attributes(update_score_params)
+        unless score_references_belong_to_tournament?(@score)
+          render json: { error: 'Group and golfer must belong to this tournament' }, status: :unprocessable_entity
+          return
+        end
+
+        if @score.save
           render json: {
             score: score_response(@score),
             message: 'Score updated successfully'
@@ -127,6 +140,11 @@ module Api
             score = @tournament.scores.build(score_attributes_from_payload(score_data))
             score.entered_by = score_entered_by
             assign_group_for_score!(score)
+
+            unless score_references_belong_to_tournament?(score)
+              errors << { hole: score_data[:hole], errors: ['Group and golfer must belong to this tournament'] }
+              next
+            end
 
             unless golfer_can_access_score?(score)
               errors << { hole: score_data[:hole], errors: ['You can only enter scores for your own group'] }
@@ -296,9 +314,34 @@ module Api
         admin_authenticated? ? current_user : nil
       end
 
+      def authorize_public_tournament_access!
+        return unless verify_tenant_match!(@tournament.organization_id, status: :not_found, message: 'Tournament not found')
+
+        unless @tournament.public_listed?
+          render json: { error: 'Tournament not found' }, status: :not_found
+        end
+      end
+
+      def authorize_admin_for_tournament!
+        return unless admin_authenticated?
+
+        require_tournament_admin!(@tournament)
+      end
+
+      def score_references_belong_to_tournament?(score)
+        if score.group_id.present? && !@tournament.groups.exists?(id: score.group_id)
+          return false
+        end
+        if score.golfer_id.present? && !@tournament.golfers.exists?(id: score.golfer_id)
+          return false
+        end
+
+        true
+      end
+
       def assign_group_for_score!(score)
         if score.group_id.blank? && score.golfer_id.present?
-          golfer = Golfer.find_by(id: score.golfer_id)
+          golfer = @tournament.golfers.find_by(id: score.golfer_id)
           score.group = golfer&.group
         elsif score.group_id.blank? && golfer_authenticated?
           score.group = current_golfer.group
@@ -312,7 +355,7 @@ module Api
         return false unless score.group_id == current_golfer.group_id
         return true if score.golfer_id.blank?
 
-        Golfer.where(id: score.golfer_id, group_id: current_golfer.group_id).exists?
+        @tournament.golfers.where(id: score.golfer_id, group_id: current_golfer.group_id).exists?
       end
 
       def set_tournament

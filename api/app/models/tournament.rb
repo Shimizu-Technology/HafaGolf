@@ -178,9 +178,11 @@ class Tournament < ApplicationRecord
   end
 
   # Class methods
-  def self.current
-    # Returns the currently open tournament (for public registration)
-    open_for_registration.first || active.recent.first
+  def self.current_for(organization)
+    return nil unless organization
+
+    scope = for_organization(organization)
+    scope.open_for_registration.recent.first || scope.active.recent.first
   end
 
   def self.find_by_org_and_slug!(organization, slug)
@@ -364,8 +366,9 @@ class Tournament < ApplicationRecord
 
   def full_url(base_url = nil)
     return nil unless organization
-    base = base_url || ENV.fetch('FRONTEND_URL', 'http://localhost:5173')
-    "#{base}/#{organization.slug}/tournaments/#{slug}"
+    return "#{base_url.to_s.chomp('/')}/#{slug}" if base_url.present?
+
+    OrgUrlBuilder.public_url(organization, "/#{slug}")
   end
 
   # Actions

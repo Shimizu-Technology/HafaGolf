@@ -165,18 +165,21 @@ class Golfer < ApplicationRecord
   end
 
   # Find golfers by email for active tournaments (class method)
-  def self.find_for_scoring_access(email)
+  def self.find_for_scoring_access(email, organization: nil)
     return [] if email.blank?
 
-    # Find active tournaments (open, in_progress, or recently completed)
+    # Find active tournaments (open, closed, or in_progress)
     active_statuses = %w[open closed in_progress]
-    
-    joins(:tournament)
-      .where(email: email.downcase.strip)
+
+    scope = joins(:tournament)
+      .where("LOWER(golfers.email) = ?", email.downcase.strip)
       .where(tournaments: { status: active_statuses })
       .where.not(registration_status: "cancelled")
       .includes(:tournament, :group)
       .order("tournaments.event_date DESC")
+
+    scope = scope.where(tournaments: { organization_id: organization.id }) if organization.present?
+    scope
   end
 
   def check_in!(admin: nil)

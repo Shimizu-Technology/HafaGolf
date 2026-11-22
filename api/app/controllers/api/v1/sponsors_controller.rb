@@ -5,6 +5,7 @@ module Api
     class SponsorsController < BaseController
       skip_before_action :authenticate_user!, only: [:index, :show, :by_hole]
       before_action :set_tournament
+      before_action :authorize_public_tournament_access!, only: [:index, :show, :by_hole]
       before_action :set_sponsor, only: [:show, :update, :destroy, :slots, :update_slot]
       before_action :authorize_tournament_admin!, only: [:create, :update, :destroy, :reorder, :slots, :update_slot]
 
@@ -154,6 +155,14 @@ module Api
 
       def set_tournament
         @tournament = Tournament.find(params[:tournament_id])
+      end
+
+      def authorize_public_tournament_access!
+        return unless verify_tenant_match!(@tournament.organization_id, status: :not_found, message: 'Tournament not found')
+
+        unless @tournament.public_listed?
+          render json: { error: 'Tournament not found' }, status: :not_found
+        end
       end
 
       def authorize_tournament_admin!

@@ -1,9 +1,12 @@
+# frozen_string_literal: true
+
 module ApplicationCable
   class Connection < ActionCable::Connection::Base
-    identified_by :current_admin
+    identified_by :current_admin, :current_organization
 
     def connect
       self.current_admin = find_verified_admin
+      self.current_organization = resolve_connection_organization
     end
 
     private
@@ -25,6 +28,13 @@ module ApplicationCable
       user
     rescue StandardError
       reject_unauthorized_connection
+    end
+
+    def resolve_connection_organization
+      host = TenantResolver.extract_host(request)
+      TenantResolver.resolve_host(host)
+    rescue StandardError
+      nil
     end
 
     def bearer_token_from_header

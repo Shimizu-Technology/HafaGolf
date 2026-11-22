@@ -43,7 +43,7 @@ module Api
         session_token = request.headers["X-Sponsor-Session"] || params[:session_token]
         @sponsor = Sponsor.find_by_portal_session_token(session_token)
 
-        unless @sponsor
+        unless @sponsor && (Current.organization.blank? || @sponsor.tournament.organization_id == Current.organization.id)
           render json: { error: "Invalid or expired sponsor session" }, status: :unauthorized
         end
       end

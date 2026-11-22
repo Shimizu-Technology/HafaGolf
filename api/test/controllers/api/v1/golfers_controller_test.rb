@@ -71,11 +71,13 @@ class Api::V1::GolfersControllerTest < ActionDispatch::IntegrationTest
 
   test "create registers new golfer without authentication" do
     unique_email = "new-golfer-#{SecureRandom.hex(4)}@test.com"
+    tournament = tournaments(:tournament_one)
     
     # Ensure settings allow registration
     Setting.instance.update!(registration_open: true)
     
     post api_v1_golfers_url, params: {
+      tournament_id: tournament.id,
       golfer: {
         name: "New Golfer",
         email: unique_email,
@@ -417,7 +419,7 @@ class Api::V1::GolfersControllerTest < ActionDispatch::IntegrationTest
   # ==================
 
   test "registration_status returns capacity info without auth" do
-    get "/api/v1/golfers/registration_status"
+    get "/api/v1/golfers/registration_status", params: { tournament_id: tournaments(:tournament_one).id }
     assert_response :success
     
     json = JSON.parse(response.body)

@@ -13,6 +13,12 @@ module Api
           return
         end
 
+        return unless verify_tenant_match!(
+          golfer.tournament.organization_id,
+          status: :not_found,
+          message: "Invalid or expired payment link"
+        )
+
         if golfer.payment_status == "paid"
           render json: { 
             error: "This payment has already been completed",
@@ -59,6 +65,12 @@ module Api
           return
         end
 
+        return unless verify_tenant_match!(
+          golfer.tournament.organization_id,
+          status: :not_found,
+          message: "Invalid or expired payment link"
+        )
+
         if golfer.payment_status == "paid"
           render json: { error: "This payment has already been completed" }, status: :unprocessable_entity
           return
@@ -83,7 +95,6 @@ module Api
         end
 
         Stripe.api_key = stripe_secret
-        frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
         entry_fee = tournament&.entry_fee || 12500
 
         begin
@@ -102,7 +113,7 @@ module Api
               quantity: 1,
             }],
             mode: "payment",
-            return_url: "#{frontend_url}/pay/#{params[:token]}/success?session_id={CHECKOUT_SESSION_ID}",
+            return_url: OrgUrlBuilder.public_url(tournament&.organization, "/pay/#{params[:token]}/success?session_id={CHECKOUT_SESSION_ID}"),
             customer_email: golfer.email,
             metadata: {
               golfer_id: golfer.id.to_s,

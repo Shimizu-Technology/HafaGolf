@@ -71,12 +71,8 @@ module Api
       # Public registration endpoint
       # Uses database locking to prevent race conditions
       def create
-        # Find specific tournament by ID, or fall back to current open tournament
-        tournament = if params[:tournament_id].present?
-          Tournament.find_by(id: params[:tournament_id])
-        else
-          Tournament.current
-        end
+        # Find specific tournament scoped to resolved tenant organization
+        tournament = resolve_public_tournament(tournament_id: params[:tournament_id])
         
         unless tournament
           render json: { errors: ["No tournament is currently open for registration."] }, status: :unprocessable_entity
@@ -131,8 +127,19 @@ module Api
       def update
         golfer = Golfer.find(params[:id])
         old_values = golfer.attributes.slice('group_id', 'payment_status', 'registration_status', 'name', 'email', 'phone', 'company', 'address', 'payment_notes')
+        permitted = golfer_update_params
 
-        if golfer.update(golfer_update_params)
+        if permitted[:group_id].present? && !golfer.tournament.groups.exists?(id: permitted[:group_id])
+          render json: { errors: ["Group must belong to the same tournament"] }, status: :unprocessable_entity
+          return
+        end
+
+        if permitted[:sponsor_id].present? && !golfer.tournament.sponsors.exists?(id: permitted[:sponsor_id])
+          render json: { errors: ["Sponsor must belong to the same tournament"] }, status: :unprocessable_entity
+          return
+        end
+
+        if golfer.update(permitted)
           # Log activity for meaningful changes
           log_golfer_update(golfer, old_values)
           broadcast_golfer_update(golfer)
@@ -820,7 +827,7 @@ module Api
       # GET /api/v1/golfers/registration_status
       # Public endpoint to check registration capacity
       def registration_status
-        tournament = Tournament.current
+        tournament = resolve_public_tournament(tournament_id: params[:tournament_id])
         settings = Setting.instance
 
         if tournament
@@ -930,7 +937,7 @@ module Api
         if params[:tournament_id].present?
           Tournament.find(params[:tournament_id])
         else
-          Tournament.current
+          current_user&.accessible_tournaments&.recent&.first
         end
       end
 

@@ -18,8 +18,8 @@ module Api
           }, status: :bad_request
         end
 
-        # Find golfers for this email in active tournaments
-        golfers = Golfer.find_for_scoring_access(email)
+        # Find golfers for this email in active tournaments (scoped to Current.organization when resolved)
+        golfers = Golfer.find_for_scoring_access(email, organization: Current.organization)
 
         if golfers.empty?
           # Don't reveal if email exists - security best practice
@@ -63,7 +63,7 @@ module Api
 
         golfer = Golfer.find_by_magic_link(token)
 
-        if golfer.nil?
+        if golfer.nil? || (Current.organization.present? && golfer.tournament.organization_id != Current.organization.id)
           return render json: { 
             success: false, 
             error: "Invalid or expired link. Please request a new one." 
@@ -127,7 +127,7 @@ module Api
         token = header.split(" ").last
         golfer = GolferAuth.golfer_from_token(token)
 
-        unless golfer
+        if golfer.nil? || (Current.organization.present? && golfer.tournament.organization_id != Current.organization.id)
           render json: { success: false, error: "Invalid or expired session" }, status: :unauthorized
           return nil
         end

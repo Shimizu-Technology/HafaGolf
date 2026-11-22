@@ -128,7 +128,15 @@ module Api
       end
 
       def set_organization_scope
-        @organization_scope = current_user.accessible_organizations.first
+        accessible = current_user.accessible_organizations
+        @organization_scope = if params[:organization_slug].present?
+          accessible.find_by(slug: params[:organization_slug].to_s.downcase)
+        elsif Current.organization.present? && current_user.member_of?(Current.organization)
+          Current.organization
+        else
+          accessible.order(:name).first
+        end
+
         unless @organization_scope
           render json: { error: 'No accessible organization found' }, status: :forbidden
           return
