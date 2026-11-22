@@ -98,13 +98,17 @@ export function formatEntryUnitSubtitle(
 }
 
 export function formatEntryFeeDisplay(tournament: {
+  formatted_entry_fee_display?: string | null;
   entry_fee_display?: string | null;
+  current_fee?: number | null;
   entry_fee?: number | null;
   team_size?: number | null;
   capacity_unit?: CapacityUnit;
 }): string {
+  if (tournament.formatted_entry_fee_display) return tournament.formatted_entry_fee_display;
   if (tournament.entry_fee_display) return tournament.entry_fee_display;
-  const cents = tournament.entry_fee || 0;
+  const cents = tournament.current_fee ?? tournament.entry_fee ?? 0;
+  if (cents <= 0) return 'Free';
   const dollars = cents % 100 === 0 ? (cents / 100).toFixed(0) : (cents / 100).toFixed(2);
   const unit = tournament.capacity_unit === 'players' || normalizeTeamSize(tournament.team_size) === 1 ? 'player' : 'team';
   return `$${dollars}/${unit}`;

@@ -13,6 +13,8 @@ class TeamMember < ApplicationRecord
   has_many :scores, dependent: :destroy
   has_many :raffle_tickets, dependent: :nullify
 
+  before_destroy :release_employee_number_if_claimed!, prepend: true
+
   # Scopes
   scope :checked_in, -> { where.not(checked_in_at: nil) }
   scope :not_checked_in, -> { where(checked_in_at: nil) }
@@ -89,6 +91,13 @@ class TeamMember < ApplicationRecord
   end
 
   private
+
+  def release_employee_number_if_claimed!
+    return if employee_number_record_id.blank?
+
+    record = EmployeeNumber.find_by(id: employee_number_record_id)
+    record&.release!(clear_golfer: false, expected_registration_id: registration_id)
+  end
 
   def sync_tenant_from_registration
     return unless registration

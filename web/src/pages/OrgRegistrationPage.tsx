@@ -103,6 +103,7 @@ export const OrgRegistrationPage: React.FC = () => {
 
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'redirecting'>('idle');
   const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
+  const [savedRegistration, setSavedRegistration] = useState<import('../services/api').Registration | null>(null);
 
   const [players, setPlayers] = useState<TeamPlayerDraft[]>(() => buildInitialPlayers(2, false));
   const [teamName, setTeamName] = useState('');
@@ -156,8 +157,10 @@ export const OrgRegistrationPage: React.FC = () => {
   const isEmployeeValidated =
     employeePricingEnabled && isEmployee && employeeValidation.status === 'valid';
 
+  const activeBaseFeeCents = tournament?.current_fee ?? tournament?.entry_fee ?? 0;
+
   const effectiveFeeCents = calculateEffectiveEntryFeeCents({
-    entryFeeCents: tournament?.entry_fee,
+    entryFeeCents: activeBaseFeeCents,
     employeeEntryFeeCents:
       employeeValidation.employeeEntryFeeCents ?? tournament?.employee_entry_fee,
     employeePricingEnabled,
@@ -165,7 +168,7 @@ export const OrgRegistrationPage: React.FC = () => {
   });
 
   const employeeSavingsCents = calculateEmployeeSavingsCents({
-    entryFeeCents: tournament?.entry_fee,
+    entryFeeCents: activeBaseFeeCents,
     employeeEntryFeeCents:
       employeeValidation.employeeEntryFeeCents ?? tournament?.employee_entry_fee,
     employeePricingEnabled,
@@ -173,7 +176,7 @@ export const OrgRegistrationPage: React.FC = () => {
   });
 
   const totalDueCents = calculateRegistrationTotalCents({
-    entryFeeCents: tournament?.entry_fee,
+    entryFeeCents: activeBaseFeeCents,
     captainEffectiveFeeCents: effectiveFeeCents,
     playerCount: players.length,
     teamSize,
@@ -357,8 +360,12 @@ export const OrgRegistrationPage: React.FC = () => {
         }
       );
 
-      const result = await api.createRegistration(tournament.id, payload);
-      const registration = result.registration;
+      let registration = savedRegistration;
+      if (!registration) {
+        const result = await api.createRegistration(tournament.id, payload);
+        registration = result.registration;
+        setSavedRegistration(registration);
+      }
       const isWaitlisted = registration.registration_status === 'waitlist';
 
       const golferCompat = {

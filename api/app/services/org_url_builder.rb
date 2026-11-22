@@ -11,8 +11,8 @@ module OrgUrlBuilder
     host = organization&.primary_host
     if host.present?
       downcased = host.downcase
-      if LOCAL_HOSTS.include?(downcased) || downcased.end_with?(".localhost")
-        port = fallback_local_port
+      if LOCAL_HOSTS.include?(downcased) || (Rails.env.local? && downcased.end_with?(".localhost"))
+        port = Rails.env.local? ? fallback_local_port : nil
         host_with_port = (port && !host.include?(":")) ? "#{host}:#{port}" : host
         "http://#{host_with_port}"
       else

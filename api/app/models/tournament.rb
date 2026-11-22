@@ -323,6 +323,8 @@ class Tournament < ApplicationRecord
     return entry_fee_display if entry_fee_display.present?
 
     cents = (current_fee || entry_fee || 0).to_i
+    return 'Free' if cents <= 0
+
     amount = (cents % 100).zero? ? "$#{cents / 100}" : "$#{format('%.2f', cents / 100.0)}"
     unit = (capacity_unit == 'players' || team_size.to_i == 1) ? 'player' : 'team'
     "#{amount}/#{unit}"

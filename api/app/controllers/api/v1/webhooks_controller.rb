@@ -207,6 +207,24 @@ module Api
           )
         end
 
+        metadata_registration_id = metadata_value(session.metadata, :registration_id)
+        if metadata_registration_id.present?
+          reg_scope = scoped_registration_relation(scope_organization_id)
+          registration = reg_scope.find_by(stripe_checkout_session_id: session.id) ||
+                         reg_scope.find_by(id: metadata_registration_id)
+          if registration
+            return handle_registration_checkout_completed(
+              registration,
+              session: session,
+              expected_mode: expected_mode,
+              account_origin: account_origin
+            )
+          end
+
+          Rails.logger.error("Registration #{metadata_registration_id} not found for session: #{session.id}")
+          return
+        end
+
         scope = scoped_golfer_relation(scope_organization_id)
         golfer = scope.find_by(stripe_checkout_session_id: session.id)
 
@@ -218,10 +236,6 @@ module Api
         unless golfer
           reg_scope = scoped_registration_relation(scope_organization_id)
           registration = reg_scope.find_by(stripe_checkout_session_id: session.id)
-          if registration.nil?
-            registration_id = metadata_value(session.metadata, :registration_id)
-            registration = reg_scope.find_by(id: registration_id) if registration_id.present?
-          end
 
           if registration
             return handle_registration_checkout_completed(
@@ -332,6 +346,15 @@ module Api
           registration.create_raffle_tickets!
         rescue StandardError => e
           Rails.logger.warn("Failed to create raffle tickets for registration #{registration.id} (webhook): #{e.message}")
+        end
+
+        begin
+          ActionCable.server.broadcast("golfers_channel_#{registration.tournament_id}", {
+            action: "registration_payment_confirmed",
+            registration: RegistrationSerializer.new(registration.reload).as_json
+          })
+        rescue StandardError => e
+          Rails.logger.error("Failed to broadcast registration payment confirmation (webhook): #{e.message}")
         end
       end
 

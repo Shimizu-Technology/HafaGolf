@@ -18,6 +18,11 @@ module Api
           return
         end
 
+        if %w[cancelled waitlist].include?(record.registration_status)
+          render json: { error: "Cancelled or waitlisted registrations cannot be paid online." }, status: :unprocessable_entity
+          return
+        end
+
         tournament = record.tournament
         organization = tournament.organization
         payment_config = organization.effective_payment_config
@@ -37,10 +42,10 @@ module Api
           return
         end
 
-        entry_fee = record.expected_entry_fee_cents
+        is_registration = record.is_a?(Registration)
+        entry_fee = is_registration ? (record.payment_amount_cents.presence || record.expected_entry_fee_cents) : record.expected_entry_fee_cents
         display_name = payable_record_name(record)
         customer_email = payable_record_email(record)
-        is_registration = record.is_a?(Registration)
 
         metadata = {
           organization_id: organization.id.to_s,
@@ -55,7 +60,11 @@ module Api
           metadata[:golfer_id] = record.id.to_s
         end
 
-        cancel_param = is_registration ? "registration_id=#{record.id}" : "golfer_id=#{record.id}"
+        cancel_param = if is_registration
+                         "registration_id=#{record.id}&tournament_slug=#{CGI.escape(tournament.slug.to_s)}"
+                       else
+                         "golfer_id=#{record.id}&tournament_slug=#{CGI.escape(tournament.slug.to_s)}"
+                       end
 
         begin
           # External Stripe HTTP call runs OUTSIDE any DB transaction using per-request api_key
@@ -249,6 +258,35 @@ module Api
             return confirm_stripe_registration(existing_record, session: session, adapter: adapter, org_for_adapter: org_for_adapter)
           end
 
+          metadata_registration_id = session_metadata_value(session.metadata, :registration_id)
+          if existing_record.nil? && metadata_registration_id.present?
+            unless org_for_adapter.present?
+              render json: { error: "Session not found" }, status: :not_found
+              return
+            end
+
+            metadata_org_id = session_metadata_value(session.metadata, :organization_id)
+            if metadata_org_id.blank? || metadata_org_id.to_s != org_for_adapter.id.to_s
+              Rails.logger.warn(
+                "Blocked cross-tenant registration checkout confirm: adapter org=#{org_for_adapter.id} metadata org=#{metadata_org_id.inspect}"
+              )
+              render json: { error: "Session not found" }, status: :not_found
+              return
+            end
+
+            fallback_registration = TenantContext.with_organization(org_for_adapter.id) do
+              org_for_adapter.registrations.includes(:team_members, :employee_number_record, tournament: :organization)
+                             .find_by(id: metadata_registration_id)
+            end
+
+            unless fallback_registration
+              render json: { error: "Session not found" }, status: :not_found
+              return
+            end
+
+            return confirm_stripe_registration(fallback_registration, session: session, adapter: adapter, org_for_adapter: org_for_adapter)
+          end
+
           existing_golfer = existing_record
           golfer = if existing_golfer.present?
                      existing_golfer
@@ -426,6 +464,11 @@ module Api
         )
 
         tournament = record.tournament
+        if %w[cancelled waitlist].include?(record.registration_status)
+          render json: { error: "Cancelled or waitlisted registrations cannot be paid online." }, status: :unprocessable_entity
+          return
+        end
+
         org_config = tournament.organization.effective_payment_config
         payment_url = nil
         already_paid = false
@@ -557,7 +600,7 @@ module Api
         return unless verify_tenant_match!(registration.tournament.organization_id, status: :not_found, message: "Session not found")
 
         payment_intent_id = session.payment_intent
-        payment_amount = session.amount_total || registration.expected_entry_fee_cents
+        payment_amount = session.amount_total || registration.payment_amount_cents.presence || registration.expected_entry_fee_cents
         card_brand = nil
         card_last4 = nil
         begin
@@ -635,6 +678,17 @@ module Api
           tournament_slug: registration.tournament.slug,
           message: already_paid ? "Payment already confirmed!" : "Payment confirmed successfully!"
         }
+
+        unless already_paid
+          begin
+            ActionCable.server.broadcast("golfers_channel_#{registration.tournament_id}", {
+              action: "registration_payment_confirmed",
+              registration: serialized_registration
+            })
+          rescue StandardError => e
+            Rails.logger.error("Failed to broadcast registration payment confirmation: #{e.message}")
+          end
+        end
       end
 
       def session_metadata_value(metadata, key)
@@ -878,7 +932,7 @@ module Api
       end
 
       def handle_test_mode_confirm_registration(registration)
-        entry_fee = registration.expected_entry_fee_cents
+        entry_fee = registration.payment_amount_cents.presence || registration.expected_entry_fee_cents
         already_paid = false
 
         TenantContext.with_organization(registration.tournament.organization_id) do

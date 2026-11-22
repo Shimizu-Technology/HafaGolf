@@ -569,7 +569,8 @@ module Api
             walkin_fee: t.walkin_fee,
             swipe_simple_url: t.swipe_simple_url,
             walkin_swipe_simple_url: t.walkin_swipe_simple_url,
-            entry_fee_display: t.formatted_entry_fee_display,
+            entry_fee_display: t.entry_fee_display,
+            formatted_entry_fee_display: t.formatted_entry_fee_display,
             raffle_enabled: t.raffle_enabled,
             features: Features.for(organization, t).to_h,
             feature_overrides: Features.for(organization, t).tournament_overrides

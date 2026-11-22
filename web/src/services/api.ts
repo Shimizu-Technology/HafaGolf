@@ -338,7 +338,8 @@ export interface Tournament {
   // SwipeSimple / walk-in settings
   swipe_simple_url?: string;
   walkin_swipe_simple_url?: string;
-  entry_fee_display?: string;
+  entry_fee_display?: string | null;
+  formatted_entry_fee_display?: string | null;
   walkin_fee?: number;
   walkin_registration_open?: boolean;
 

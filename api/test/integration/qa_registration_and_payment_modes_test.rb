@@ -66,10 +66,14 @@ class QaRegistrationAndPaymentModesTest < ActionDispatch::IntegrationTest
         headers: { "Host" => "club-qa.localhost" }
     assert_response :success
     body = JSON.parse(response.body)
-    assert_equal "$150/player", body["entry_fee_display"]
+    assert_nil body["entry_fee_display"]
+    assert_equal "$150/player", body["formatted_entry_fee_display"]
     assert_equal "offline", body["payment_mode"]
     assert_equal "none", body["processor_provider"]
     assert_equal false, body["external_checkout_configured"]
+
+    free_tournament = Tournament.new(entry_fee: 0, team_size: 2, capacity_unit: "teams")
+    assert_equal "Free", free_tournament.formatted_entry_fee_display
   end
 
   test "tenant resolution exposes non-secret payment_mode and processor_provider" do
@@ -186,6 +190,95 @@ class QaRegistrationAndPaymentModesTest < ActionDispatch::IntegrationTest
     assert_not @emp_available.used?
     assert_nil @emp_available.used_by_registration_id
     assert_not registration.captain.reload.is_employee?
+
+    # Re-claiming and destroying the registration also releases the employee number (before_destroy prepend: true)
+    @emp_available.claim_for_registration!(registration, team_member: registration.captain)
+    assert @emp_available.reload.used?
+    registration.destroy!
+    @emp_available.reload
+    assert_not @emp_available.used?
+    assert_nil @emp_available.used_by_registration_id
+  end
+
+  test "cancelled and waitlisted registrations cannot start online or external checkout" do
+    @payment_config.update!(payment_mode: "platform_collect", processor_provider: "stripe", test_mode: true)
+
+    %w[cancelled waitlist].each_with_index do |status, idx|
+      reg = Registration.create!(
+        organization: @org,
+        tournament: @tournament,
+        registration_status: status,
+        payment_type: "stripe",
+        payment_status: "unpaid",
+        team_members_attributes: [
+          { name: "Blocked #{idx}", email: "blocked#{idx}@example.test", phone: "+1671555030#{idx}", position: 1, is_captain: true, waiver_accepted_at: Time.current }
+        ]
+      )
+      token = reg.generate_payment_token!
+
+      post "/api/v1/checkout", params: { payment_token: token }, headers: { "Host" => "club-qa.localhost" }, as: :json
+      assert_response :unprocessable_entity
+      assert_match(/cannot be paid online/i, response.body)
+
+      post "/api/v1/checkout/swipe_simple", params: { payment_token: token }, headers: { "Host" => "club-qa.localhost" }, as: :json
+      assert_response :unprocessable_entity
+      assert_match(/cannot be paid online/i, response.body)
+    end
+  end
+
+  test "confirming an older overwritten Stripe session for a Registration confirms the Registration and never creates a phantom Golfer" do
+    @payment_config.update!(payment_mode: "platform_collect", processor_provider: "stripe", test_mode: false)
+    reg = Registration.create!(
+      organization: @org,
+      tournament: @tournament,
+      team_name: "Retry Team",
+      payment_type: "stripe",
+      payment_status: "unpaid",
+      payment_amount_cents: 15_000,
+      stripe_checkout_session_id: "cs_newer_session_2",
+      team_members_attributes: [
+        { name: "Retry Cap", email: "retry-cap@example.test", phone: "+16715550401", position: 1, is_captain: true, waiver_accepted_at: Time.current }
+      ]
+    )
+
+    fake_session = Struct.new(:id, :payment_status, :payment_intent, :amount_total, :metadata).new(
+      "cs_older_session_1",
+      "paid",
+      "pi_older_1",
+      15_000,
+      {
+        organization_id: @org.id.to_s,
+        tournament_id: @tournament.id.to_s,
+        registration_id: reg.id.to_s,
+        item_type: "registration",
+        golfer_name: "Retry Team",
+        golfer_email: "retry-cap@example.test"
+      }
+    )
+
+    fake_adapter = Object.new
+    fake_adapter.define_singleton_method(:configured?) { true }
+    fake_adapter.define_singleton_method(:account_origin) { "platform_test" }
+    fake_adapter.define_singleton_method(:retrieve_checkout_session) { |_id| fake_session }
+    fake_adapter.define_singleton_method(:retrieve_payment_intent) { |_id| Struct.new(:payment_method).new(nil) }
+
+    original_resolver = Payments::Resolver.method(:for)
+    Payments::Resolver.singleton_class.define_method(:for) { |_org, **_kw| fake_adapter }
+
+    assert_no_difference "Golfer.count" do
+      post "/api/v1/checkout/confirm",
+           params: { session_id: "cs_older_session_1" },
+           headers: { "Host" => "club-qa.localhost" },
+           as: :json
+    end
+
+    assert_response :success
+    body = JSON.parse(response.body)
+    assert_equal reg.id, body.dig("registration", "id")
+    assert_equal "paid", reg.reload.payment_status
+    assert_equal "pi_older_1", reg.stripe_payment_intent_id
+  ensure
+    Payments::Resolver.singleton_class.define_method(:for, original_resolver) if original_resolver
   end
 
   test "platform_collect test-mode checkout create and confirm work end-to-end for Registration" do

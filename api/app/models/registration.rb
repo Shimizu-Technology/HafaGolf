@@ -18,9 +18,9 @@ class Registration < ApplicationRecord
   has_many :team_members, -> { order(:position) }, dependent: :destroy, inverse_of: :registration
   has_many :scores, dependent: :destroy
   has_many :raffle_tickets, dependent: :nullify
-  has_one :employee_number_record, class_name: "EmployeeNumber", foreign_key: :used_by_registration_id, dependent: :nullify
+  has_one :employee_number_record, class_name: "EmployeeNumber", foreign_key: :used_by_registration_id
 
-  before_destroy :release_claimed_employee_numbers!
+  before_destroy :release_claimed_employee_numbers!, prepend: true
 
   accepts_nested_attributes_for :team_members, allow_destroy: true
 

@@ -17,7 +17,7 @@ module Api
 
       # GET /api/v1/tournaments/:tournament_id/registrations
       def index
-        registrations = @tournament.registrations.includes(:team_members, :group, :sponsor)
+        registrations = @tournament.registrations.includes(:team_members, :group, :sponsor, :employee_number_record, :tournament)
 
         status_filter = params[:registration_status].presence || params[:status].presence
         registrations = registrations.where(registration_status: status_filter) if status_filter.present?
@@ -212,6 +212,10 @@ module Api
           @registration.lock!
           updated = @registration.update(permitted)
           raise ActiveRecord::Rollback unless updated
+
+          if @registration.registration_status == "cancelled"
+            @registration.release_claimed_employee_numbers!
+          end
         end
 
         if updated
