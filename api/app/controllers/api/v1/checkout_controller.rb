@@ -22,13 +22,14 @@ module Api
         end
 
         # PRODUCTION MODE: Real Stripe checkout
-        unless setting.stripe_secret_key.present?
+        stripe_secret = StripeConfig.secret_key(setting: setting)
+        unless stripe_secret.present?
           render json: { error: "Stripe is not configured. Please contact the administrator." }, status: :service_unavailable
           return
         end
 
-        # Set Stripe API key from settings
-        Stripe.api_key = setting.stripe_secret_key
+        # Set Stripe API key (ENV first, legacy Setting fallback)
+        Stripe.api_key = stripe_secret
 
         # Get the frontend URL for success/cancel redirects
         frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
@@ -115,12 +116,13 @@ module Api
         end
 
         # PRODUCTION MODE: Real Stripe embedded checkout
-        unless setting.stripe_secret_key.present?
+        stripe_secret = StripeConfig.secret_key(setting: setting)
+        unless stripe_secret.present?
           render json: { error: "Stripe is not configured. Please contact the administrator." }, status: :service_unavailable
           return
         end
 
-        Stripe.api_key = setting.stripe_secret_key
+        Stripe.api_key = stripe_secret
         frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
 
         begin
@@ -185,12 +187,13 @@ module Api
           return handle_test_mode_confirm(session_id)
         end
         
-        unless setting.stripe_secret_key.present?
+        stripe_secret = StripeConfig.secret_key(setting: setting)
+        unless stripe_secret.present?
           render json: { error: "Stripe is not configured" }, status: :service_unavailable
           return
         end
 
-        Stripe.api_key = setting.stripe_secret_key
+        Stripe.api_key = stripe_secret
 
         begin
           # Retrieve the session from Stripe to verify payment
@@ -346,9 +349,10 @@ module Api
         session_id = params[:session_id]
 
         setting = Setting.instance
-        return render json: { error: "Stripe not configured" }, status: :service_unavailable unless setting.stripe_secret_key.present?
+        stripe_secret = StripeConfig.secret_key(setting: setting)
+        return render json: { error: "Stripe not configured" }, status: :service_unavailable unless stripe_secret.present?
 
-        Stripe.api_key = setting.stripe_secret_key
+        Stripe.api_key = stripe_secret
 
         begin
           session = Stripe::Checkout::Session.retrieve(session_id)

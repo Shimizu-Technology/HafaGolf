@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { createConsumer } from '@rails/actioncable';
+import { useVisibilityPolling } from '../hooks/useVisibilityPolling';
 import { useOrganization } from '../components/OrganizationProvider';
 import {
   Gift,
@@ -211,21 +212,45 @@ export const RaffleBoardPage: React.FC = () => {
     }
   }, [orgSlug, tournamentSlug]);
 
+  const [cableConnected, setCableConnected] = useState(false);
+  const hadCableConnectionRef = useRef(false);
+
+  // Initial load + visibility-aware fallback polling:
+  // Fast 5s sync if ActionCable is disconnected; gentle 30s safety sync while connected; paused when tab hidden.
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
+    void fetchData();
   }, [fetchData]);
+
+  useVisibilityPolling(
+    () => {
+      void fetchData();
+    },
+    cableConnected ? 30000 : 5000
+  );
 
   useEffect(() => {
     if (!data?.tournament?.id) return;
 
     const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-    const wsUrl = `${apiUrl.replace(/^http/, 'ws')}/cable`;
+    const wsUrl = import.meta.env.VITE_WS_URL || `${apiUrl.replace(/^http/, 'ws')}/cable`;
     const consumer = createConsumer(wsUrl);
     const subscription = consumer.subscriptions.create(
       { channel: 'RaffleChannel', tournament_id: data.tournament.id },
       {
+        connected() {
+          setCableConnected(true);
+          if (hadCableConnectionRef.current) {
+            void fetchData();
+          } else {
+            hadCableConnectionRef.current = true;
+          }
+        },
+        disconnected() {
+          setCableConnected(false);
+        },
+        rejected() {
+          setCableConnected(false);
+        },
         received(event: {
           action: string;
           draw_id?: string;
@@ -313,6 +338,7 @@ export const RaffleBoardPage: React.FC = () => {
 
     return () => {
       clearLiveDrawTimers();
+      setCableConnected(false);
       subscription.unsubscribe();
       consumer.disconnect();
     };

@@ -11,15 +11,16 @@ module Api
         sig_header = request.env["HTTP_STRIPE_SIGNATURE"]
 
         setting = Setting.instance
-        webhook_secret = setting.stripe_webhook_secret || ENV["STRIPE_WEBHOOK_SECRET"]
+        webhook_secret = StripeConfig.webhook_secret(setting: setting)
+        stripe_secret = StripeConfig.secret_key(setting: setting)
 
-        unless setting.stripe_secret_key.present?
+        unless stripe_secret.present?
           Rails.logger.error("Stripe webhook received but Stripe is not configured")
           head :service_unavailable
           return
         end
 
-        Stripe.api_key = setting.stripe_secret_key
+        Stripe.api_key = stripe_secret
 
         begin
           # Verify the webhook signature if we have a webhook secret

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { createConsumer } from '@rails/actioncable';
 import { Golfer } from '../services/api';
 import { api } from '../services/api';
@@ -7,6 +7,7 @@ interface GolferChannelCallbacks {
   onGolferUpdated?: (golfer: Golfer) => void;
   onGolferCreated?: (golfer: Golfer) => void;
   onGolferDeleted?: (golferId: number) => void;
+  onReconnect?: () => void;
 }
 
 /**
@@ -31,6 +32,8 @@ export function useGolferChannel(callbacks: GolferChannelCallbacks) {
   const consumerRef = useRef<ReturnType<typeof createConsumer> | null>(null);
   const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
   const callbacksRef = useRef(callbacks);
+  const hasConnectedOnceRef = useRef(false);
+  const [isConnected, setIsConnected] = useState(false);
 
   // Keep callbacks ref updated
   useEffect(() => {
@@ -71,8 +74,9 @@ export function useGolferChannel(callbacks: GolferChannelCallbacks) {
 
       // Determine the WebSocket URL based on environment
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-      const wsBaseUrl = apiUrl.replace(/^http/, 'ws') + '/cable';
-      const wsUrl = `${wsBaseUrl}?token=${encodeURIComponent(token)}`;
+      const wsBaseUrl = import.meta.env.VITE_WS_URL || `${apiUrl.replace(/^http/, 'ws')}/cable`;
+      const separator = wsBaseUrl.includes('?') ? '&' : '?';
+      const wsUrl = `${wsBaseUrl}${separator}token=${encodeURIComponent(token)}`;
 
       console.log('[GolfersChannel] Connecting to:', wsBaseUrl);
 
@@ -88,12 +92,21 @@ export function useGolferChannel(callbacks: GolferChannelCallbacks) {
           {
             connected() {
               console.log('[GolfersChannel] Connected');
+              if (!isMounted) return;
+              setIsConnected(true);
+              if (hasConnectedOnceRef.current) {
+                callbacksRef.current.onReconnect?.();
+              } else {
+                hasConnectedOnceRef.current = true;
+              }
             },
             disconnected() {
               console.log('[GolfersChannel] Disconnected');
+              if (isMounted) setIsConnected(false);
             },
             rejected() {
               console.log('[GolfersChannel] Subscription rejected');
+              if (isMounted) setIsConnected(false);
             },
             received: handleReceived,
           }
@@ -108,6 +121,7 @@ export function useGolferChannel(callbacks: GolferChannelCallbacks) {
     // Cleanup on unmount
     return () => {
       isMounted = false;
+      setIsConnected(false);
       console.log('[GolfersChannel] Cleaning up');
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
@@ -121,6 +135,6 @@ export function useGolferChannel(callbacks: GolferChannelCallbacks) {
   }, [handleReceived]);
 
   return {
-    isConnected: subscriptionRef.current !== null,
+    isConnected,
   };
 }
