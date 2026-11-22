@@ -148,14 +148,23 @@ module HafagolfMigrations
             edition: row["edition"],
             status: Tournament::STATUSES.include?(row["status"]) ? row["status"] : "completed",
             event_date: row["event_date"],
+            registration_time: row["registration_time"],
+            start_time: row["start_time"],
             location_name: row["location_name"],
             location_address: row["location_address"],
             format_name: row["format_name"],
+            fee_includes: row["fee_includes"],
+            checks_payable_to: row["checks_payable_to"],
+            contact_name: row["contact_name"],
+            contact_phone: row["contact_phone"],
             team_size: 1,
             max_capacity: (row["max_capacity"] || 144).to_i,
             reserved_slots: (row["reserved_slots"] || 0).to_i,
             entry_fee: (row["entry_fee"] || 12_500).to_i,
+            employee_discount_enabled: row["employee_entry_fee"].present?,
+            employee_entry_fee: row["employee_entry_fee"]&.to_i,
             registration_open: ActiveModel::Type::Boolean.new.cast(row["registration_open"]) == true,
+            config: { "players_per_start_position" => 4 },
             theme_preset: "memorial-formal"
           }
           attrs[:capacity_unit] = "players" if tournament.respond_to?(:capacity_unit=)
@@ -209,8 +218,15 @@ module HafagolfMigrations
           payment_method: row["payment_method"],
           payment_amount_cents: row["payment_amount_cents"]&.to_i,
           refund_amount_cents: row["refund_amount_cents"]&.to_i,
+          payment_notes: row["payment_notes"],
+          refund_reason: row["refund_reason"],
+          is_employee: ActiveModel::Type::Boolean.new.cast(row["is_employee"]) == true,
+          position: row["position"]&.to_i,
+          hole_number: row["hole_number"]&.to_i,
           stripe_checkout_session_id: row["stripe_checkout_session_id"].presence,
           stripe_payment_intent_id: row["stripe_payment_intent_id"].presence,
+          stripe_card_brand: row["stripe_card_brand"].presence,
+          stripe_card_last4: row["stripe_card_last4"].presence,
           stripe_refund_id: row["stripe_refund_id"].presence,
           receipt_number: row["receipt_number"],
           paid_at: row["paid_at"],
@@ -266,6 +282,7 @@ module HafagolfMigrations
         email: golfer.email,
         phone: golfer.phone,
         company: golfer.company,
+        is_employee: golfer.is_employee,
         waiver_accepted_at: golfer.waiver_accepted_at,
         checked_in_at: golfer.checked_in_at,
         legacy_source: LEGACY_SOURCE,
@@ -296,16 +313,24 @@ module HafagolfMigrations
           employee_number: row["employee_number"].to_s.strip.upcase
         )
         golfer = golfer_map[row["used_by_golfer_id"].to_s]
+        registration = golfer && defined?(Registration) ? Registration.find_by(legacy_source: LEGACY_SOURCE, legacy_id: row["used_by_golfer_id"].to_s) : nil
         record.assign_attributes(
           organization: org,
           employee_name: row["employee_name"],
           used: ActiveModel::Type::Boolean.new.cast(row["used"]) == true,
           used_by_golfer_id: golfer&.id,
+          used_by_registration_id: registration&.id,
           used_at: row["used_at"],
           legacy_source: LEGACY_SOURCE,
           legacy_id: row["id"].to_s
         )
         record.save!
+        if golfer && golfer.employee_number_record_id != record.id
+          golfer.update_column(:employee_number_record_id, record.id)
+        end
+        if registration && (tm = registration.team_members.find_by(position: 1)) && tm.employee_number_record_id != record.id
+          tm.update_column(:employee_number_record_id, record.id)
+        end
       end
     end
 

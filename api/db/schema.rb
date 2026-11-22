@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_22_230000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_22_231000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -326,7 +326,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_230000) do
     t.bigint "winning_ticket_id"
     t.boolean "won", default: false
     t.datetime "won_at"
+    t.string "legacy_source"
+    t.string "legacy_id"
     t.index ["draw_id"], name: "index_raffle_prizes_on_draw_id"
+    t.index ["tournament_id", "legacy_source", "legacy_id"], name: "idx_raffle_prizes_tournament_legacy", unique: true, where: "((legacy_source IS NOT NULL) AND (legacy_id IS NOT NULL))"
     t.index ["tournament_id", "position"], name: "index_raffle_prizes_on_tournament_id_and_position"
     t.index ["tournament_id", "tier"], name: "index_raffle_prizes_on_tournament_id_and_tier"
     t.index ["tournament_id"], name: "index_raffle_prizes_on_tournament_id"
@@ -541,11 +544,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_230000) do
     t.integer "stripe_fee_cents"
     t.integer "refund_amount_cents", default: 0, null: false
     t.datetime "refunded_at"
+    t.string "legacy_source"
+    t.string "legacy_id"
     t.index ["access_token"], name: "index_sponsors_on_access_token", unique: true, where: "(access_token IS NOT NULL)"
     t.index ["sponsor_tier_id"], name: "index_sponsors_on_sponsor_tier_id"
     t.index ["stripe_checkout_session_id"], name: "index_sponsors_on_stripe_checkout_session_id", unique: true, where: "(stripe_checkout_session_id IS NOT NULL)"
     t.index ["tournament_id", "course_key", "hole_number"], name: "index_sponsors_on_tournament_id_and_course_key_and_hole_number"
     t.index ["tournament_id", "hole_number"], name: "index_sponsors_on_tournament_id_and_hole_number"
+    t.index ["tournament_id", "legacy_source", "legacy_id"], name: "idx_sponsors_tournament_legacy", unique: true, where: "((legacy_source IS NOT NULL) AND (legacy_id IS NOT NULL))"
     t.index ["tournament_id", "position"], name: "index_sponsors_on_tournament_id_and_position"
     t.index ["tournament_id", "tier"], name: "index_sponsors_on_tournament_id_and_tier"
     t.index ["tournament_id"], name: "index_sponsors_on_tournament_id"

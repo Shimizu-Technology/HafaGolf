@@ -162,17 +162,66 @@ module HafagolfMigrations
             edition: row["edition"],
             status: valid_tournament_status(row["status"]),
             event_date: row["event_date"],
+            registration_time: row["registration_time"],
+            check_in_time: row["check_in_time"],
+            start_time: row["start_time"],
             location_name: row["location_name"],
             location_address: row["location_address"],
             format_name: row["format_name"],
+            tournament_format: row["tournament_format"],
+            scoring_type: row["scoring_type"],
             team_size: (row["team_size"] || 2).to_i,
             max_capacity: (row["max_capacity"] || 144).to_i,
             reserved_slots: (row["reserved_slots"] || 0).to_i,
             entry_fee: (row["entry_fee"] || 25_000).to_i,
+            entry_fee_display: row["entry_fee_display"],
+            early_bird_fee: row["early_bird_fee"]&.to_i,
+            early_bird_deadline: row["early_bird_deadline"],
+            walkin_fee: row["walkin_fee"]&.to_i,
+            walkin_registration_open: truthy?(row["walkin_registration_open"]),
             registration_open: truthy?(row["registration_open"]),
+            registration_deadline: row["registration_deadline"],
+            sponsor_edit_deadline: row["sponsor_edit_deadline"],
+            waitlist_enabled: row["waitlist_enabled"].nil? ? true : truthy?(row["waitlist_enabled"]),
+            waitlist_max: row["waitlist_max"]&.to_i,
+            allow_cash: row["allow_cash"].nil? ? true : truthy?(row["allow_cash"]),
+            allow_check: row["allow_check"].nil? ? true : truthy?(row["allow_check"]),
+            allow_card: row["allow_card"].nil? ? true : truthy?(row["allow_card"]),
+            allow_partial_teams: truthy?(row["allow_partial_teams"]),
+            checks_payable_to: row["checks_payable_to"],
+            payment_instructions: row["payment_instructions"],
+            fee_includes: row["fee_includes"],
+            swipe_simple_url: row["swipe_simple_url"],
+            walkin_swipe_simple_url: row["walkin_swipe_simple_url"],
+            contact_name: row["contact_name"],
+            contact_email: row["contact_email"],
+            contact_phone: row["contact_phone"],
+            course_name: row["course_name"],
+            tee_name: row["tee_name"],
+            total_holes: row["total_holes"]&.to_i,
+            total_par: row["total_par"]&.to_i,
+            shotgun_start: row["shotgun_start"].nil? ? true : truthy?(row["shotgun_start"]),
+            public_listed: row["public_listed"].nil? ? true : truthy?(row["public_listed"]),
+            banner_url_override: row["banner_url_override"],
+            logo_url_override: row["logo_url_override"],
+            signature_image_url_override: row["signature_image_url_override"],
+            tournament_info: row["tournament_info"],
+            config: parse_json(row["config"], {}),
+            event_schedule: parse_json(row["event_schedule"], nil),
+            flights_config: parse_json(row["flights_config"], nil),
+            hole_pars: parse_json(row["hole_pars"], nil),
+            hole_handicaps: parse_json(row["hole_handicaps"], nil),
             theme_preset: "charity-bright",
-            raffle_enabled: truthy?(row["raffle_enabled"])
-          }
+            raffle_enabled: truthy?(row["raffle_enabled"]),
+            raffle_ticket_price_cents: row["raffle_ticket_price_cents"]&.to_i,
+            raffle_tickets_per_purchase: row["raffle_tickets_per_purchase"]&.to_i,
+            raffle_max_tickets_per_person: row["raffle_max_tickets_per_person"]&.to_i,
+            raffle_description: row["raffle_description"],
+            raffle_draw_time: row["raffle_draw_time"],
+            raffle_auto_draw: truthy?(row["raffle_auto_draw"])
+          }.compact
+          # Re-apply booleans that .compact does not drop (false stays), and ensure config hash stays present
+          attrs[:config] ||= {}
           if tournament.respond_to?(:capacity_unit=)
             attrs[:capacity_unit] = attrs[:team_size] > 1 ? "teams" : "players"
           end
@@ -210,10 +259,12 @@ module HafagolfMigrations
         next unless tournament
 
         sponsor = tournament.sponsors.find_or_initialize_by(
-          name: row["name"].presence || "Sponsor #{row['id']}",
-          tier: row["tier"].presence || "silver"
+          legacy_source: LEGACY_SOURCE,
+          legacy_id: row["id"].to_s
         )
         sponsor.assign_attributes(
+          name: row["name"].presence || "Sponsor #{row['id']}",
+          tier: row["tier"].presence || "silver",
           description: row["description"],
           login_email: row["login_email"] || row["contact_email"],
           website_url: row["website_url"],
@@ -252,9 +303,13 @@ module HafagolfMigrations
           email: row["email"].presence || "legacy-maw-#{row['id']}@migrated.invalid",
           phone: row["phone"].presence || "000-000-0000",
           company: row["company"],
+          team_name: row["team_name"],
+          tshirt_size: row["tshirt_size"],
           partner_name: row["partner_name"],
           partner_email: row["partner_email"],
           partner_phone: row["partner_phone"],
+          partner_tshirt_size: row["partner_tshirt_size"],
+          partner_waiver_accepted_at: row["partner_waiver_accepted_at"],
           team_category: row["team_category"].presence || "Co-Ed",
           registration_status: valid_registration_status(row["registration_status"]),
           registration_source: row["registration_source"].presence || "public",
@@ -263,8 +318,16 @@ module HafagolfMigrations
           payment_method: row["payment_method"],
           payment_amount_cents: row["payment_amount_cents"]&.to_i,
           refund_amount_cents: row["refund_amount_cents"]&.to_i,
+          payment_notes: row["payment_notes"],
+          refund_reason: row["refund_reason"],
+          position: row["position"]&.to_i,
+          hole_number: row["hole_number"]&.to_i,
+          raffle_tickets_requested: (row["raffle_tickets_requested"] || 0).to_i,
+          raffle_bundle_label: row["raffle_bundle_label"],
           stripe_checkout_session_id: row["stripe_checkout_session_id"].presence,
           stripe_payment_intent_id: row["stripe_payment_intent_id"].presence,
+          stripe_card_brand: row["stripe_card_brand"].presence,
+          stripe_card_last4: row["stripe_card_last4"].presence,
           stripe_refund_id: row["stripe_refund_id"].presence,
           receipt_number: row["receipt_number"],
           paid_at: row["paid_at"],
@@ -419,13 +482,21 @@ module HafagolfMigrations
         next unless tournament
 
         prize = tournament.raffle_prizes.find_or_initialize_by(
-          name: row["name"].presence || "Prize #{row['id']}",
-          position: (row["position"] || row["id"]).to_i
+          legacy_source: LEGACY_SOURCE,
+          legacy_id: row["id"].to_s
         )
         prize.assign_attributes(
+          name: row["name"].presence || "Prize #{row['id']}",
+          position: (row["position"] || row["id"]).to_i,
           description: row["description"],
           value_cents: (row["value_cents"] || 0).to_i,
           tier: row["tier"].presence || "standard",
+          image_url: row["image_url"],
+          sponsor_name: row["sponsor_name"],
+          sponsor_logo_url: row["sponsor_logo_url"],
+          winner_name: row["winner_name"],
+          winner_email: row["winner_email"],
+          winner_phone: row["winner_phone"],
           won: truthy?(row["won"].nil? ? row["drawn"] : row["won"]),
           claimed: truthy?(row["claimed"]),
           won_at: row["won_at"] || row["drawn_at"],
@@ -445,6 +516,8 @@ module HafagolfMigrations
 
         ticket_num = row["ticket_number"].presence || "MAW-#{row['id']}"
         ticket = tournament.raffle_tickets.find_or_initialize_by(ticket_number: ticket_num)
+        golfer = golfer_map[row["golfer_id"].to_s]
+        registration = golfer && defined?(Registration) ? Registration.find_by(legacy_source: LEGACY_SOURCE, legacy_id: row["golfer_id"].to_s) : nil
         ticket.assign_attributes(
           sequence_number: (row["sequence_number"] || row["id"]).to_i,
           purchaser_name: row["purchaser_name"].presence || "Raffle Buyer",
@@ -452,10 +525,17 @@ module HafagolfMigrations
           purchaser_phone: row["purchaser_phone"],
           price_cents: (row["price_cents"] || 0).to_i,
           payment_status: row["payment_status"].presence || "paid",
-          payment_method: row["payment_method"].presence || "cash",
+          payment_method: row["payment_method"].presence,
+          receipt_number: row["receipt_number"],
+          payment_notes: row["payment_notes"],
+          stripe_payment_intent_id: row["stripe_payment_intent_id"].presence,
           is_winner: truthy?(row["is_winner"]),
+          drawn_at: row["drawn_at"],
+          voided_at: row["voided_at"],
+          void_reason: row["void_reason"],
           purchased_at: row["purchased_at"] || Time.current,
-          golfer: golfer_map[row["golfer_id"].to_s],
+          golfer: golfer,
+          registration: registration,
           raffle_sale_batch: batch_map[row["raffle_sale_batch_id"].to_s],
           raffle_prize: prize_map[row["raffle_prize_id"].to_s],
           sold_by_user: user_map[row["sold_by_user_id"].to_s]
@@ -612,6 +692,15 @@ module HafagolfMigrations
 
     def truthy?(val)
       ActiveModel::Type::Boolean.new.cast(val) == true
+    end
+
+    def parse_json(val, fallback)
+      return fallback if val.nil?
+      return val if val.is_a?(Hash) || val.is_a?(Array)
+
+      JSON.parse(val.to_s)
+    rescue JSON::ParserError
+      fallback
     end
   end
 end

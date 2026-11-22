@@ -290,4 +290,127 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
       live_reader.close
     end
   end
+
+  test "MawImporter imports JSON-string multi-course config, groups with starting_course_key, duplicate public emails, and blank-method raffle tickets" do
+    course_config_json = {
+      "course_configs" => [
+        { "key" => "north", "name" => "North Nine", "hole_count" => 9 },
+        { "key" => "south", "name" => "South Nine", "hole_count" => 9 }
+      ],
+      "teams_per_start_position" => 2
+    }.to_json
+
+    fixture = {
+      "organizations" => [{ "id" => 1, "name" => "Synthetic Charity Org" }],
+      "tournaments" => [
+        {
+          "id" => 11, "slug" => "maw-multicourse-2026", "name" => "Multi Course 2026",
+          "year" => 2026, "status" => "open", "team_size" => 2, "max_capacity" => 1,
+          "entry_fee" => 30_000, "raffle_enabled" => true, "config" => course_config_json
+        }
+      ],
+      "groups" => [
+        { "id" => 101, "tournament_id" => 11, "group_number" => 1, "hole_number" => 1, "starting_course_key" => "north" },
+        { "id" => 102, "tournament_id" => 11, "group_number" => 2, "hole_number" => 4, "starting_course_key" => "south" }
+      ],
+      "golfers" => [
+        {
+          "id" => 201, "tournament_id" => 11, "group_id" => 101,
+          "name" => "Avery Lindqvist", "email" => "shared-coord@example.test", "phone" => "671-555-0101",
+          "partner_name" => "Bram Okafor", "partner_email" => "bram@example.test",
+          "registration_source" => "public", "registration_status" => "confirmed",
+          "payment_status" => "paid", "payment_amount_cents" => 30_000
+        },
+        {
+          "id" => 202, "tournament_id" => 11, "group_id" => 102,
+          "name" => "Calla Yorke", "email" => "shared-coord@example.test", "phone" => "671-555-0102",
+          "registration_source" => "admin", "registration_status" => "confirmed",
+          "payment_status" => "paid", "payment_amount_cents" => 30_000
+        }
+      ],
+      "raffle_prizes" => [
+        { "id" => 401, "tournament_id" => 11, "name" => "Gift Certificate", "position" => 0, "value_cents" => 10_000, "tier" => "standard" },
+        { "id" => 402, "tournament_id" => 11, "name" => "Gift Certificate", "position" => 0, "value_cents" => 10_000, "tier" => "standard" }
+      ],
+      "raffle_tickets" => [
+        {
+          "id" => 301, "tournament_id" => 11, "ticket_number" => "SYN26-0001", "sequence_number" => 1,
+          "purchaser_name" => "Avery Lindqvist", "purchaser_phone" => "+16715550101",
+          "price_cents" => 500, "payment_status" => "paid", "payment_method" => nil
+        },
+        {
+          "id" => 302, "tournament_id" => 11, "ticket_number" => "SYN26-0002", "sequence_number" => 2,
+          "purchaser_name" => "Avery Lindqvist", "purchaser_phone" => "+16715550101",
+          "price_cents" => 500, "payment_status" => "voided", "payment_method" => ""
+        }
+      ]
+    }
+
+    reader = HafagolfMigrations::SourceReader.from_hash(fixture)
+    report1 = HafagolfMigrations::MawImporter.new(source_reader: reader, expected_db_name: @current_db).run!
+    assert_equal true, report1["matched"]
+    assert_equal 2, report1.dig("target", "groups")
+    assert_equal 2, report1.dig("target", "golfers")
+    assert_equal 3, report1.dig("target", "team_members")
+    assert_equal 2, report1.dig("target", "raffle_prizes")
+    assert_equal 500, report1.dig("target", "raffle_paid_cents")
+
+    tournament = Tournament.find_by!(slug: "maw-multicourse-2026")
+    assert_equal %w[north south], tournament.course_configs.map { |c| c["key"] }
+    assert_equal "north", tournament.groups.find_by!(group_number: 1).starting_course_key
+    assert_nil tournament.raffle_tickets.find_by!(ticket_number: "SYN26-0001").payment_method
+
+    report2 = HafagolfMigrations::MawImporter.new(source_reader: reader, expected_db_name: @current_db).run!
+    assert_equal report1["target"], report2["target"]
+  end
+
+  test "GiaaImporter imports 4-player foursomes under team_size 1, duplicate public emails, and links employee_numbers to registrations and team_members" do
+    fixture = {
+      "settings" => [{ "organization_name" => "Synthetic Memorial Org" }],
+      "tournaments" => [
+        {
+          "id" => 21, "slug" => "giaa-foursome-2026", "name" => "Synthetic Memorial 2026",
+          "year" => 2026, "status" => "open", "max_capacity" => 2, "entry_fee" => 12_500,
+          "employee_entry_fee" => 5_000
+        }
+      ],
+      "groups" => [
+        { "id" => 201, "tournament_id" => 21, "group_number" => 1, "hole_number" => 1 }
+      ],
+      "golfers" => [1, 2, 3, 4].map do |n|
+        {
+          "id" => 400 + n, "tournament_id" => 21, "group_id" => 201,
+          "name" => "Synthetic Player #{n}",
+          "email" => "player#{n}@example.test",
+          "phone" => "671-555-011#{n}", "registration_status" => "confirmed",
+          "payment_status" => "paid", "payment_type" => "pay_on_day", "payment_method" => "cash",
+          "payment_amount_cents" => n == 1 ? 5_000 : 12_500, "is_employee" => (n == 1)
+        }
+      end,
+      "employee_numbers" => [
+        { "id" => 501, "tournament_id" => 21, "employee_number" => "EMP-001", "employee_name" => "Synthetic Player 1", "used" => true, "used_by_golfer_id" => 401 }
+      ]
+    }
+
+    reader = HafagolfMigrations::SourceReader.from_hash(fixture)
+    report1 = HafagolfMigrations::GiaaImporter.new(source_reader: reader, expected_db_name: @current_db).run!
+    assert_equal true, report1["matched"]
+    assert_equal 4, report1.dig("target", "golfers")
+    assert_equal 4, report1.dig("target", "team_members")
+    assert_equal 1, report1.dig("target", "employee_numbers")
+
+    tournament = Tournament.find_by!(slug: "giaa-foursome-2026")
+    assert_equal 4, tournament.players_per_start_position
+    assert_equal true, tournament.employee_discount_enabled
+    assert_equal 5_000, tournament.employee_entry_fee
+
+    emp = EmployeeNumber.find_by!(tournament: tournament, employee_number: "EMP-001")
+    reg = Registration.find_by!(legacy_source: "giaa", legacy_id: "401")
+    assert_equal reg.id, emp.used_by_registration_id
+    assert_equal emp.id, reg.team_members.first.employee_number_record_id
+    assert_equal true, reg.team_members.first.is_employee
+
+    report2 = HafagolfMigrations::GiaaImporter.new(source_reader: reader, expected_db_name: @current_db).run!
+    assert_equal report1["target"], report2["target"]
+  end
 end

@@ -340,7 +340,7 @@ class Registration < ApplicationRecord
 
   def team_category_matches_tournament_config
     return unless tournament
-    return if sponsored?
+    return if sponsored? || legacy_source.present?
 
     categories = tournament.team_categories
     return if categories.empty?
@@ -381,7 +381,7 @@ class Registration < ApplicationRecord
   end
 
   def no_duplicate_emails_in_active_public_tournament
-    return if cancelled? || registration_source == "admin" || tournament_id.blank?
+    return if cancelled? || registration_source == "admin" || legacy_source.present? || tournament_id.blank?
 
     member_emails = active_team_members
       .filter_map { |m| m.email&.strip&.downcase.presence }
@@ -423,7 +423,7 @@ class Registration < ApplicationRecord
 
   def capacity_available_on_create
     return unless tournament
-    return if cancelled? || sponsored? || registration_source == "admin"
+    return if cancelled? || sponsored? || registration_source == "admin" || legacy_source.present?
 
     incoming_players = [active_team_members.size, 1].max
 
