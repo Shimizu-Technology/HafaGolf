@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_22_230000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -104,11 +104,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
     t.string "legacy_id"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "used_by_registration_id"
     t.index "tournament_id, lower((employee_number)::text)", name: "index_employee_numbers_on_tournament_and_lower_number", unique: true
     t.index ["legacy_source", "legacy_id"], name: "index_employee_numbers_on_legacy_source_and_legacy_id", unique: true, where: "(legacy_source IS NOT NULL)"
     t.index ["organization_id"], name: "index_employee_numbers_on_organization_id"
     t.index ["tournament_id"], name: "index_employee_numbers_on_tournament_id"
     t.index ["used_by_golfer_id"], name: "index_employee_numbers_on_used_by_golfer_id"
+    t.index ["used_by_registration_id"], name: "index_employee_numbers_on_used_by_registration_id"
   end
 
   create_table "golfers", force: :cascade do |t|
@@ -679,7 +681,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
     t.boolean "employee_discount_enabled", default: false, null: false
     t.integer "employee_entry_fee", default: 5000
     t.integer "entry_fee", default: 12500
-    t.string "entry_fee_display", default: "$300/team"
+    t.string "entry_fee_display"
     t.string "event_date"
     t.text "event_schedule"
     t.string "event_type", default: "golf_tournament", null: false
@@ -775,6 +777,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
   add_foreign_key "donations", "tournaments", on_delete: :cascade
   add_foreign_key "employee_numbers", "golfers", column: "used_by_golfer_id", on_delete: :nullify
   add_foreign_key "employee_numbers", "organizations", on_delete: :cascade
+  add_foreign_key "employee_numbers", "registrations", column: "used_by_registration_id", on_delete: :nullify
   add_foreign_key "employee_numbers", "tournaments", on_delete: :cascade
   add_foreign_key "golfers", "employee_numbers", column: "employee_number_record_id", on_delete: :nullify
   add_foreign_key "golfers", "groups"

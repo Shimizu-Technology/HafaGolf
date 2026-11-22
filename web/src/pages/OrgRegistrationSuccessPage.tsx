@@ -16,10 +16,22 @@ export function OrgRegistrationSuccessPage() {
   const location = useLocation();
   const navigate = useNavigate();
   
-  const { golfer, tournament, paymentPending, paymentComplete, swipeSimpleRedirect, waitlisted } = location.state || {};
+  const { golfer, registration, tournament, paymentPending, paymentComplete, swipeSimpleRedirect, waitlisted } = location.state || {};
   useApplyBranding(organization, tournament);
 
   const externalPaymentUrl: string | undefined = tournament?.swipe_simple_url;
+  const amountDueCents: number | null =
+    typeof registration?.payment_amount_cents === 'number'
+      ? registration.payment_amount_cents
+      : typeof registration?.expected_entry_fee_cents === 'number'
+        ? registration.expected_entry_fee_cents
+        : typeof tournament?.entry_fee === 'number'
+          ? tournament.entry_fee
+          : null;
+  const formattedAmountDue =
+    amountDueCents !== null ? `$${(amountDueCents / 100).toFixed(2)}` : `$${tournament?.entry_fee_dollars?.toFixed(2) || '0.00'}`;
+  const teamMembers: Array<{ id?: number; name: string; email?: string | null; is_captain?: boolean; position?: number }> =
+    Array.isArray(registration?.team_members) ? registration.team_members : [];
 
   useEffect(() => {
     if (waitlisted) return;
@@ -78,34 +90,57 @@ export function OrgRegistrationSuccessPage() {
         <Card className="p-5 sm:p-6 mb-5">
           <h2 className="font-bold text-lg mb-4 text-neutral-900">Registration Details</h2>
           
-          {golfer && (
+          {(golfer || registration) && (
             <div className="bg-neutral-50 rounded-xl p-4 mb-5">
-              {(golfer.team_name || golfer.partner_name) && (
+              {(registration?.display_team_name || golfer?.team_name || golfer?.partner_name) && (
                 <div className="flex items-center gap-2 mb-3 pb-3 border-b border-neutral-200">
                   <Users size={16} className="text-brand-600" />
                   <p className="font-semibold text-neutral-900">
-                    {golfer.team_name || `${golfer.name} & ${golfer.partner_name}`}
+                    {registration?.display_team_name || golfer?.team_name || `${golfer?.name} & ${golfer?.partner_name}`}
                   </p>
                 </div>
               )}
-              <div className="space-y-2">
-                <div>
-                  <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Team Captain</p>
-                  <p className="font-medium text-neutral-900">{golfer.name}</p>
-                  {golfer.email && (
-                    <p className="text-neutral-500 flex items-center gap-1.5 text-sm mt-0.5">
-                      <Mail size={14} />
-                      {golfer.email}
-                    </p>
+              {teamMembers.length > 0 ? (
+                <div className="space-y-2.5">
+                  {teamMembers.map((member, index) => (
+                    <div key={member.id ?? index}>
+                      <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider">
+                        {index === 0
+                          ? teamMembers.length === 1
+                            ? 'Player'
+                            : 'Team Captain'
+                          : `Player ${index + 1}`}
+                      </p>
+                      <p className="font-medium text-neutral-900">{member.name}</p>
+                      {member.email && (
+                        <p className="text-neutral-500 flex items-center gap-1.5 text-sm mt-0.5">
+                          <Mail size={14} />
+                          {member.email}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Team Captain</p>
+                    <p className="font-medium text-neutral-900">{golfer?.name}</p>
+                    {golfer?.email && (
+                      <p className="text-neutral-500 flex items-center gap-1.5 text-sm mt-0.5">
+                        <Mail size={14} />
+                        {golfer.email}
+                      </p>
+                    )}
+                  </div>
+                  {golfer?.partner_name && (
+                    <div>
+                      <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Playing Partner</p>
+                      <p className="font-medium text-neutral-900">{golfer.partner_name}</p>
+                    </div>
                   )}
                 </div>
-                {golfer.partner_name && (
-                  <div>
-                    <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Playing Partner</p>
-                    <p className="font-medium text-neutral-900">{golfer.partner_name}</p>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           )}
 
@@ -197,12 +232,14 @@ export function OrgRegistrationSuccessPage() {
                     <div className="bg-yellow-50 text-yellow-800 p-3 rounded-lg">
                       <p className="font-medium">Payment Due on Tournament Day</p>
                       <p className="text-sm">
-                        Please bring ${tournament.entry_fee_dollars?.toFixed(2)} 
+                        Please bring {formattedAmountDue}
                         {tournament.allow_cash && tournament.allow_check 
                           ? ' (cash or check)'
                           : tournament.allow_cash 
                           ? ' (cash)'
-                          : ' (check)'}
+                          : tournament.allow_check
+                          ? ' (check)'
+                          : ''}
                       </p>
                       {tournament.checks_payable_to && (
                         <p className="text-sm mt-1">
@@ -240,7 +277,7 @@ export function OrgRegistrationSuccessPage() {
                 {paymentPending && (
                   <li className="flex items-start gap-3">
                     <span className="bg-yellow-100 text-yellow-800 rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium flex-shrink-0">4</span>
-                    <span>Bring payment: ${tournament.entry_fee_dollars?.toFixed(2)}</span>
+                    <span>Bring payment: {formattedAmountDue}</span>
                   </li>
                 )}
               </ul>

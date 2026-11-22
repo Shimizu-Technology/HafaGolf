@@ -8,9 +8,11 @@ import {
 import {
   buildInitialPlayers,
   buildRegistrationPayload,
+  calculateRegistrationTotalCents,
   canAddPlayer,
   canRemovePlayer,
   formatCapacityUnitName,
+  formatEntryFeeDisplay,
   formatEntryUnitSubtitle,
   getDisplayTeamName,
   getStepNames,
@@ -267,5 +269,75 @@ describe('teamRegistration helpers (1/2/4 players + partial teams)', () => {
     expect(isAtCapacity(teamsRecord)).toBe(false);
     expect(isPublicAtCapacity(teamsRecord)).toBe(true);
     expect(getRegistrationStatusLabel(teamsRecord)).toBe('Waitlist Open');
+  });
+
+  it('formats entry fee display, per-player subtitles, totals, and employee payload fields accurately', () => {
+    expect(formatEntryFeeDisplay({ entry_fee: 15000, team_size: 4, capacity_unit: 'players' })).toBe('$150/player');
+    expect(formatEntryFeeDisplay({ entry_fee: 12500, team_size: 1, capacity_unit: 'players' })).toBe('$125/player');
+    expect(formatEntryFeeDisplay({ entry_fee: 30000, team_size: 2, capacity_unit: 'teams' })).toBe('$300/team');
+    expect(formatEntryFeeDisplay({ entry_fee: 15000, entry_fee_display: '$150 per golfer' })).toBe('$150 per golfer');
+
+    expect(formatEntryUnitSubtitle(4, true, 'players')).toBe('per player (teams up to 4 players)');
+    expect(formatEntryUnitSubtitle(4, false, 'players')).toBe('per player (4-player teams)');
+    expect(formatEntryUnitSubtitle(2, false, 'teams')).toBe('per team (2 players)');
+
+    // 4-player per-player tournament: 2-player partial = $300, 4-player full = $600
+    expect(
+      calculateRegistrationTotalCents({
+        entryFeeCents: 15000,
+        captainEffectiveFeeCents: 15000,
+        playerCount: 2,
+        teamSize: 4,
+        capacityUnit: 'players',
+      })
+    ).toBe(30000);
+    expect(
+      calculateRegistrationTotalCents({
+        entryFeeCents: 15000,
+        captainEffectiveFeeCents: 15000,
+        playerCount: 4,
+        teamSize: 4,
+        capacityUnit: 'players',
+      })
+    ).toBe(60000);
+    // 2-player per-team tournament: $300 flat
+    expect(
+      calculateRegistrationTotalCents({
+        entryFeeCents: 30000,
+        captainEffectiveFeeCents: 30000,
+        playerCount: 2,
+        teamSize: 2,
+        capacityUnit: 'teams',
+      })
+    ).toBe(30000);
+    // Solo with employee discount: $75
+    expect(
+      calculateRegistrationTotalCents({
+        entryFeeCents: 12500,
+        captainEffectiveFeeCents: 7500,
+        playerCount: 1,
+        teamSize: 1,
+        capacityUnit: 'players',
+      })
+    ).toBe(7500);
+
+    const empPayload = buildRegistrationPayload(
+      {
+        players: [
+          { name: 'Staff Player', email: 'staff@example.test', phone: '+16715550111', tshirt_size: '', handicap: '', waiver_accepted: true },
+        ],
+        teamName: '',
+        teamCategory: '',
+      },
+      {
+        paymentType: 'pay_on_day',
+        organizationSlug: 'memorial-qa',
+        isEmployee: true,
+        employeeNumber: 'EMP-1001',
+      }
+    );
+    expect(empPayload.is_employee).toBe(true);
+    expect(empPayload.employee_number).toBe('EMP-1001');
+    expect(empPayload.registration.payment_type).toBe('pay_on_day');
   });
 });

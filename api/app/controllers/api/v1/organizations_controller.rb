@@ -11,6 +11,7 @@ module Api
       def show
         organization = Organization.find_by_slug!(params[:slug])
         tournament_count = TenantContext.with_organization(organization) { organization.tournament_count }
+        payment_config = organization.effective_payment_config
         
         render json: {
           id: organization.id,
@@ -24,6 +25,8 @@ module Api
           contact_phone: organization.contact_phone,
           website_url: organization.website_url,
           primary_host: organization.primary_host,
+          payment_mode: payment_config.payment_mode,
+          processor_provider: payment_config.processor_provider,
           offseason_enabled: organization.offseason_enabled,
           offseason_title: organization.offseason_title,
           offseason_message: organization.offseason_message,
@@ -567,6 +570,7 @@ module Api
             swipe_simple_url: t.swipe_simple_url,
             walkin_swipe_simple_url: t.walkin_swipe_simple_url,
             entry_fee_display: t.entry_fee_display,
+            formatted_entry_fee_display: t.formatted_entry_fee_display,
             raffle_enabled: t.raffle_enabled,
             features: Features.for(organization, t).to_h,
             feature_overrides: Features.for(organization, t).tournament_overrides

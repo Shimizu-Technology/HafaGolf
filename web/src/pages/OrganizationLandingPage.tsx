@@ -22,6 +22,7 @@ import { useApplyBranding } from '../utils/branding';
 import type { ThemePackDefinition } from '../utils/themePacks';
 import { getDefaultOrgSlug } from '../utils/tenant';
 import { formatEventDate } from '../utils/dates';
+import { formatEntryFeeDisplay } from '../utils/teamRegistration';
 
 // ---------------------------------------------------------------------------
 // Main page
@@ -29,7 +30,7 @@ import { formatEventDate } from '../utils/dates';
 
 export function OrganizationLandingPage() {
   const { organization, isLoading: orgLoading } = useOrganization();
-  const orgSlug = organization?.slug || getDefaultOrgSlug();
+  const orgSlug = organization?.slug || (!orgLoading ? getDefaultOrgSlug() : '');
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,22 +53,34 @@ export function OrganizationLandingPage() {
   }, [organization?.name]);
 
   useEffect(() => {
+    if (orgLoading) return;
+    if (!orgSlug) {
+      setIsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
     async function fetchTournaments() {
-      if (!orgSlug) return;
       setIsLoading(true);
+      setError(null);
       try {
         const data = await api.getOrganizationTournaments(orgSlug);
-        setTournaments(data);
+        if (!cancelled) setTournaments(data);
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Failed to load tournaments';
-        console.error('Failed to fetch tournaments:', err);
-        setError(message);
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : 'Failed to load tournaments';
+          console.error('Failed to fetch tournaments:', err);
+          setError(message);
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
     fetchTournaments();
-  }, [orgSlug]);
+    return () => {
+      cancelled = true;
+    };
+  }, [orgLoading, orgSlug]);
 
   // Loading state
   if (orgLoading || isLoading) {
@@ -352,7 +365,7 @@ function TournamentCard({ tournament, pack }: TournamentCardProps) {
           <Detail
             icon={DollarSign}
             label="Entry Fee"
-            value={tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}
+            value={formatEntryFeeDisplay(tournament)}
           />
         </div>
 

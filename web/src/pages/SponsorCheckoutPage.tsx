@@ -43,7 +43,7 @@ export function SponsorCheckoutPage() {
   }>();
   const [searchParams] = useSearchParams();
   const { organization, isLoading: orgLoading } = useOrganization();
-  const orgSlug = paramOrgSlug || organization?.slug || getDefaultOrgSlug();
+  const orgSlug = paramOrgSlug || organization?.slug || (!orgLoading ? getDefaultOrgSlug() : '');
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [tiersData, setTiersData] = useState<SponsorTiersListResponse | null>(null);
@@ -64,10 +64,14 @@ export function SponsorCheckoutPage() {
   const pack = branding.themePack;
 
   useEffect(() => {
+    if (!paramOrgSlug && orgLoading) return;
     let cancelled = false;
 
     async function load() {
-      if (!orgSlug) return;
+      if (!orgSlug) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
       setFeatureDisabled(false);
@@ -123,7 +127,7 @@ export function SponsorCheckoutPage() {
     return () => {
       cancelled = true;
     };
-  }, [orgSlug, tournamentSlug]);
+  }, [orgLoading, paramOrgSlug, orgSlug, tournamentSlug]);
 
   const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,6 +206,7 @@ export function SponsorCheckoutPage() {
   }
 
   const tiers = tiersData?.sponsor_tiers || [];
+  const isOfflineMode = tiersData?.payment_mode === 'offline';
   const taxEnabled = Boolean(tiersData?.tax_receipt_enabled);
   const fmvPerPlayer = tiersData?.fmv_per_player_cents ?? 0;
 
@@ -259,6 +264,21 @@ export function SponsorCheckoutPage() {
               <p className="font-semibold">Checkout was cancelled</p>
               <p className="mt-1 text-amber-800">
                 No charge was made. Choose a sponsorship tier below whenever you are ready.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {isOfflineMode && (
+          <div className="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-5 flex items-start gap-3 text-sm text-amber-900">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">Offline Sponsorship Reservations</p>
+              <p className="mt-1 text-amber-800">
+                Online checkout is not enabled for this organization. To reserve a sponsorship tier, please contact{' '}
+                {tournament.contact_name || organization?.name || 'the tournament organizer'}
+                {tournament.contact_email ? ` at ${tournament.contact_email}` : ''}
+                {tournament.contact_phone ? ` (${tournament.contact_phone})` : ''}.
               </p>
             </div>
           </div>
@@ -327,19 +347,19 @@ export function SponsorCheckoutPage() {
                 <div className="p-6 pt-0">
                   <button
                     type="button"
-                    disabled={tier.sold_out}
+                    disabled={tier.sold_out || isOfflineMode}
                     onClick={() => {
                       setSelectedTier(tier);
                       setCheckoutError(null);
                     }}
                     className={`w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold transition-colors ${
-                      tier.sold_out
+                      tier.sold_out || isOfflineMode
                         ? 'bg-neutral-100 text-neutral-400 cursor-not-allowed'
                         : 'bg-brand-600 text-brand-foreground hover:bg-brand-700'
                     }`}
                   >
                     <CreditCard className="w-4 h-4" />
-                    {tier.sold_out ? 'Sold Out' : 'Sponsor This Tier'}
+                    {tier.sold_out ? 'Sold Out' : isOfflineMode ? 'Contact Organizer to Sponsor' : 'Sponsor This Tier'}
                   </button>
                 </div>
               </div>

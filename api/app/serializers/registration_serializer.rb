@@ -6,6 +6,7 @@ class RegistrationSerializer < ActiveModel::Serializer
              :registration_source, :registration_status,
              :contact_name, :contact_email, :contact_phone, :company, :notes,
              :payment_type, :payment_status, :payment_method, :payment_amount_cents,
+             :expected_entry_fee_cents, :is_employee, :employee_number,
              :paid_at, :payment_verified_at, :payment_verified_by_id, :payment_verified_by_name,
              :payment_token, :receipt_number, :payment_notes,
              :stripe_card_brand, :stripe_card_last4, :stripe_account_origin,
@@ -18,6 +19,18 @@ class RegistrationSerializer < ActiveModel::Serializer
 
   def display_team_name
     object.display_team_name
+  end
+
+  def expected_entry_fee_cents
+    object.expected_entry_fee_cents
+  end
+
+  def is_employee
+    object.is_employee?
+  end
+
+  def employee_number
+    object.employee_number
   end
 
   def player_count

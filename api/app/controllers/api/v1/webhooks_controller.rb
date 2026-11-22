@@ -147,6 +147,14 @@ module Api
         scope
       end
 
+      def scoped_registration_relation(scope_organization_id)
+        scope = Registration.includes(:team_members, tournament: :organization)
+        if scope_organization_id.present?
+          scope = scope.where(organization_id: scope_organization_id)
+        end
+        scope
+      end
+
       def scoped_sponsor_relation(scope_organization_id)
         scope = Sponsor.includes(:sponsor_tier, tournament: :organization)
         if scope_organization_id.present?
@@ -199,6 +207,24 @@ module Api
           )
         end
 
+        metadata_registration_id = metadata_value(session.metadata, :registration_id)
+        if metadata_registration_id.present?
+          reg_scope = scoped_registration_relation(scope_organization_id)
+          registration = reg_scope.find_by(stripe_checkout_session_id: session.id) ||
+                         reg_scope.find_by(id: metadata_registration_id)
+          if registration
+            return handle_registration_checkout_completed(
+              registration,
+              session: session,
+              expected_mode: expected_mode,
+              account_origin: account_origin
+            )
+          end
+
+          Rails.logger.error("Registration #{metadata_registration_id} not found for session: #{session.id}")
+          return
+        end
+
         scope = scoped_golfer_relation(scope_organization_id)
         golfer = scope.find_by(stripe_checkout_session_id: session.id)
 
@@ -208,7 +234,19 @@ module Api
         end
 
         unless golfer
-          Rails.logger.error("Golfer not found for session: #{session.id}")
+          reg_scope = scoped_registration_relation(scope_organization_id)
+          registration = reg_scope.find_by(stripe_checkout_session_id: session.id)
+
+          if registration
+            return handle_registration_checkout_completed(
+              registration,
+              session: session,
+              expected_mode: expected_mode,
+              account_origin: account_origin
+            )
+          end
+
+          Rails.logger.error("Golfer or Registration not found for session: #{session.id}")
           return
         end
 
@@ -260,6 +298,63 @@ module Api
           })
         rescue StandardError => e
           Rails.logger.error("Failed to broadcast payment confirmation (webhook): #{e.message}")
+        end
+      end
+
+      def handle_registration_checkout_completed(registration, session:, expected_mode:, account_origin:)
+        org = registration.tournament.organization
+        metadata_org_id = metadata_value(session.metadata, :organization_id)
+        if metadata_org_id.present? && metadata_org_id.to_s != org.id.to_s
+          Rails.logger.warn("Stripe webhook org metadata mismatch for registration #{registration.id}; ignoring")
+          return
+        end
+
+        payment_config = org.effective_payment_config
+        if expected_mode.present? && payment_config.payment_mode != expected_mode
+          Rails.logger.warn("Stripe webhook mode mismatch for registration #{registration.id} org #{org.id}; ignoring")
+          return
+        end
+
+        origin_tag = account_origin || payment_config.expected_stripe_account_origin || "platform_live"
+        updated = false
+
+        ActiveRecord::Base.transaction(requires_new: true) do
+          registration.lock!
+          next if registration.payment_status == "paid"
+
+          attrs = {
+            payment_status: "paid",
+            payment_type: "stripe",
+            stripe_payment_intent_id: session.payment_intent,
+            stripe_account_origin: origin_tag,
+            payment_method: "stripe",
+            payment_notes: "Paid via Stripe on #{Time.current.strftime('%Y-%m-%d %H:%M:%S')} (webhook confirmed)",
+            paid_at: Time.current
+          }
+          attrs[:registration_status] = "confirmed" if registration.registration_status == "pending"
+          attrs[:payment_amount_cents] = session.amount_total if session.respond_to?(:amount_total) && session.amount_total.present?
+
+          registration.update!(attrs)
+          updated = true
+        end
+
+        return unless updated
+
+        Rails.logger.info("Registration #{registration.id} marked as paid via webhook (#{origin_tag})")
+
+        begin
+          registration.create_raffle_tickets!
+        rescue StandardError => e
+          Rails.logger.warn("Failed to create raffle tickets for registration #{registration.id} (webhook): #{e.message}")
+        end
+
+        begin
+          ActionCable.server.broadcast("golfers_channel_#{registration.tournament_id}", {
+            action: "registration_payment_confirmed",
+            registration: RegistrationSerializer.new(registration.reload).as_json
+          })
+        rescue StandardError => e
+          Rails.logger.error("Failed to broadcast registration payment confirmation (webhook): #{e.message}")
         end
       end
 
@@ -393,6 +488,13 @@ module Api
           return
         end
 
+        registration = scoped_registration_relation(scope_organization_id).find_by(stripe_checkout_session_id: session.id)
+        if registration
+          registration.update(stripe_checkout_session_id: nil)
+          Rails.logger.info("Cleared expired checkout session for registration #{registration.id}")
+          return
+        end
+
         sponsor = scoped_sponsor_relation(scope_organization_id).find_by(stripe_checkout_session_id: session.id)
         if sponsor && sponsor.payment_status == "pending"
           sponsor.update(payment_status: "expired", stripe_checkout_session_id: nil)
@@ -411,9 +513,17 @@ module Api
         Rails.logger.error("Payment intent failed: #{payment_intent.id}")
 
         golfer = scoped_golfer_relation(scope_organization_id).find_by(stripe_payment_intent_id: payment_intent.id)
-        return unless golfer
+        if golfer
+          golfer.update(
+            payment_notes: "Payment failed on #{Time.current.strftime('%Y-%m-%d %H:%M:%S')}: #{payment_intent.last_payment_error&.message}"
+          )
+          return
+        end
 
-        golfer.update(
+        registration = scoped_registration_relation(scope_organization_id).find_by(stripe_payment_intent_id: payment_intent.id)
+        return unless registration
+
+        registration.update(
           payment_notes: "Payment failed on #{Time.current.strftime('%Y-%m-%d %H:%M:%S')}: #{payment_intent.last_payment_error&.message}"
         )
       end

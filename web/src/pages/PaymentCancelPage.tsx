@@ -7,10 +7,15 @@ export const PaymentCancelPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const golferId = searchParams.get('golfer_id');
+  const registrationId = searchParams.get('registration_id');
+  const tournamentSlug = searchParams.get('tournament_slug');
 
-  const handleTryAgain = () => {
-    // Navigate back to registration with a flag to retry payment
-    navigate('/register', { state: { retryPayment: true, golferId } });
+  const handleReturnToEvent = () => {
+    if (tournamentSlug) {
+      navigate(`/${tournamentSlug}`);
+    } else {
+      navigate('/');
+    }
   };
 
   return (
@@ -57,14 +62,14 @@ export const PaymentCancelPage: React.FC = () => {
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center pt-4 border-t border-gray-200">
-            <Button variant="outline" onClick={() => navigate('/')}>
-              Return to Home
+            <Button variant="outline" onClick={handleReturnToEvent}>
+              {tournamentSlug ? 'Back to Tournament' : 'Return to Home'}
               <ArrowRight size={16} />
             </Button>
-            {golferId && (
-              <Button onClick={handleTryAgain}>
+            {(golferId || registrationId) && tournamentSlug && (
+              <Button onClick={() => navigate(`/${tournamentSlug}`)}>
                 <RefreshCw size={16} />
-                Try Payment Again
+                View Event Details
               </Button>
             )}
           </div>

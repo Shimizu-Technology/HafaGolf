@@ -17,7 +17,7 @@ module Api
 
       # GET /api/v1/tournaments/:tournament_id/registrations
       def index
-        registrations = @tournament.registrations.includes(:team_members, :group, :sponsor)
+        registrations = @tournament.registrations.includes(:team_members, :group, :sponsor, :employee_number_record, :tournament)
 
         status_filter = params[:registration_status].presence || params[:status].presence
         registrations = registrations.where(registration_status: status_filter) if status_filter.present?
@@ -56,9 +56,35 @@ module Api
         error_response = nil
         tournament_missing = false
 
+        raw_employee_number = params[:employee_number].presence || params.dig(:registration, :employee_number).presence
+        requested_employee = ActiveModel::Type::Boolean.new.cast(params[:is_employee]) ||
+                             ActiveModel::Type::Boolean.new.cast(params.dig(:registration, :is_employee)) ||
+                             raw_employee_number.present?
+
         run_public_create(org) do |tournament|
           if tournament.nil?
             tournament_missing = true
+            next
+          end
+
+          employee_pricing_enabled = Features.for(tournament.organization, tournament).enabled?(:employee_pricing)
+
+          if requested_employee && !employee_pricing_enabled
+            error_response = {
+              error: "Feature 'employee_pricing' is disabled for this event",
+              errors: ["Feature 'employee_pricing' is disabled for this event"],
+              feature: "employee_pricing",
+              status: :forbidden
+            }
+            next
+          end
+
+          if requested_employee && tournament.employee_entry_fee.blank?
+            error_response = {
+              error: "Employee pricing fee is not configured for this event.",
+              errors: ["Employee pricing fee is not configured for this event."],
+              status: :unprocessable_entity
+            }
             next
           end
 
@@ -78,14 +104,47 @@ module Api
               raise ActiveRecord::Rollback
             end
 
-            attrs = public_registration_attributes
+            employee_record = nil
+            if requested_employee
+              if raw_employee_number.blank?
+                error_response = { errors: ["Employee number is required for employee pricing."], status: :unprocessable_entity }
+                raise ActiveRecord::Rollback
+              end
+
+              employee_record = EmployeeNumber.find_for_tournament(tournament, raw_employee_number)
+              unless employee_record
+                error_response = { errors: ["Invalid employee number."], status: :unprocessable_entity }
+                raise ActiveRecord::Rollback
+              end
+
+              employee_record.lock!
+              if employee_record.used?
+                error_response = { errors: ["This employee number has already been used."], status: :unprocessable_entity }
+                raise ActiveRecord::Rollback
+              end
+            end
+
+            attrs = public_registration_attributes(tournament: tournament)
             attrs[:team_members_attributes] = members_attrs
             attrs[:organization_id] = tournament.organization_id
             attrs[:registration_source] = "public"
 
             registration = tournament.registrations.new(attrs)
+            registration.payment_amount_cents = registration.expected_entry_fee_cents(
+              player_count_override: incoming_player_count,
+              employee_discount: employee_record.present?
+            )
 
             if registration.save
+              if employee_record
+                begin
+                  employee_record.claim_for_registration!(registration, team_member: registration.captain)
+                rescue EmployeeNumber::AlreadyClaimedError
+                  error_response = { errors: ["This employee number has already been used."], status: :unprocessable_entity }
+                  raise ActiveRecord::Rollback
+                end
+              end
+
               registration.generate_payment_token!
               result = {
                 registration: registration,
@@ -108,7 +167,10 @@ module Api
         end
 
         if error_response
-          render json: { errors: error_response[:errors] }, status: error_response[:status]
+          body = { errors: error_response[:errors] }
+          body[:error] = error_response[:error] if error_response[:error].present?
+          body[:feature] = error_response[:feature] if error_response[:feature].present?
+          render json: body, status: error_response[:status]
         elsif result
           serialized = TenantContext.with_organization(result[:organization_id]) do
             RegistrationSerializer.new(result[:registration].reload).as_json
@@ -150,6 +212,10 @@ module Api
           @registration.lock!
           updated = @registration.update(permitted)
           raise ActiveRecord::Rollback unless updated
+
+          if @registration.registration_status == "cancelled"
+            @registration.release_claimed_employee_numbers!
+          end
         end
 
         if updated
@@ -386,7 +452,7 @@ module Api
         end
       end
 
-      def public_registration_attributes
+      def public_registration_attributes(tournament: nil)
         raw = params[:registration].is_a?(ActionController::Parameters) ? params[:registration] : params
         permitted = raw.permit(
           :team_name, :team_category,
@@ -394,16 +460,27 @@ module Api
           :payment_type, :raffle_tickets_requested, :raffle_bundle_label
         ).to_h.symbolize_keys
 
+        default_type = default_payment_type_for(tournament)
+
         # Sanitize payment_type for public callers (never allow sponsor/comp override from public endpoint)
         if permitted[:payment_type].present?
           unless PUBLIC_PAYMENT_TYPES.include?(permitted[:payment_type].to_s)
-            permitted[:payment_type] = "swipe_simple"
+            permitted[:payment_type] = default_type
           end
         else
-          permitted[:payment_type] = "swipe_simple"
+          permitted[:payment_type] = default_type
         end
 
         permitted
+      end
+
+      def default_payment_type_for(tournament)
+        mode = tournament&.organization&.effective_payment_config&.payment_mode
+        case mode
+        when "offline" then "pay_on_day"
+        when "platform_collect", "client_processor" then "stripe"
+        else "swipe_simple"
+        end
       end
 
       def extract_public_team_members_attributes
