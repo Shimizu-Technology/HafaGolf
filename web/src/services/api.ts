@@ -495,18 +495,58 @@ export interface ActivityLogSummary {
   daily_activity: Record<string, number>;
 }
 
-// Global settings (shared across tournaments)
-export interface Settings {
-  id: number;
-  stripe_public_key: string | null;
-  stripe_secret_key: string | null;
-  stripe_webhook_secret: string | null;
-  admin_email: string | null;
-  payment_mode: 'test' | 'production';
-  stripe_configured: boolean;
+export type OrgPaymentMode = 'external_link' | 'platform_collect' | 'client_processor' | 'offline';
+export type PaymentProcessorProvider = 'stripe' | 'swipesimple' | 'paypal' | 'worldpay_cardpointe' | 'none';
+
+export interface OrganizationPaymentConfig {
+  id: string | null;
+  organization_id: string;
+  payment_mode: OrgPaymentMode;
+  processor_provider: PaymentProcessorProvider;
   test_mode: boolean;
-  created_at: string;
-  updated_at: string;
+  effective_test_mode: boolean;
+  has_public_key: boolean;
+  has_secret_key: boolean;
+  has_webhook_secret: boolean;
+  masked_public_key: string | null;
+  webhook_url: string | null;
+  external_checkout_url: string | null;
+  external_walkin_url: string | null;
+  external_donation_url: string | null;
+  platform_fee_flat_cents: number;
+  platform_fee_per_registrant_cents: number;
+  platform_fee_cap_cents: number | null;
+  payout_payee_name: string | null;
+  payout_bank_name: string | null;
+  payout_notes: string | null;
+  stripe_configured: boolean;
+  updated_at: string | null;
+}
+
+export interface OrganizationPaymentConfigResponse {
+  payment_config: OrganizationPaymentConfig;
+  can_edit_platform_fees: boolean;
+}
+
+export interface UpdateOrganizationPaymentConfigInput {
+  payment_mode?: OrgPaymentMode;
+  processor_provider?: PaymentProcessorProvider;
+  test_mode?: boolean;
+  public_key?: string;
+  secret_key?: string;
+  webhook_secret?: string;
+  clear_public_key?: boolean;
+  clear_secret_key?: boolean;
+  clear_webhook_secret?: boolean;
+  external_checkout_url?: string | null;
+  external_walkin_url?: string | null;
+  external_donation_url?: string | null;
+  platform_fee_flat_cents?: number;
+  platform_fee_per_registrant_cents?: number;
+  platform_fee_cap_cents?: number | null;
+  payout_payee_name?: string | null;
+  payout_bank_name?: string | null;
+  payout_notes?: string | null;
 }
 
 export interface CheckoutSession {
@@ -1198,15 +1238,24 @@ export class ApiClient {
     });
   }
 
-  // Settings (global only)
-  async getSettings(): Promise<Settings> {
-    return this.request('/api/v1/settings');
+  // Per-organization payment configuration (replaces legacy global /settings)
+  async getOrganizationPaymentConfig(orgSlug: string): Promise<OrganizationPaymentConfigResponse> {
+    return this.request(`/api/v1/admin/organizations/${encodeURIComponent(orgSlug)}/payment_config`);
   }
 
-  async updateSettings(data: Partial<Settings>): Promise<Settings> {
-    return this.request('/api/v1/settings', {
+  async updateOrganizationPaymentConfig(
+    orgSlug: string,
+    data: UpdateOrganizationPaymentConfigInput
+  ): Promise<OrganizationPaymentConfigResponse> {
+    return this.request(`/api/v1/admin/organizations/${encodeURIComponent(orgSlug)}/payment_config`, {
       method: 'PATCH',
-      body: JSON.stringify({ setting: data }),
+      body: JSON.stringify({ payment_config: data }),
+    });
+  }
+
+  async rotateOrganizationWebhookToken(orgSlug: string): Promise<OrganizationPaymentConfigResponse> {
+    return this.request(`/api/v1/admin/organizations/${encodeURIComponent(orgSlug)}/payment_config/rotate_webhook_token`, {
+      method: 'POST',
     });
   }
 

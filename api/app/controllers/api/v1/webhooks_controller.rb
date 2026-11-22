@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Api
   module V1
     class WebhooksController < ApplicationController
@@ -6,62 +8,82 @@ module Api
       skip_before_action :authenticate_user!, raise: false
 
       # POST /api/v1/webhooks/stripe
+      # Platform-owned Stripe account (`platform_collect`)
       def stripe
         payload = request.body.read
         sig_header = request.env["HTTP_STRIPE_SIGNATURE"]
 
-        setting = Setting.instance
-        webhook_secret = StripeConfig.webhook_secret(setting: setting)
-        stripe_secret = StripeConfig.secret_key(setting: setting)
-
+        stripe_secret = StripeConfig.platform_secret_key
         unless stripe_secret.present?
-          Rails.logger.error("Stripe webhook received but Stripe is not configured")
+          Rails.logger.error("Stripe platform webhook received but platform Stripe is not configured")
           head :service_unavailable
           return
         end
 
-        Stripe.api_key = stripe_secret
+        webhook_secret = StripeConfig.platform_webhook_secret
+        event = parse_and_verify_stripe_event(
+          payload: payload,
+          sig_header: sig_header,
+          webhook_secret: webhook_secret,
+          context_label: "platform"
+        )
+        return unless event
 
-        begin
-          # Verify the webhook signature if we have a webhook secret
-          if webhook_secret.present?
-            event = Stripe::Webhook.construct_event(payload, sig_header, webhook_secret)
-          else
-            if Rails.env.production?
-              Rails.logger.error("Stripe webhook secret is missing in production")
-              head :bad_request
-              return
-            end
+        TenantContext.with_platform_access do
+          dispatch_stripe_event(event, scope_organization_id: nil, expected_mode: "platform_collect")
+        end
 
-            # Development/testing fallback without signature verification
-            data = JSON.parse(payload, symbolize_names: true)
-            event = Stripe::Event.construct_from(data)
-            Rails.logger.warn("Stripe webhook received without signature verification")
-          end
-        rescue JSON::ParserError => e
-          Rails.logger.error("Invalid webhook payload: #{e.message}")
-          head :bad_request
-          return
-        rescue Stripe::SignatureVerificationError => e
-          Rails.logger.error("Stripe signature verification failed: #{e.message}")
-          head :bad_request
+        head :ok
+      end
+
+      # POST /api/v1/webhooks/stripe/orgs/:webhook_endpoint_token
+      # Client-owned Stripe account (`client_processor`), routed via opaque token
+      def stripe_org
+        token = params[:webhook_endpoint_token].to_s.strip
+        if token.blank?
+          head :not_found
           return
         end
 
-        # Handle the event ONLY AFTER signature verification has passed
-        TenantContext.with_platform_access do
-          case event.type
-          when "checkout.session.completed"
-            handle_checkout_session_completed(event.data.object)
-          when "checkout.session.expired"
-            handle_checkout_session_expired(event.data.object)
-          when "payment_intent.succeeded"
-            handle_payment_intent_succeeded(event.data.object)
-          when "payment_intent.payment_failed"
-            handle_payment_intent_failed(event.data.object)
-          else
-            Rails.logger.info("Unhandled Stripe event type: #{event.type}")
-          end
+        payment_config = TenantContext.with_platform_access do
+          OrganizationPaymentConfig.includes(:organization).find_by(
+            webhook_endpoint_token: token,
+            payment_mode: "client_processor"
+          )
+        end
+
+        unless payment_config&.processor_provider == "stripe"
+          head :not_found
+          return
+        end
+
+        adapter = Payments::Resolver.for(payment_config.organization, config: payment_config)
+        unless adapter.configured?
+          Rails.logger.error("Client Stripe webhook received for org #{payment_config.organization_id} but credentials are missing")
+          head :service_unavailable
+          return
+        end
+
+        payload = request.body.read
+        sig_header = request.env["HTTP_STRIPE_SIGNATURE"]
+
+        event = parse_and_verify_stripe_event(
+          payload: payload,
+          sig_header: sig_header,
+          webhook_secret: adapter.webhook_secret,
+          context_label: "org:#{payment_config.organization_id}"
+        )
+        return unless event
+
+        # Execute strictly inside this organization's RLS boundary so a client webhook
+        # can NEVER read or mutate another organization's golfers.
+        TenantContext.with_organization(payment_config.organization_id) do
+          dispatch_stripe_event(
+            event,
+            scope_organization_id: payment_config.organization_id,
+            expected_mode: "client_processor",
+            account_origin: adapter.account_origin
+          )
         end
 
         head :ok
@@ -69,16 +91,77 @@ module Api
 
       private
 
-      def handle_checkout_session_completed(session)
+      def parse_and_verify_stripe_event(payload:, sig_header:, webhook_secret:, context_label:)
+        if webhook_secret.present?
+          Stripe::Webhook.construct_event(payload, sig_header, webhook_secret)
+        else
+          if StripeConfig.strict_webhook_signatures_required?
+            Rails.logger.error("Stripe webhook secret missing (#{context_label}) in staging/production")
+            head :bad_request
+            return nil
+          end
+
+          data = JSON.parse(payload, symbolize_names: true)
+          Rails.logger.warn("Stripe webhook (#{context_label}) accepted without signature in local dev/test")
+          Stripe::Event.construct_from(data)
+        end
+      rescue JSON::ParserError => e
+        Rails.logger.error("Invalid Stripe webhook payload (#{context_label}): #{e.message}")
+        head :bad_request
+        nil
+      rescue Stripe::SignatureVerificationError => e
+        Rails.logger.error("Stripe signature verification failed (#{context_label}): #{e.message}")
+        head :bad_request
+        nil
+      end
+
+      def dispatch_stripe_event(event, scope_organization_id:, expected_mode:, account_origin: nil)
+        case event.type
+        when "checkout.session.completed"
+          handle_checkout_session_completed(
+            event.data.object,
+            scope_organization_id: scope_organization_id,
+            expected_mode: expected_mode,
+            account_origin: account_origin
+          )
+        when "checkout.session.expired"
+          handle_checkout_session_expired(event.data.object, scope_organization_id: scope_organization_id)
+        when "payment_intent.succeeded"
+          Rails.logger.info("Payment intent succeeded: #{event.data.object.id}")
+        when "payment_intent.payment_failed"
+          handle_payment_intent_failed(event.data.object, scope_organization_id: scope_organization_id)
+        else
+          Rails.logger.info("Unhandled Stripe event type: #{event.type}")
+        end
+      end
+
+      def scoped_golfer_relation(scope_organization_id)
+        scope = Golfer.includes(tournament: :organization)
+        if scope_organization_id.present?
+          scope = scope.joins(:tournament).where(tournaments: { organization_id: scope_organization_id })
+        end
+        scope
+      end
+
+      def metadata_value(metadata, key)
+        return nil unless metadata
+
+        if metadata.respond_to?(:[])
+          metadata[key] || metadata[key.to_s]
+        elsif metadata.respond_to?(key)
+          metadata.public_send(key)
+        end
+      end
+
+      def handle_checkout_session_completed(session, scope_organization_id:, expected_mode:, account_origin:)
         Rails.logger.info("Checkout session completed: #{session.id}")
 
-        # Find the golfer by session ID
-        golfer = Golfer.find_by(stripe_checkout_session_id: session.id)
+        scope = scoped_golfer_relation(scope_organization_id)
+        golfer = scope.find_by(stripe_checkout_session_id: session.id)
 
-        unless golfer
-          # Try to find by metadata
-          golfer_id = session.metadata&.golfer_id
-          golfer = Golfer.find_by(id: golfer_id) if golfer_id.present?
+        if golfer.nil?
+          golfer_id = metadata_value(session.metadata, :golfer_id)
+          golfer = scope.find_by(id: golfer_id) if golfer_id.present?
         end
 
         unless golfer
@@ -86,30 +169,47 @@ module Api
           return
         end
 
-        # Skip if already paid (idempotency)
-        if golfer.payment_status == "paid"
-          Rails.logger.info("Golfer #{golfer.id} already marked as paid")
+        org = golfer.tournament.organization
+        metadata_org_id = metadata_value(session.metadata, :organization_id)
+        if metadata_org_id.present? && metadata_org_id.to_s != org.id.to_s
+          Rails.logger.warn("Stripe webhook org metadata mismatch for golfer #{golfer.id}; ignoring")
           return
         end
 
-        # Update payment status
-        golfer.update!(
-          golfer.paid_registration_attributes(
+        payment_config = org.effective_payment_config
+        if expected_mode.present? && payment_config.payment_mode != expected_mode
+          Rails.logger.warn("Stripe webhook mode mismatch for org #{org.id} (expected #{expected_mode}, got #{payment_config.payment_mode}); ignoring")
+          return
+        end
+
+        origin_tag = account_origin || payment_config.expected_stripe_account_origin || "platform_live"
+        updated = false
+
+        ActiveRecord::Base.transaction(requires_new: true) do
+          golfer.lock!
+          next if golfer.payment_status == "paid"
+
+          attrs = {
             payment_status: "paid",
             stripe_payment_intent_id: session.payment_intent,
+            stripe_account_origin: origin_tag,
             payment_method: "stripe",
             payment_notes: "Paid via Stripe on #{Time.current.strftime('%Y-%m-%d %H:%M:%S')} (webhook confirmed)",
             paid_at: Time.current
-          )
-        )
+          }
+          attrs[:payment_amount_cents] = session.amount_total if session.respond_to?(:amount_total) && session.amount_total.present?
 
-        Rails.logger.info("Golfer #{golfer.id} marked as paid via webhook")
+          golfer.update!(golfer.paid_registration_attributes(attrs))
+          updated = true
+        end
 
-        # Send confirmation emails with staggered delays to avoid rate limiting
+        return unless updated
+
+        Rails.logger.info("Golfer #{golfer.id} marked as paid via webhook (#{origin_tag})")
+
         GolferMailer.payment_confirmation_email(golfer).deliver_later
         AdminMailer.notify_payment_received(golfer).deliver_later(wait: 2.seconds)
 
-        # Broadcast update (non-critical - wrapped in rescue)
         begin
           ActionCable.server.broadcast("golfers_channel_#{golfer.tournament_id}", {
             action: "payment_confirmed",
@@ -120,32 +220,22 @@ module Api
         end
       end
 
-      def handle_checkout_session_expired(session)
+      def handle_checkout_session_expired(session, scope_organization_id:)
         Rails.logger.info("Checkout session expired: #{session.id}")
 
-        golfer = Golfer.find_by(stripe_checkout_session_id: session.id)
+        golfer = scoped_golfer_relation(scope_organization_id).find_by(stripe_checkout_session_id: session.id)
         return unless golfer
 
-        # Clear the session ID so they can try again
         golfer.update(stripe_checkout_session_id: nil)
-
         Rails.logger.info("Cleared expired checkout session for golfer #{golfer.id}")
       end
 
-      def handle_payment_intent_succeeded(payment_intent)
-        Rails.logger.info("Payment intent succeeded: #{payment_intent.id}")
-        # The checkout.session.completed event handles our use case,
-        # but we log this for completeness
-      end
-
-      def handle_payment_intent_failed(payment_intent)
+      def handle_payment_intent_failed(payment_intent, scope_organization_id:)
         Rails.logger.error("Payment intent failed: #{payment_intent.id}")
-        
-        # Find the golfer by payment intent ID if we have it
-        golfer = Golfer.find_by(stripe_payment_intent_id: payment_intent.id)
+
+        golfer = scoped_golfer_relation(scope_organization_id).find_by(stripe_payment_intent_id: payment_intent.id)
         return unless golfer
 
-        # Update notes to indicate failed payment
         golfer.update(
           payment_notes: "Payment failed on #{Time.current.strftime('%Y-%m-%d %H:%M:%S')}: #{payment_intent.last_payment_error&.message}"
         )

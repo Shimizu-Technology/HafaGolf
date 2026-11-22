@@ -266,6 +266,111 @@ module Api
         render json: { error: 'Organization not found' }, status: :not_found
       end
 
+      # GET /api/v1/admin/organizations/:slug/payment_config
+      def payment_config
+        organization = Organization.find_by_slug!(params[:slug])
+        require_org_admin!(organization)
+        return if performed?
+
+        config = organization.effective_payment_config
+        render json: {
+          payment_config: config.safe_as_json(api_base_url: request.base_url),
+          can_edit_platform_fees: current_user.super_admin?
+        }
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Organization not found' }, status: :not_found
+      end
+
+      # PATCH /api/v1/admin/organizations/:slug/payment_config
+      def update_payment_config
+        organization = Organization.find_by_slug!(params[:slug])
+        require_org_admin!(organization)
+        return if performed?
+
+        raw = params.require(:payment_config)
+        fee_keys = %w[platform_fee_flat_cents platform_fee_per_registrant_cents platform_fee_cap_cents]
+        if !current_user.super_admin? && fee_keys.any? { |k| raw.key?(k) }
+          return render json: { error: "Only platform super admins can modify platform fee terms" }, status: :forbidden
+        end
+
+        config = organization.organization_payment_config || organization.build_organization_payment_config
+        allowed = %i[
+          payment_mode processor_provider test_mode
+          external_checkout_url external_walkin_url external_donation_url
+          payout_payee_name payout_bank_name payout_notes
+        ]
+        allowed += %i[platform_fee_flat_cents platform_fee_per_registrant_cents platform_fee_cap_cents] if current_user.super_admin?
+        attrs = raw.permit(*allowed).to_h
+
+        target_mode = (attrs["payment_mode"].presence || config.payment_mode || "offline").to_s.strip.downcase
+
+        if target_mode == "client_processor"
+          attrs["encrypted_public_key"] = nil if ActiveModel::Type::Boolean.new.cast(raw[:clear_public_key])
+          attrs["encrypted_secret_key"] = nil if ActiveModel::Type::Boolean.new.cast(raw[:clear_secret_key])
+          attrs["encrypted_webhook_secret"] = nil if ActiveModel::Type::Boolean.new.cast(raw[:clear_webhook_secret])
+
+          attrs["encrypted_public_key"] = raw[:public_key].to_s.strip if raw[:public_key].present?
+          attrs["encrypted_secret_key"] = raw[:secret_key].to_s.strip if raw[:secret_key].present?
+          attrs["encrypted_webhook_secret"] = raw[:webhook_secret].to_s.strip if raw[:webhook_secret].present?
+        else
+          # Clear client credentials & webhook token when leaving client_processor mode
+          attrs["encrypted_public_key"] = nil
+          attrs["encrypted_secret_key"] = nil
+          attrs["encrypted_webhook_secret"] = nil
+          attrs["webhook_endpoint_token"] = nil
+        end
+
+        if config.update(attrs)
+          ActivityLog.log(
+            admin: current_user,
+            action: "settings_updated",
+            target: organization,
+            organization: organization,
+            details: "Updated payment configuration (mode: #{config.payment_mode}, provider: #{config.processor_provider})",
+            metadata: {
+              payment_mode: config.payment_mode,
+              processor_provider: config.processor_provider,
+              test_mode: config.test_mode
+            }
+          )
+          render json: {
+            payment_config: config.safe_as_json(api_base_url: request.base_url),
+            can_edit_platform_fees: current_user.super_admin?
+          }
+        else
+          render json: { errors: config.errors.full_messages }, status: :unprocessable_entity
+        end
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Organization not found' }, status: :not_found
+      end
+
+      # POST /api/v1/admin/organizations/:slug/payment_config/rotate_webhook_token
+      def rotate_webhook_token
+        organization = Organization.find_by_slug!(params[:slug])
+        require_org_admin!(organization)
+        return if performed?
+
+        config = organization.organization_payment_config
+        unless config&.client_processor?
+          return render json: { error: "Webhook token rotation is only available in client_processor mode" }, status: :unprocessable_entity
+        end
+
+        config.rotate_webhook_endpoint_token!
+        ActivityLog.log(
+          admin: current_user,
+          action: "settings_updated",
+          target: organization,
+          organization: organization,
+          details: "Rotated client processor webhook endpoint token"
+        )
+        render json: {
+          payment_config: config.safe_as_json(api_base_url: request.base_url),
+          can_edit_platform_fees: current_user.super_admin?
+        }
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Organization not found' }, status: :not_found
+      end
+
       # PATCH /api/v1/admin/organizations/:slug/features
       def update_features
         organization = Organization.find_by_slug!(params[:slug])

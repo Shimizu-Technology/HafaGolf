@@ -73,8 +73,8 @@ class Api::V1::GolfersControllerTest < ActionDispatch::IntegrationTest
     unique_email = "new-golfer-#{SecureRandom.hex(4)}@test.com"
     tournament = tournaments(:tournament_one)
     
-    # Ensure settings allow registration
-    Setting.instance.update!(registration_open: true)
+    # Ensure tournament allows registration
+    tournament.update!(registration_open: true)
     
     post api_v1_golfers_url, params: {
       tournament_id: tournament.id,
@@ -249,7 +249,8 @@ class Api::V1::GolfersControllerTest < ActionDispatch::IntegrationTest
       group: group,
       position: 2
     )
-    Setting.instance.update!(stripe_secret_key: "sk_test_refund_failure")
+    previous_stripe_key = ENV["PLATFORM_STRIPE_SECRET_KEY"]
+    ENV["PLATFORM_STRIPE_SECRET_KEY"] = "sk_test_refund_failure"
 
     refund_singleton = class << Stripe::Refund; self; end
     refund_singleton.send(:alias_method, :__original_create_for_test, :create)
@@ -258,6 +259,7 @@ class Api::V1::GolfersControllerTest < ActionDispatch::IntegrationTest
     begin
       post refund_api_v1_golfer_url(golfer), headers: auth_headers
     ensure
+      ENV["PLATFORM_STRIPE_SECRET_KEY"] = previous_stripe_key
       refund_singleton.send(:alias_method, :create, :__original_create_for_test)
       refund_singleton.send(:remove_method, :__original_create_for_test)
     end
