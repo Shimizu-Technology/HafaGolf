@@ -9,7 +9,7 @@ class RaffleSmsService
       ticket_numbers = tickets.map(&:display_number).join(", ")
       total_cents = tickets.sum(&:price_cents)
       total_dollars = "$#{'%.2f' % (total_cents / 100.0)}"
-      org_name = tournament.organization&.name || "Make-A-Wish Guam & CNMI"
+      org_name = tournament.organization&.name || "HafaGolf"
 
       body = "#{org_name} — #{tournament.name}\n\n" \
              "Hi #{buyer_name}! Your #{tickets.size} raffle ticket#{'s' if tickets.size != 1}:\n" \
@@ -22,13 +22,18 @@ class RaffleSmsService
         channel: "sms",
         purpose: "raffle_ticket_confirmation",
         recipient: buyer_phone,
+        organization: tournament&.organization,
         tournament: tournament,
         messageable: tickets.first,
         request_payload: { ticket_ids: tickets.map(&:id), ticket_numbers: ticket_numbers, body_chars: body.length },
         metadata: { buyer_name: buyer_name, ticket_count: tickets.size }
       )
 
-      result = ClicksendClient.send_sms(to: buyer_phone, body: body)
+      result = ClicksendClient.send_sms(
+        to: buyer_phone,
+        body: body,
+        from: tournament&.organization&.sms_sender_id.presence
+      )
       MessageDeliveryTracker.track_result!(delivery, result)
     rescue => e
       Rails.logger.error("[RaffleSmsService] purchase_confirmation failed: #{e.message}")
@@ -43,7 +48,7 @@ class RaffleSmsService
       return skip_delivery!(delivery, "ClickSend is not configured") unless ClicksendClient.configured?
 
       tournament = raffle_prize.tournament
-      org_name = tournament.organization&.name || "Make-A-Wish Guam & CNMI"
+      org_name = tournament.organization&.name || "HafaGolf"
 
       body = "#{org_name} — #{tournament.name}\n\n" \
              "Congratulations #{raffle_prize.winner_name}! " \
@@ -65,13 +70,18 @@ class RaffleSmsService
         channel: "sms",
         purpose: "raffle_winner_notification",
         recipient: phone,
+        organization: tournament&.organization,
         tournament: tournament,
         messageable: raffle_prize,
         request_payload: { prize_id: raffle_prize.id, ticket_number: ticket&.display_number, body_chars: body.length },
         metadata: { winner_name: raffle_prize.winner_name }
       )
 
-      result = ClicksendClient.send_sms(to: phone, body: body)
+      result = ClicksendClient.send_sms(
+        to: phone,
+        body: body,
+        from: tournament&.organization&.sms_sender_id.presence
+      )
       MessageDeliveryTracker.track_result!(delivery, result)
     rescue => e
       Rails.logger.error("[RaffleSmsService] winner_notification failed: #{e.message}")

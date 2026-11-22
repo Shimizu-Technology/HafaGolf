@@ -35,13 +35,18 @@ class UserInviteEmailServiceTest < ActiveSupport::TestCase
     ENV["RESEND_API_KEY"] = "test_resend_key"
     ENV["RESEND_FROM_EMAIL"] = "noreply@example.com"
 
-    with_singleton_method(Resend::Emails, :send, ->(*) {
+    captured_payload = nil
+    org = organizations(:org_one)
+
+    with_singleton_method(Resend::Emails, :send, ->(payload) {
+      captured_payload = payload
       { "id" => "email_invite_123" }
     }) do
       result = UserInviteEmailService.send_invite(
         user: users(:user_no_clerk),
         invited_by: users(:user_one),
-        role: "admin"
+        role: "admin",
+        organization: org
       )
 
       delivery = MessageDelivery.last
@@ -49,6 +54,8 @@ class UserInviteEmailServiceTest < ActiveSupport::TestCase
       assert_equal "accepted", delivery.status
       assert_equal "admin_invite", delivery.purpose
       assert_equal "email_invite_123", delivery.provider_message_id
+      assert_equal org.id, delivery.organization_id
+      assert_equal [ { name: "delivery_id", value: delivery.id.to_s } ], captured_payload.fetch(:tags)
     end
   ensure
     ENV["RESEND_API_KEY"] = previous_key

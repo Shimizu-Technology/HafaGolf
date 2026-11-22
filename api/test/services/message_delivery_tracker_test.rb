@@ -79,4 +79,83 @@ class MessageDeliveryTrackerTest < ActiveSupport::TestCase
     assert_equal "upstream unavailable", delivery.response_payload.fetch("raw_response")
     assert delivery.failed_at.present?
   end
+
+  test "create populates organization_id from explicit organization, tournament, or messageable" do
+    org_one = organizations(:org_one)
+    org_two = Organization.create!(name: "Second Golf Org", slug: "second-golf-org-#{SecureRandom.hex(4)}")
+    tournament = tournaments(:tournament_one)
+    ticket = tournament.raffle_tickets.create!(
+      purchaser_name: "Tracker Buyer",
+      payment_status: "paid"
+    )
+
+    from_tournament = MessageDeliveryTracker.create!(
+      provider: "resend",
+      channel: "email",
+      purpose: "raffle_ticket_confirmation",
+      recipient: "buyer@example.com",
+      tournament: tournament
+    )
+    assert_equal tournament.organization_id, from_tournament.organization_id
+
+    from_messageable = MessageDeliveryTracker.create!(
+      provider: "resend",
+      channel: "email",
+      purpose: "raffle_ticket_confirmation",
+      recipient: "buyer@example.com",
+      messageable: ticket
+    )
+    assert_equal tournament.organization_id, from_messageable.organization_id
+
+    from_org_messageable = MessageDeliveryTracker.create!(
+      provider: "resend",
+      channel: "email",
+      purpose: "admin_invite",
+      recipient: "admin@example.com",
+      messageable: org_one
+    )
+    assert_equal org_one.id, from_org_messageable.organization_id
+
+    from_explicit = MessageDeliveryTracker.create!(
+      provider: "resend",
+      channel: "email",
+      purpose: "admin_invite",
+      recipient: "admin2@example.com",
+      organization: org_two,
+      tournament: tournament
+    )
+    assert_equal org_two.id, from_explicit.organization_id
+  end
+
+  test "track_result does not regress delivered status or drop webhook events when webhook arrives first" do
+    delivery = MessageDelivery.create!(
+      provider: "resend",
+      channel: "email",
+      purpose: "raffle_ticket_confirmation",
+      recipient: "race@example.com",
+      status: "pending"
+    )
+
+    # Simulate webhook arriving before track_result!
+    stale_handle = MessageDelivery.find(delivery.id)
+    delivery.update!(provider_message_id: "email_fast_123")
+    delivery.apply_provider_event!(
+      status: "delivered",
+      provider_status_text: "email.delivered",
+      payload: { "type" => "email.delivered", "data" => { "email_id" => "email_fast_123" } },
+      event_at: Time.current
+    )
+
+    MessageDeliveryTracker.track_result!(
+      stale_handle,
+      { success: true, status: "accepted", message_id: "email_fast_123", data: { "id" => "email_fast_123" } }
+    )
+
+    delivery.reload
+    assert_equal "delivered", delivery.status
+    assert delivery.delivered_at.present?
+    assert_equal "email_fast_123", delivery.provider_message_id
+    assert_equal 1, delivery.response_payload.fetch("events").length
+    assert_equal "email_fast_123", delivery.response_payload.fetch("id")
+  end
 end

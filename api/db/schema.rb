@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_05_12_121000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_22_151700) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -162,7 +162,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_05_12_121000) do
     t.string "status", default: "pending", null: false
     t.bigint "tournament_id"
     t.datetime "updated_at", null: false
+    t.uuid "organization_id"
     t.index ["messageable_type", "messageable_id"], name: "index_message_deliveries_on_messageable"
+    t.index ["organization_id"], name: "index_message_deliveries_on_organization_id"
     t.index ["provider", "provider_message_id"], name: "index_message_deliveries_on_provider_and_provider_message_id"
     t.index ["provider_message_id"], name: "index_message_deliveries_on_provider_message_id"
     t.index ["purpose", "status"], name: "index_message_deliveries_on_purpose_and_status"
@@ -195,6 +197,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_05_12_121000) do
     t.string "subscription_status", default: "active"
     t.datetime "updated_at", null: false
     t.string "website_url"
+    t.string "sms_sender_id", limit: 11
     t.index ["slug"], name: "index_organizations_on_slug", unique: true
   end
 
@@ -274,10 +277,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_05_12_121000) do
     t.index ["raffle_prize_id"], name: "index_raffle_tickets_on_raffle_prize_id"
     t.index ["raffle_sale_batch_id"], name: "index_raffle_tickets_on_raffle_sale_batch_id"
     t.index ["sold_by_user_id"], name: "index_raffle_tickets_on_sold_by_user_id"
-    t.index ["ticket_number"], name: "index_raffle_tickets_on_ticket_number", unique: true
     t.index ["tournament_id", "is_winner"], name: "index_raffle_tickets_on_tournament_id_and_is_winner"
     t.index ["tournament_id", "payment_status"], name: "index_raffle_tickets_on_tournament_id_and_payment_status"
     t.index ["tournament_id", "sequence_number"], name: "index_raffle_tickets_on_tournament_id_and_sequence_number", unique: true
+    t.index ["tournament_id", "ticket_number"], name: "index_raffle_tickets_on_tournament_id_and_ticket_number", unique: true
     t.index ["tournament_id"], name: "index_raffle_tickets_on_tournament_id"
   end
 
@@ -492,6 +495,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_05_12_121000) do
   add_foreign_key "golfers", "tournaments"
   add_foreign_key "golfers", "users", column: "refunded_by_id", on_delete: :nullify
   add_foreign_key "groups", "tournaments"
+  add_foreign_key "message_deliveries", "organizations", on_delete: :nullify
   add_foreign_key "message_deliveries", "tournaments", on_delete: :nullify
   add_foreign_key "organization_memberships", "organizations"
   add_foreign_key "organization_memberships", "users"

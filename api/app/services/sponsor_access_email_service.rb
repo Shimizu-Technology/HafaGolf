@@ -13,19 +13,23 @@ class SponsorAccessEmailService
         channel: "email",
         purpose: "sponsor_portal_invite",
         recipient: sponsor.login_email,
+        organization: tournament&.organization,
         tournament: tournament,
         messageable: sponsor,
         request_payload: { from: from_email, to: sponsor.login_email, subject: mail.subject },
         metadata: { sponsor_id: sponsor.id, sponsor_name: sponsor.name }
       )
 
-      response = Resend::Emails.send({
+      email_payload = {
         from: from_email,
         to: sponsor.login_email,
         subject: mail.subject,
         html: html_body(mail),
         text: text_body(mail)
-      }.compact)
+      }.compact
+      email_payload[:tags] = [ { name: "delivery_id", value: delivery.id.to_s } ] if delivery.present?
+
+      response = Resend::Emails.send(email_payload)
 
       parsed = response.respond_to?(:parsed_response) ? response.parsed_response : response
       if parsed.is_a?(Hash) && (parsed["statusCode"] || parsed["error"] || parsed[:error])

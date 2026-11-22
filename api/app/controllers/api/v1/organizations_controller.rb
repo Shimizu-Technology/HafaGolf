@@ -605,7 +605,7 @@ module Api
         end
         membership = org.organization_memberships.create!(user: user, role: role)
 
-        SendUserInviteEmailJob.perform_later(user.id, current_user&.id, role)
+        SendUserInviteEmailJob.perform_later(user.id, current_user&.id, role, org.id)
 
         render json: {
           member: member_response(membership),
@@ -626,7 +626,7 @@ module Api
           return render json: { error: "This user has already accepted their invitation." }, status: :unprocessable_entity
         end
 
-        SendUserInviteEmailJob.perform_later(user.id, current_user&.id)
+        SendUserInviteEmailJob.perform_later(user.id, current_user&.id, membership.role, org.id)
 
         render json: { message: "Invitation email queued for #{user.email}" }
       end
@@ -759,6 +759,7 @@ module Api
         params.require(:organization).permit(
           :name, :slug, :description, :logo_url, :primary_color,
           :banner_url, :contact_email, :contact_phone, :website_url,
+          :sms_sender_id,
           settings: {}
         )
       end
@@ -775,6 +776,7 @@ module Api
           contact_email: org.contact_email,
           contact_phone: org.contact_phone,
           website_url: org.website_url,
+          sms_sender_id: org.sms_sender_id,
           settings: org.settings || {},
           subscription_status: org.subscription_status,
           tournament_count: org.tournament_count,
