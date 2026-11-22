@@ -19,7 +19,7 @@ module Api
         :sync_tickets, :resend_winner_notification
       ]
       before_action :authorize_volunteer_or_admin!, only: [
-        :admin_tickets, :create_tickets, :sell_tickets, :resend_ticket_confirmation
+        :admin_tickets, :create_tickets, :sell_tickets, :update_ticket_contact, :resend_ticket_confirmation
       ]
       before_action -> { require_feature!(:raffle) }
 
@@ -348,11 +348,13 @@ module Api
       # Admin - list all tickets with search, filter, pagination
       def admin_tickets
         tickets = @tournament.raffle_tickets.includes(:golfer, :raffle_prize, :sold_by_user).recent
+        delivery_summary_service = RaffleDeliverySummaryService.new(@tournament)
+        needs_attention_ids = delivery_summary_service.needs_attention_ticket_ids
 
         # Filter by payment status
         tickets = tickets.where(payment_status: params[:status]) if params[:status].present?
 
-        # Filter by type: "purchased" or "complimentary"
+        # Filter by type: "purchased", "complimentary", "winners", "voided", "needs_attention"
         case params[:type]
         when 'purchased'
           tickets = tickets.where('price_cents > 0').where.not(payment_status: 'voided')
@@ -362,6 +364,8 @@ module Api
           tickets = tickets.where(is_winner: true)
         when 'voided'
           tickets = tickets.where(payment_status: 'voided')
+        when 'needs_attention'
+          tickets = tickets.where(id: needs_attention_ids)
         end
 
         # Search by ticket number, name, email, or phone
@@ -393,7 +397,9 @@ module Api
         paginated = tickets.offset((page - 1) * per_page).limit(per_page)
 
         render json: {
-          tickets: paginated.map { |t| ticket_response(t, admin: true) },
+          tickets: paginated.map { |t|
+            ticket_response(t, admin: true, delivery_status: delivery_summary_service.summary_for_ticket(t))
+          },
           pagination: {
             page: page,
             per_page: per_page,
@@ -408,6 +414,7 @@ module Api
             voided: stat_row[4].to_i,
             complimentary: stat_row[5].to_i,
             purchased: stat_row[6].to_i,
+            needs_attention: needs_attention_ids.size,
             additional_revenue_cents: stat_row[7].to_i
           }
         }
@@ -417,15 +424,26 @@ module Api
       # Admin - create tickets (manual sale)
       def create_tickets
         quantity = (params[:quantity] || 1).to_i
+        if quantity <= 0
+          return render json: { error: 'Quantity must be positive' }, status: :unprocessable_entity
+        end
 
+        phone_validation = RafflePhoneValidator.validate(params[:purchaser_phone])
+        unless phone_validation[:valid]
+          return render json: { error: phone_validation[:error] }, status: :unprocessable_entity
+        end
+
+        normalized_phone = phone_validation[:normalized]
         tickets = []
+        validation_error = nil
+
         ActiveRecord::Base.transaction do
           @tournament.lock!
           quantity.times do
             ticket = @tournament.raffle_tickets.build(
-              purchaser_name: params[:purchaser_name],
-              purchaser_email: params[:purchaser_email]&.downcase,
-              purchaser_phone: params[:purchaser_phone],
+              purchaser_name: params[:purchaser_name]&.strip.presence,
+              purchaser_email: params[:purchaser_email]&.strip&.downcase.presence,
+              purchaser_phone: normalized_phone,
               golfer_id: params[:golfer_id],
               price_cents: @tournament.raffle_ticket_price_cents,
               payment_status: params[:mark_paid] ? 'paid' : 'pending',
@@ -439,7 +457,9 @@ module Api
             if ticket.save
               tickets << ticket
             else
-              raise ActiveRecord::Rollback, ticket.errors.full_messages.join(', ')
+              validation_error = ticket.errors.full_messages.join(', ')
+              tickets.clear
+              raise ActiveRecord::Rollback
             end
           end
         end
@@ -456,7 +476,7 @@ module Api
             message: "#{tickets.count} ticket(s) created"
           }, status: :created
         else
-          render json: { error: 'Failed to create tickets' }, status: :unprocessable_entity
+          render json: { error: validation_error.presence || 'Failed to create tickets' }, status: :unprocessable_entity
         end
       end
 
@@ -542,11 +562,17 @@ module Api
         price_cents = params[:price_cents].to_i
         buyer_name = params[:buyer_name]&.strip.presence
         buyer_email = params[:buyer_email]&.strip&.downcase.presence
-        buyer_phone = params[:buyer_phone]&.strip.presence
+        raw_buyer_phone = params[:buyer_phone]&.strip.presence
 
         unless buyer_name.present?
           return render json: { error: 'Buyer name is required so raffle tickets can be identified during the drawing' }, status: :unprocessable_entity
         end
+
+        phone_validation = RafflePhoneValidator.validate(raw_buyer_phone)
+        unless phone_validation[:valid]
+          return render json: { error: phone_validation[:error] }, status: :unprocessable_entity
+        end
+        buyer_phone = phone_validation[:normalized]
 
         unless buyer_email.present? || buyer_phone.present?
           return render json: { error: 'Email or phone number is required so the buyer can receive their ticket numbers' }, status: :unprocessable_entity
@@ -624,6 +650,153 @@ module Api
         render json: { error: e.message }, status: :unprocessable_entity
       end
 
+      # PATCH /api/v1/tournaments/:tournament_id/raffle/tickets/:id/contact
+      # Volunteer/Admin - update buyer contact across the sale batch and optionally resend confirmation
+      def update_ticket_contact
+        ticket = @tournament.raffle_tickets.find(params[:id])
+
+        if ticket.voided?
+          return render json: { error: 'Cannot update contact for a voided ticket' }, status: :unprocessable_entity
+        end
+
+        if params.key?(:buyer_name)
+          next_name = params[:buyer_name]&.strip.presence
+          unless next_name.present?
+            return render json: { error: 'Buyer name is required' }, status: :unprocessable_entity
+          end
+        else
+          next_name = ticket.purchaser_display
+        end
+
+        next_email = params.key?(:buyer_email) ? params[:buyer_email]&.strip&.downcase.presence : ticket.purchaser_email
+
+        if params.key?(:buyer_phone)
+          raw_phone = params[:buyer_phone]&.strip.presence
+          phone_validation = RafflePhoneValidator.validate(raw_phone)
+          unless phone_validation[:valid]
+            return render json: { error: phone_validation[:error] }, status: :unprocessable_entity
+          end
+          next_phone = phone_validation[:normalized]
+        else
+          next_phone = ticket.purchaser_phone
+        end
+
+        unless next_email.present? || next_phone.present?
+          return render json: { error: 'Email or phone number is required so the buyer can receive their ticket numbers' }, status: :unprocessable_entity
+        end
+
+        tickets = ticket_batch_siblings(ticket)
+        if tickets.empty?
+          return render json: { error: 'No active tickets were found for this buyer batch' }, status: :unprocessable_entity
+        end
+
+        before_contact = {
+          name: ticket.purchaser_display,
+          email: ticket.purchaser_email,
+          phone: ticket.purchaser_phone
+        }
+
+        ActiveRecord::Base.transaction do
+          now = Time.current
+          ticket_updates = {
+            purchaser_name: next_name,
+            purchaser_email: next_email,
+            updated_at: now
+          }
+          ticket_updates[:purchaser_phone] = next_phone if params.key?(:buyer_phone)
+          RaffleTicket.where(id: tickets.map(&:id)).update_all(ticket_updates)
+
+          if ticket.raffle_sale_batch.present?
+            batch_attrs = {
+              buyer_name: next_name,
+              buyer_email: next_email
+            }
+            batch_attrs[:buyer_phone] = next_phone if params.key?(:buyer_phone)
+            ticket.raffle_sale_batch.update!(batch_attrs)
+          end
+        end
+
+        tickets.each do |sibling|
+          sibling.purchaser_name = next_name
+          sibling.purchaser_email = next_email
+          sibling.purchaser_phone = next_phone if params.key?(:buyer_phone)
+        end
+
+        resend_requested = ActiveModel::Type::Boolean.new.cast(params[:resend])
+        delivery = nil
+        resent = false
+        if resend_requested
+          paid_tickets = tickets.select { |t| t.payment_status == 'paid' }
+          if paid_tickets.any?
+            sms_phone = next_phone.present? ? RafflePhoneValidator.normalize(next_phone) : nil
+            delivery = send_purchase_notifications(
+              tickets: paid_tickets,
+              buyer_email: next_email,
+              buyer_phone: sms_phone,
+              buyer_name: next_name
+            )
+            resent = true
+          end
+        end
+
+        ticket_numbers = tickets.map(&:display_number)
+        detail_suffix =
+          if resend_requested && resent
+            ' and resent confirmation'
+          elsif resend_requested
+            ' (no paid tickets to resend)'
+          else
+            ''
+          end
+
+        ActivityLog.log(
+          admin: current_user,
+          action: 'raffle_ticket_contact_updated',
+          target: ticket,
+          details: "Updated contact for #{tickets.size} raffle ticket#{'s' unless tickets.size == 1} (#{next_name})#{detail_suffix}",
+          metadata: {
+            source_ticket_id: ticket.id,
+            raffle_sale_batch_id: ticket.raffle_sale_batch_id,
+            ticket_count: tickets.size,
+            ticket_numbers: ticket_numbers,
+            before: before_contact,
+            after: { name: next_name, email: next_email, phone: next_phone },
+            resend_requested: resend_requested,
+            resent: resent,
+            delivery: delivery
+          }.compact,
+          tournament: @tournament
+        )
+
+        response_message =
+          if resend_requested && resent
+            "Contact updated across #{tickets.size} ticket#{'s' unless tickets.size == 1} and confirmation sent"
+          elsif resend_requested
+            "Contact updated across #{tickets.size} ticket#{'s' unless tickets.size == 1} (no paid tickets to resend)"
+          else
+            "Contact updated across #{tickets.size} ticket#{'s' unless tickets.size == 1}"
+          end
+
+        delivery_summary_service = RaffleDeliverySummaryService.new(@tournament)
+        render json: {
+          message: response_message,
+          resent: resent,
+          ticket_count: tickets.size,
+          ticket_numbers: ticket_numbers,
+          buyer: {
+            name: next_name,
+            email: next_email,
+            phone: next_phone
+          },
+          delivery: delivery,
+          tickets: tickets.map { |t|
+            ticket_response(t, admin: true, delivery_status: delivery_summary_service.summary_for_ticket(t))
+          }
+        }
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: e.message }, status: :unprocessable_entity
+      end
+
       # POST /api/v1/tournaments/:tournament_id/raffle/tickets/:id/resend_confirmation
       # Volunteer/Admin - resend the full original sale's ticket numbers to the buyer
       def resend_ticket_confirmation
@@ -634,8 +807,21 @@ module Api
         end
 
         buyer_email = params.key?(:buyer_email) ? params[:buyer_email]&.strip&.downcase.presence : ticket.purchaser_email
-        buyer_phone = params.key?(:buyer_phone) ? params[:buyer_phone]&.strip.presence : ticket.purchaser_phone
-        buyer_name = params.key?(:buyer_name) ? params[:buyer_name].presence || ticket.purchaser_display : ticket.purchaser_display
+        raw_buyer_phone = params.key?(:buyer_phone) ? params[:buyer_phone]&.strip.presence : ticket.purchaser_phone
+        buyer_name = params.key?(:buyer_name) ? params[:buyer_name]&.strip.presence || ticket.purchaser_display : ticket.purchaser_display
+
+        if raw_buyer_phone.present?
+          phone_validation = RafflePhoneValidator.validate(raw_buyer_phone)
+          if phone_validation[:valid]
+            buyer_phone = phone_validation[:normalized]
+          elsif params.key?(:buyer_phone) || buyer_email.blank?
+            return render json: { error: phone_validation[:error] }, status: :unprocessable_entity
+          else
+            buyer_phone = nil
+          end
+        else
+          buyer_phone = nil
+        end
 
         unless buyer_email.present? || buyer_phone.present?
           return render json: { error: 'This ticket has no email or phone number to resend to' }, status: :unprocessable_entity
@@ -799,10 +985,14 @@ module Api
       end
 
       def ticket_confirmation_group(ticket)
-        ticket_numbers = sale_ticket_numbers_for(ticket)
         scope = @tournament.raffle_tickets.active.paid
         return [] unless scope.exists?(id: ticket.id)
 
+        if ticket.raffle_sale_batch_id.present?
+          return scope.where(raffle_sale_batch_id: ticket.raffle_sale_batch_id).order(:sequence_number).to_a
+        end
+
+        ticket_numbers = sale_ticket_numbers_for(ticket)
         if ticket_numbers.present?
           return scope.where(ticket_number: ticket_numbers).order(:sequence_number).to_a
         end
@@ -828,6 +1018,17 @@ module Api
         fallback.order(:sequence_number).to_a
       end
 
+      def ticket_batch_siblings(ticket)
+        return [] if ticket.voided?
+
+        if ticket.raffle_sale_batch_id.present?
+          return @tournament.raffle_tickets.active.where(raffle_sale_batch_id: ticket.raffle_sale_batch_id).order(:sequence_number).to_a
+        end
+
+        group = ticket_confirmation_group(ticket)
+        group.any? ? group : [ ticket ]
+      end
+
       def sale_ticket_numbers_for(ticket)
         ActivityLog
           .where(tournament: @tournament, action: 'raffle_tickets_sold')
@@ -846,8 +1047,19 @@ module Api
         updates[:purchaser_phone] = buyer_phone if params.key?(:buyer_phone) && buyer_phone.present?
         return if updates.empty?
 
-        updates[:updated_at] = Time.current
+        now = Time.current
+        updates[:updated_at] = now
         RaffleTicket.where(id: tickets.map(&:id)).update_all(updates)
+
+        batch_ids = tickets.map(&:raffle_sale_batch_id).compact.uniq
+        if batch_ids.any?
+          batch_updates = {}
+          batch_updates[:buyer_name] = buyer_name if updates.key?(:purchaser_name)
+          batch_updates[:buyer_email] = buyer_email if updates.key?(:purchaser_email)
+          batch_updates[:buyer_phone] = buyer_phone if updates.key?(:purchaser_phone)
+          batch_updates[:updated_at] = now
+          RaffleSaleBatch.where(id: batch_ids).update_all(batch_updates)
+        end
 
         updates.except(:updated_at).each do |attribute, value|
           tickets.each { |ticket| ticket.public_send("#{attribute}=", value) }
@@ -1087,7 +1299,7 @@ module Api
         "****"
       end
 
-      def ticket_response(ticket, admin: false)
+      def ticket_response(ticket, admin: false, delivery_status: nil)
         response = {
           id: ticket.id,
           ticket_number: ticket.display_number,
@@ -1100,6 +1312,7 @@ module Api
         if admin
           response[:purchaser_email] = ticket.purchaser_email
           response[:purchaser_phone] = ticket.purchaser_phone
+          response[:raffle_sale_batch_id] = ticket.raffle_sale_batch_id
           response[:golfer_id] = ticket.golfer_id
           response[:golfer_name] = ticket.golfer&.name
           response[:price_cents] = ticket.price_cents
@@ -1112,6 +1325,7 @@ module Api
           response[:void_reason] = ticket.void_reason
           response[:sold_by] = ticket.sold_by_user&.name
           response[:created_at] = ticket.created_at&.iso8601
+          response[:delivery_status] = delivery_status if delivery_status.present?
         end
 
         response

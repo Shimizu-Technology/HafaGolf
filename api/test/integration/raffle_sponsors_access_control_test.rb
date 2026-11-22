@@ -74,4 +74,25 @@ class RaffleSponsorsAccessControlTest < ActionDispatch::IntegrationTest
 
     assert_response :created
   end
+
+  test "org A admin cannot update raffle ticket contact for org B tournament" do
+    org_b_ticket = @org_b_tournament.raffle_tickets.create!(
+      purchaser_name: "Org B Buyer",
+      purchaser_phone: "+16715550199",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+
+    patch "/api/v1/tournaments/#{@org_b_tournament.id}/raffle/tickets/#{org_b_ticket.id}/contact",
+          params: {
+            buyer_name: "Tampered",
+            buyer_phone: "+16715550999",
+            resend: false
+          },
+          headers: @headers
+
+    assert_response :forbidden
+    assert_equal "+16715550199", org_b_ticket.reload.purchaser_phone
+  end
 end

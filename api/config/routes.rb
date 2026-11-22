@@ -154,6 +154,7 @@ Rails.application.routes.draw do
         get 'raffle/admin/tickets' => 'raffle#admin_tickets'
         post 'raffle/tickets' => 'raffle#create_tickets'
         post 'raffle/tickets/:id/mark_paid' => 'raffle#mark_ticket_paid'
+        patch 'raffle/tickets/:id/contact' => 'raffle#update_ticket_contact'
         post 'raffle/tickets/:id/resend_confirmation' => 'raffle#resend_ticket_confirmation'
         delete 'raffle/tickets/:id' => 'raffle#destroy_ticket'
         post 'raffle/tickets/:id/void' => 'raffle#void_ticket'

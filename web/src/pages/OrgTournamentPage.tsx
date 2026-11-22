@@ -1,78 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useOrganization } from '../components/OrganizationProvider';
 import { PublicHero } from '../components/PublicHero';
+import { RevealOnScroll } from '../components/RevealOnScroll';
 import { api, Tournament, Sponsor, SponsorTier } from '../services/api';
-import { motion, MotionConfig, useInView } from 'framer-motion';
 import {
   Calendar, MapPin, Users, DollarSign, Clock,
   Trophy, AlertCircle, ChevronLeft, ChevronRight, Star, Building2, ExternalLink, Check, Flag, Gift, Ticket
 } from 'lucide-react';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 import { formatDate, formatEventDate } from '../utils/dates';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { getPublicFacingCapacitySummary, getRegistrationStatusLabel } from '../utils/capacity';
 import { useApplyBranding } from '../utils/branding';
+import type { ThemePackDefinition } from '../utils/themePacks';
 import { getDefaultOrgSlug } from '../utils/tenant';
-
-// ---------------------------------------------------------------------------
-// Animation variants
-// ---------------------------------------------------------------------------
-
-const ease = [0.22, 1, 0.36, 1] as const;
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 24 },
-  visible: (delay: number = 0) => ({
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.6, delay, ease },
-  }),
-};
-
-const staggerContainer = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.08 } },
-};
-
-const staggerItem = {
-  hidden: { opacity: 0, y: 20 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease } },
-};
-
-// ---------------------------------------------------------------------------
-// Scroll-triggered wrapper
-// ---------------------------------------------------------------------------
-
-function ScrollReveal({
-  children,
-  className,
-  delay = 0,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  delay?: number;
-}) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: '0px' });
-
-  return (
-    <motion.div
-      ref={ref}
-      className={className}
-      initial="hidden"
-      animate={isInView ? 'visible' : 'hidden'}
-      custom={delay}
-      variants={fadeUp}
-    >
-      {children}
-    </motion.div>
-  );
-}
 
 const FALLBACK_SPONSOR_TIERS: SponsorTier[] = [
   { key: 'title', label: 'Title Sponsors', sort_order: 0 },
@@ -106,6 +47,7 @@ export function OrgTournamentPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const branding = useApplyBranding(organization, tournament);
+  const pack = branding.themePack;
 
   useEffect(() => {
     async function fetchTournament() {
@@ -176,53 +118,77 @@ export function OrgTournamentPage() {
   );
 
   return (
-    <MotionConfig reducedMotion="user">
-    <div className="min-h-screen bg-white text-neutral-900">
+    <div className={`min-h-screen ${pack.surfaces.pageClass}`} data-theme-pack={pack.id}>
       <SignedInAdminBar />
+
       {/* ================================================================= */}
-      {/* HERO — Branded tournament gradient header                         */}
+      {/* HERO — Branded tournament header (single signature moment)        */}
       {/* ================================================================= */}
       <PublicHero
         imageUrl={heroBannerUrl}
         imageAlt={`${tournament.name} header artwork`}
         imageDisplay="showcase"
         containerClassName="min-h-[320px] lg:min-h-[360px]"
-        contentClassName="max-w-3xl"
+        contentClassName={pack.hero.contentWrapperClass}
+        themePack={pack}
       >
-        <div className="flex items-start gap-4 sm:gap-6">
-          {branding.logoUrl ? (
-            <img
-              src={branding.logoUrl}
-              alt={organization?.name || tournament.name}
-              className="mt-1 hidden h-10 w-auto flex-shrink-0 rounded-lg object-contain sm:block"
-            />
-          ) : (
-            <div className="mt-1 hidden h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white/15 sm:flex">
-              <Flag className="h-5 w-5 text-brand-foreground" />
+        <RevealOnScroll
+          variant={pack.signatureMotion.variant}
+          distancePx={pack.signatureMotion.distancePx}
+          durationMs={pack.signatureMotion.durationMs}
+        >
+          <div className="flex items-start gap-4 sm:gap-6">
+            {branding.logoUrl ? (
+              <div className={`mt-1 hidden shrink-0 sm:block ${pack.hero.variant === 'crest' ? 'rounded-xl border-2 border-accent-400/75 bg-white/10 p-1.5' : ''}`}>
+                <img
+                  src={branding.logoUrl}
+                  alt={organization?.name || tournament.name}
+                  className="h-10 w-auto rounded-lg object-contain"
+                />
+              </div>
+            ) : (
+              <div className={`mt-1 hidden shrink-0 sm:flex ${pack.hero.logoFrameClass} h-10 w-10`}>
+                <Flag className="h-5 w-5 text-brand-foreground" />
+              </div>
+            )}
+            <div className="min-w-0">
+              <Link to="/" className="inline-flex items-center gap-1 text-sm text-white/70 transition-colors hover:text-white">
+                <ChevronLeft className="w-4 h-4" />
+                Back to Events
+              </Link>
+              <div className={`mt-4 ${pack.hero.accentRuleClass}`} />
+              {tournament.edition && (
+                <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-white/75">
+                  {tournament.edition}
+                </p>
+              )}
+              <h1 className={`mt-2 ${pack.typography.heroTitleClass}`}>
+                {tournament.name}
+              </h1>
+              <p className={pack.typography.heroSubtitleClass}>
+                {formatEventDate(tournament.event_date)}{tournament.location_name ? ` · ${tournament.location_name}` : ''}
+              </p>
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <span className={`${pack.surfaces.badgeClass} py-1.5 text-sm ${status.bg} ${status.text}`}>
+                  {status.label}
+                </span>
+                {branding.signatureImageUrl && (
+                  <img
+                    src={branding.signatureImageUrl}
+                    alt={`${tournament.name} emblem`}
+                    className="h-9 w-auto rounded object-contain opacity-90"
+                  />
+                )}
+              </div>
             </div>
-          )}
-          <div>
-            <Link to="/" className="inline-flex items-center gap-1 text-sm text-white/70 transition-colors hover:text-white">
-              <ChevronLeft className="w-4 h-4" />
-              Back to Events
-            </Link>
-            <h1 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
-              {tournament.name}
-            </h1>
-            <p className="mt-3 max-w-2xl text-base text-white/82 sm:text-lg">
-              {formatEventDate(tournament.event_date)}{tournament.location_name ? ` · ${tournament.location_name}` : ''}
-            </p>
-            <span className={`mt-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold ${status.bg} ${status.text}`}>
-              {status.label}
-            </span>
           </div>
-        </div>
+        </RevealOnScroll>
       </PublicHero>
 
       {/* ================================================================= */}
       {/* KEY STATS BAR                                                      */}
       {/* ================================================================= */}
-      <div className="bg-white border-b border-neutral-200 shadow-sm">
+      <div className={pack.surfaces.keyStatsBarClass}>
         <div className="max-w-5xl mx-auto px-6 lg:px-8 py-4">
           <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3 sm:gap-8 text-sm">
             {tournament.event_date && (
@@ -258,313 +224,304 @@ export function OrgTournamentPage() {
       </div>
 
       {/* ================================================================= */}
-      {/* MAIN CONTENT — Two columns                                        */}
+      {/* MAIN CONTENT — Two columns (quiet, no scroll-reveal spam)         */}
       {/* ================================================================= */}
       <main className="max-w-5xl mx-auto px-6 lg:px-8 py-12 sm:py-16">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Details Column */}
-          <ScrollReveal className="lg:col-span-2">
-            <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
-              <h2 className="text-xl font-bold tracking-tight mb-6">Tournament Details</h2>
+          <div className="lg:col-span-2">
+            <div className={`${pack.surfaces.cardClass} overflow-hidden`}>
+              <div className={pack.surfaces.cardAccentBarClass} />
+              <div className={pack.surfaces.cardHeaderSpacingClass}>
+                <h2 className={`${pack.typography.cardTitleClass} mb-6`}>Tournament Details</h2>
 
-              <div className="space-y-5">
-                {tournament.location_name && (
+                <div className="space-y-5">
+                  {tournament.location_name && (
+                    <div className="flex items-start gap-3">
+                      <MapPin className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
+                      <div>
+                        <p className="font-medium text-neutral-900">{tournament.location_name}</p>
+                        {tournament.location_address && (
+                          <p className="text-neutral-500 text-sm">{tournament.location_address}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex items-start gap-3">
-                    <MapPin className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
+                    <Calendar className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
                     <div>
-                      <p className="font-medium text-neutral-900">{tournament.location_name}</p>
-                      {tournament.location_address && (
-                        <p className="text-neutral-500 text-sm">{tournament.location_address}</p>
+                      <p className="font-medium text-neutral-900">{formatEventDate(tournament.event_date) || 'Date TBA'}</p>
+                      {(tournament.check_in_time || tournament.registration_time) && (
+                        <p className="text-neutral-500 text-sm">Check-in: {tournament.check_in_time || tournament.registration_time}</p>
+                      )}
+                      {tournament.start_time && (
+                        <p className="text-neutral-500 text-sm">Start: {tournament.start_time}</p>
                       )}
                     </div>
                   </div>
-                )}
 
-                <div className="flex items-start gap-3">
-                  <Calendar className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
-                  <div>
-                    <p className="font-medium text-neutral-900">{formatEventDate(tournament.event_date) || 'Date TBA'}</p>
-                    {(tournament.check_in_time || tournament.registration_time) && (
-                      <p className="text-neutral-500 text-sm">Check-in: {tournament.check_in_time || tournament.registration_time}</p>
-                    )}
-                    {tournament.start_time && (
-                      <p className="text-neutral-500 text-sm">Start: {tournament.start_time}</p>
-                    )}
-                  </div>
+                  {tournament.format_name && (
+                    <div className="flex items-start gap-3">
+                      <Trophy className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
+                      <div>
+                        <p className="font-medium text-neutral-900">Format: {tournament.format_name}</p>
+                        {tournament.tournament_format && (
+                          <p className="text-neutral-500 text-sm capitalize">
+                            {tournament.tournament_format.replace('_', ' ')}
+                            {tournament.team_size && tournament.team_size > 1 && ` (${tournament.team_size}-person teams)`}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {tournament.fee_includes && (
+                    <div className={`mt-6 ${pack.surfaces.insetBoxClass}`}>
+                      <p className="font-medium text-neutral-900 mb-1">Entry Fee Includes:</p>
+                      <p className="text-neutral-600 text-sm leading-relaxed">{tournament.fee_includes}</p>
+                    </div>
+                  )}
+
+                  {tournament.tournament_info && (
+                    <div className={`mt-6 ${pack.surfaces.insetBoxClass}`}>
+                      <p className="font-medium text-neutral-900 mb-1">Tournament Info</p>
+                      <p className="text-neutral-600 text-sm leading-relaxed whitespace-pre-line">{tournament.tournament_info}</p>
+                    </div>
+                  )}
+
+                  {(tournament.contact_name || tournament.contact_phone || tournament.contact_email) && (
+                    <div className="mt-6 pt-5 border-t border-neutral-100">
+                      {tournament.contact_name && (
+                        <p className="font-medium text-neutral-900">{tournament.contact_name}</p>
+                      )}
+                      {tournament.contact_phone && (
+                        <p className="text-neutral-500 text-sm">{tournament.contact_phone}</p>
+                      )}
+                      {tournament.contact_email && (
+                        <a href={`mailto:${tournament.contact_email}`} className="text-brand-600 hover:underline text-sm">{tournament.contact_email}</a>
+                      )}
+                    </div>
+                  )}
+
+                  {(tournament.event_schedule || tournament.check_in_time || tournament.start_time) && (
+                    <div className={`mt-6 ${pack.surfaces.insetBoxClass}`}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Clock className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
+                        <p className="font-medium text-neutral-900">Event Schedule</p>
+                      </div>
+                      <ul className="space-y-1.5 text-sm text-neutral-600">
+                        {tournament.event_schedule
+                          ? tournament.event_schedule.split('\n').filter(Boolean).map((line: string, i: number) => (
+                              <li key={i}>{line}</li>
+                            ))
+                          : (
+                            <>
+                              {tournament.check_in_time && <li>{tournament.check_in_time} — Check-in</li>}
+                              {tournament.start_time && <li>{tournament.start_time}</li>}
+                            </>
+                          )
+                        }
+                      </ul>
+                    </div>
+                  )}
                 </div>
-
-                {tournament.format_name && (
-                  <div className="flex items-start gap-3">
-                    <Trophy className="w-5 h-5 mt-0.5 shrink-0 text-brand-600" strokeWidth={1.5} />
-                    <div>
-                      <p className="font-medium text-neutral-900">Format: {tournament.format_name}</p>
-                      {tournament.tournament_format && (
-                        <p className="text-neutral-500 text-sm capitalize">
-                          {tournament.tournament_format.replace('_', ' ')}
-                          {tournament.team_size && tournament.team_size > 1 && ` (${tournament.team_size}-person teams)`}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {tournament.fee_includes && (
-                  <div className="mt-6 p-4 rounded-2xl bg-neutral-100">
-                    <p className="font-medium text-neutral-900 mb-1">Entry Fee Includes:</p>
-                    <p className="text-neutral-600 text-sm leading-relaxed">{tournament.fee_includes}</p>
-                  </div>
-                )}
-
-                {tournament.tournament_info && (
-                  <div className="mt-6 p-4 rounded-2xl bg-neutral-100">
-                    <p className="font-medium text-neutral-900 mb-1">Tournament Info</p>
-                    <p className="text-neutral-600 text-sm leading-relaxed whitespace-pre-line">{tournament.tournament_info}</p>
-                  </div>
-                )}
-
-                {(tournament.contact_name || tournament.contact_phone || tournament.contact_email) && (
-                  <div className="mt-6 pt-5 border-t border-neutral-100">
-                    {tournament.contact_name && (
-                      <p className="font-medium text-neutral-900">{tournament.contact_name}</p>
-                    )}
-                    {tournament.contact_phone && (
-                      <p className="text-neutral-500 text-sm">{tournament.contact_phone}</p>
-                    )}
-                    {tournament.contact_email && (
-                      <a href={`mailto:${tournament.contact_email}`} className="text-brand-600 hover:underline text-sm">{tournament.contact_email}</a>
-                    )}
-                  </div>
-                )}
-
-                {(tournament.event_schedule || tournament.check_in_time || tournament.start_time) && (
-                  <div className="mt-6 p-4 rounded-2xl bg-neutral-100">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Clock className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
-                      <p className="font-medium text-neutral-900">Event Schedule</p>
-                    </div>
-                    <ul className="space-y-1.5 text-sm text-neutral-600">
-                      {tournament.event_schedule
-                        ? tournament.event_schedule.split('\n').filter(Boolean).map((line: string, i: number) => (
-                            <li key={i}>{line}</li>
-                          ))
-                        : (
-                          <>
-                            {tournament.check_in_time && <li>{tournament.check_in_time} — Check-in</li>}
-                            {tournament.start_time && <li>{tournament.start_time}</li>}
-                          </>
-                        )
-                      }
-                    </ul>
-                  </div>
-                )}
               </div>
             </div>
-          </ScrollReveal>
+          </div>
 
           {/* Sidebar */}
           <div className="space-y-6">
             {/* Registration CTA Card */}
-            <ScrollReveal delay={0.1}>
-              <div className="bg-white rounded-2xl shadow-lg border border-neutral-200 p-6">
-                <h3 className="font-bold tracking-tight mb-4 text-lg">Registration</h3>
+            <div className={`${pack.surfaces.cardClass} p-6`}>
+              <h3 className={`${pack.typography.cardTitleClass} mb-4 text-lg`}>Registration</h3>
 
-                <div className="space-y-4 mb-6">
-                  <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">Entry Fee</p>
-                    <p className="mt-2 text-2xl font-bold tracking-tight text-neutral-900 break-words">
-                      {tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}
-                    </p>
+              <div className="space-y-4 mb-6">
+                <div className={pack.surfaces.insetBoxClass}>
+                  <p className={pack.typography.eyebrowClass}>Entry Fee</p>
+                  <p className="mt-2 text-2xl font-bold tracking-tight text-neutral-900 break-words">
+                    {tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}
+                  </p>
+                </div>
+
+                {tournament.early_bird_active && tournament.early_bird_deadline && (
+                  <div className="text-sm p-2.5 rounded-xl bg-emerald-50 text-emerald-700 flex items-center gap-1.5">
+                    <Check className="w-4 h-4" />
+                    Early bird pricing active until {formatDate(tournament.early_bird_deadline)}
                   </div>
+                )}
 
-                  {tournament.early_bird_active && tournament.early_bird_deadline && (
-                    <div className="text-sm p-2.5 rounded-xl bg-emerald-50 text-emerald-700 flex items-center gap-1.5">
-                      <Check className="w-4 h-4" />
-                      Early bird pricing active until {formatDate(tournament.early_bird_deadline)}
-                    </div>
-                  )}
-
-                  <div className="rounded-2xl border border-neutral-200 p-4">
-                    <div className="flex items-center gap-2 text-neutral-500">
-                      <Users className="w-3.5 h-3.5" strokeWidth={1.5} />
-                      <span className="text-xs font-semibold uppercase tracking-[0.14em]">Capacity</span>
-                    </div>
-                    <p className="mt-2 text-base font-semibold leading-tight text-neutral-800 sm:text-lg">
-                      {capacitySummary.label}
-                    </p>
-                    {capacitySummary.secondaryLabel && (
-                      <p className="mt-2 text-sm leading-relaxed text-neutral-500">
-                        {capacitySummary.secondaryLabel}
-                      </p>
-                    )}
+                <div className={pack.surfaces.insetBoxClass}>
+                  <div className="flex items-center gap-2 text-neutral-500">
+                    <Users className="w-3.5 h-3.5" strokeWidth={1.5} />
+                    <span className={pack.typography.eyebrowClass}>Capacity</span>
                   </div>
-
-                  {tournament.waitlist_count > 0 && (
-                    <div className="text-sm text-amber-600">
-                      {tournament.waitlist_count} on waitlist
-                    </div>
+                  <p className="mt-2 text-base font-semibold leading-tight text-neutral-800 sm:text-lg">
+                    {capacitySummary.label}
+                  </p>
+                  {capacitySummary.secondaryLabel && (
+                    <p className="mt-2 text-sm leading-relaxed text-neutral-500">
+                      {capacitySummary.secondaryLabel}
+                    </p>
                   )}
                 </div>
 
-                {tournament.can_register ? (
-                  (tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled ? (
-                    <Link
-                      to={`/${tournamentSlug}/register`}
-                      className="flex items-center justify-center gap-2 w-full text-center px-5 py-3 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-full transition-colors duration-200"
-                    >
-                      Join Waitlist
-                      <ChevronRight className="w-4 h-4" strokeWidth={2} />
-                    </Link>
-                  ) : (
-                    <Link
-                      to={`/${tournamentSlug}/register`}
-                      className="flex items-center justify-center gap-2 w-full text-center px-5 py-3 text-sm font-semibold text-brand-foreground bg-brand-600 hover:bg-brand-700 rounded-full transition-colors duration-200"
-                    >
-                      Register Now
-                      <ChevronRight className="w-4 h-4" strokeWidth={2} />
-                    </Link>
-                  )
-                ) : tournament.at_capacity ? (
-                  <div className="w-full text-center px-5 py-3 text-sm font-semibold text-neutral-400 bg-neutral-100 rounded-full cursor-not-allowed">
-                    At Capacity
+                {tournament.waitlist_count > 0 && (
+                  <div className="text-sm text-amber-600">
+                    {tournament.waitlist_count} on waitlist
                   </div>
-                ) : tournament.public_at_capacity ? (
-                  <div className="w-full text-center px-5 py-3 text-sm font-semibold text-neutral-400 bg-neutral-100 rounded-full cursor-not-allowed">
-                    Public Registration Full
-                  </div>
-                ) : !tournament.registration_open ? (
-                  <div className="w-full text-center px-5 py-3 text-sm font-semibold text-neutral-400 bg-neutral-100 rounded-full cursor-not-allowed">
-                    Registration Closed
-                  </div>
-                ) : (
-                  <div className="w-full text-center px-5 py-3 text-sm font-semibold text-neutral-400 bg-neutral-100 rounded-full cursor-not-allowed">
-                    Registration Closed
-                  </div>
-                )}
-
-                {tournament.registration_deadline && (
-                  <p className="text-xs text-neutral-400 mt-3 text-center">
-                    Registration deadline: {formatDate(tournament.registration_deadline)}
-                  </p>
                 )}
               </div>
-            </ScrollReveal>
+
+              {tournament.can_register ? (
+                (tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled ? (
+                  <Link
+                    to={`/${tournamentSlug}/register`}
+                    className="flex items-center justify-center gap-2 w-full text-center px-5 py-3 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-full transition-colors duration-200"
+                  >
+                    Join Waitlist
+                    <ChevronRight className="w-4 h-4" strokeWidth={2} />
+                  </Link>
+                ) : (
+                  <Link
+                    to={`/${tournamentSlug}/register`}
+                    className={`${pack.surfaces.ctaPrimaryClass} w-full py-3 text-center`}
+                  >
+                    Register Now
+                    <ChevronRight className="w-4 h-4" strokeWidth={2} />
+                  </Link>
+                )
+              ) : tournament.at_capacity ? (
+                <div className="w-full text-center px-5 py-3 text-sm font-semibold text-neutral-400 bg-neutral-100 rounded-full cursor-not-allowed">
+                  At Capacity
+                </div>
+              ) : tournament.public_at_capacity ? (
+                <div className="w-full text-center px-5 py-3 text-sm font-semibold text-neutral-400 bg-neutral-100 rounded-full cursor-not-allowed">
+                  Public Registration Full
+                </div>
+              ) : !tournament.registration_open ? (
+                <div className="w-full text-center px-5 py-3 text-sm font-semibold text-neutral-400 bg-neutral-100 rounded-full cursor-not-allowed">
+                  Registration Closed
+                </div>
+              ) : (
+                <div className="w-full text-center px-5 py-3 text-sm font-semibold text-neutral-400 bg-neutral-100 rounded-full cursor-not-allowed">
+                  Registration Closed
+                </div>
+              )}
+
+              {tournament.registration_deadline && (
+                <p className="text-xs text-neutral-400 mt-3 text-center">
+                  Registration deadline: {formatDate(tournament.registration_deadline)}
+                </p>
+              )}
+            </div>
 
             {/* Payment Options */}
             {(tournament.payment_instructions || tournament.allow_card || tournament.allow_cash || tournament.allow_check) && (
-              <ScrollReveal delay={0.2}>
-                <div className="bg-white rounded-2xl border border-neutral-200 p-6">
-                  <h3 className="font-bold tracking-tight mb-4">Payment Options</h3>
-                  {tournament.payment_instructions ? (
-                    <p className="text-sm text-neutral-600 leading-relaxed whitespace-pre-line">{tournament.payment_instructions}</p>
-                  ) : (
-                    <ul className="space-y-2.5 text-sm text-neutral-600">
-                      {tournament.allow_card && (
-                        <li className="flex items-center gap-2.5">
-                          <div className="w-5 h-5 rounded-md flex items-center justify-center bg-brand-600/10">
-                            <Check className="w-3 h-3 text-brand-600" />
-                          </div>
-                          Credit/Debit Card
-                        </li>
-                      )}
-                      {tournament.allow_cash && (
-                        <li className="flex items-center gap-2.5">
-                          <div className="w-5 h-5 rounded-md flex items-center justify-center bg-brand-600/10">
-                            <Check className="w-3 h-3 text-brand-600" />
-                          </div>
-                          Cash (on tournament day)
-                        </li>
-                      )}
-                      {tournament.allow_check && (
-                        <li className="flex items-center gap-2.5">
-                          <div className="w-5 h-5 rounded-md flex items-center justify-center bg-brand-600/10">
-                            <Check className="w-3 h-3 text-brand-600" />
-                          </div>
-                          <span>
-                            Check
-                            {tournament.checks_payable_to && (
-                              <span className="text-neutral-400"> (payable to {tournament.checks_payable_to})</span>
-                            )}
-                          </span>
-                        </li>
-                      )}
-                    </ul>
-                  )}
-                </div>
-              </ScrollReveal>
+              <div className={`${pack.surfaces.cardClass} p-6`}>
+                <h3 className={`${pack.typography.cardTitleClass} mb-4 text-lg`}>Payment Options</h3>
+                {tournament.payment_instructions ? (
+                  <p className="text-sm text-neutral-600 leading-relaxed whitespace-pre-line">{tournament.payment_instructions}</p>
+                ) : (
+                  <ul className="space-y-2.5 text-sm text-neutral-600">
+                    {tournament.allow_card && (
+                      <li className="flex items-center gap-2.5">
+                        <div className="w-5 h-5 rounded-md flex items-center justify-center bg-brand-600/10">
+                          <Check className="w-3 h-3 text-brand-600" />
+                        </div>
+                        Credit/Debit Card
+                      </li>
+                    )}
+                    {tournament.allow_cash && (
+                      <li className="flex items-center gap-2.5">
+                        <div className="w-5 h-5 rounded-md flex items-center justify-center bg-brand-600/10">
+                          <Check className="w-3 h-3 text-brand-600" />
+                        </div>
+                        Cash (on tournament day)
+                      </li>
+                    )}
+                    {tournament.allow_check && (
+                      <li className="flex items-center gap-2.5">
+                        <div className="w-5 h-5 rounded-md flex items-center justify-center bg-brand-600/10">
+                          <Check className="w-3 h-3 text-brand-600" />
+                        </div>
+                        <span>
+                          Check
+                          {tournament.checks_payable_to && (
+                            <span className="text-neutral-400"> (payable to {tournament.checks_payable_to})</span>
+                          )}
+                        </span>
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </div>
             )}
 
             {/* Raffle CTA — only when raffle is enabled */}
             {tournament.raffle_enabled && (
-              <ScrollReveal delay={0.3}>
-                <Link
-                  to={`/${tournamentSlug}/raffle`}
-                  className="block bg-white rounded-2xl shadow-lg border border-neutral-200 p-6 transition-shadow hover:shadow-xl group"
-                >
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
-                      <Gift className="w-5 h-5 text-accent-500" strokeWidth={1.5} />
-                    </div>
-                    <h3 className="font-bold tracking-tight text-lg text-neutral-900">Raffle Prizes</h3>
+              <Link
+                to={`/${tournamentSlug}/raffle`}
+                className={`block ${pack.surfaces.cardClass} p-6 group`}
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
+                    <Gift className="w-5 h-5 text-accent-500" strokeWidth={1.5} />
                   </div>
-                  {tournament.raffle_description ? (
-                    <p className="text-neutral-500 text-sm mb-4 line-clamp-2">{tournament.raffle_description}</p>
-                  ) : (
-                    <p className="text-neutral-500 text-sm mb-4">View prizes and check your tickets</p>
-                  )}
-                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
-                    <Ticket className="w-4 h-4" strokeWidth={1.5} />
-                    View Raffle Board
-                    <ChevronRight className="w-4 h-4" />
-                  </span>
-                </Link>
-              </ScrollReveal>
+                  <h3 className={`${pack.typography.cardTitleClass} text-lg`}>Raffle Prizes</h3>
+                </div>
+                {tournament.raffle_description ? (
+                  <p className="text-neutral-500 text-sm mb-4 line-clamp-2">{tournament.raffle_description}</p>
+                ) : (
+                  <p className="text-neutral-500 text-sm mb-4">View prizes and check your tickets</p>
+                )}
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 group-hover:text-brand-700 transition-colors">
+                  <Ticket className="w-4 h-4" strokeWidth={1.5} />
+                  View Raffle Board
+                  <ChevronRight className="w-4 h-4" />
+                </span>
+              </Link>
             )}
           </div>
         </div>
       </main>
 
       {/* ================================================================= */}
-      {/* SPONSORS                                                           */}
+      {/* SPONSORS (static grid — no marquees, no staggered scroll spam)    */}
       {/* ================================================================= */}
       {tournament.sponsors && tournament.sponsors.length > 0 && (
-        <section className="bg-neutral-100">
+        <section className={pack.surfaces.mutedSectionClass}>
           <div className="max-w-5xl mx-auto px-6 lg:px-8 py-16 lg:py-24">
-            <ScrollReveal>
-              <div className="flex items-center gap-3 mb-8">
-                <Star className="w-5 h-5 text-accent-500" strokeWidth={2} />
-                <h2 className="text-2xl font-bold tracking-tight">Our Sponsors</h2>
-              </div>
-            </ScrollReveal>
+            <div className="flex items-center gap-3 mb-8">
+              <Star className="w-5 h-5 text-accent-500" strokeWidth={2} />
+              <h2 className={pack.typography.sectionTitleClass}>Our Sponsors</h2>
+            </div>
 
-            {/* Dynamic sponsor tiers */}
-            {(() => {
-              return sponsorTiers.map((tierDef) => {
-                const tierSponsors = (tournament.sponsors || []).filter(s => s.tier === tierDef.key);
-                if (tierSponsors.length === 0) return null;
+            {sponsorTiers.map((tierDef) => {
+              const tierSponsors = (tournament.sponsors || []).filter(s => s.tier === tierDef.key);
+              if (tierSponsors.length === 0) return null;
 
-                const isHoleTier = tierSponsors.some(s => s.hole_number != null);
-                const isTopTier = tierDef.sort_order <= 1;
+              const isHoleTier = tierSponsors.some(s => s.hole_number != null);
+              const isTopTier = tierDef.sort_order <= 1;
 
-                return (
-                  <div key={tierDef.key} className="mb-10">
-                    <ScrollReveal>
-                      <h3 className="text-lg font-semibold text-neutral-700 tracking-tight mb-4">
-                        {tierDef.label}{tierDef.label.toLowerCase().includes('sponsor') ? '' : ' Sponsors'}
-                      </h3>
-                    </ScrollReveal>
-                    {isHoleTier ? (
-                      <HoleSponsorGrid sponsors={tierSponsors} courseConfigs={tournament.course_configs} />
-                    ) : (
-                      <SponsorGrid
-                        sponsors={tierSponsors}
-                        size={isTopTier ? 'large' : 'small'}
-                        columns={isTopTier ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'}
-                      />
-                    )}
-                  </div>
-                );
-              });
-            })()}
+              return (
+                <div key={tierDef.key} className="mb-10">
+                  <h3 className="text-lg font-semibold text-neutral-700 tracking-tight mb-4">
+                    {tierDef.label}{tierDef.label.toLowerCase().includes('sponsor') ? '' : ' Sponsors'}
+                  </h3>
+                  {isHoleTier ? (
+                    <HoleSponsorGrid sponsors={tierSponsors} courseConfigs={tournament.course_configs} pack={pack} />
+                  ) : (
+                    <SponsorGrid
+                      sponsors={tierSponsors}
+                      size={isTopTier ? 'large' : 'small'}
+                      columns={isTopTier ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'}
+                      pack={pack}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
@@ -589,74 +546,53 @@ export function OrgTournamentPage() {
         </div>
       </footer>
     </div>
-    </MotionConfig>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Sponsor grid with stagger
+// Sponsor grid (static)
 // ---------------------------------------------------------------------------
 
 function SponsorGrid({
   sponsors,
   size,
   columns,
+  pack,
 }: {
   sponsors: Sponsor[];
   size: 'large' | 'small';
   columns: string;
+  pack: ThemePackDefinition;
 }) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: '0px' });
-
   return (
-    <motion.div
-      ref={ref}
-      className={`grid ${columns} gap-4`}
-      initial="hidden"
-      animate={isInView ? 'visible' : 'hidden'}
-      variants={staggerContainer}
-    >
+    <div className={`grid ${columns} gap-4`}>
       {sponsors.map((sponsor) => (
-        <motion.div key={sponsor.id} variants={staggerItem}>
-          <SponsorCard sponsor={sponsor} size={size} />
-        </motion.div>
+        <SponsorCard key={sponsor.id} sponsor={sponsor} size={size} pack={pack} />
       ))}
-    </motion.div>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Hole sponsor grid with stagger
+// Hole sponsor grid (static)
 // ---------------------------------------------------------------------------
 
 function HoleSponsorGrid({
   sponsors,
   courseConfigs,
+  pack,
 }: {
   sponsors: Sponsor[];
   courseConfigs?: Tournament['course_configs'];
+  pack: ThemePackDefinition;
 }) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: '0px' });
-
   const sorted = sortHoleSponsors(sponsors, courseConfigs);
 
   return (
-    <motion.div
-      ref={ref}
-      className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
-      initial="hidden"
-      animate={isInView ? 'visible' : 'hidden'}
-      variants={staggerContainer}
-    >
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
       {sorted.map((sponsor) => {
         const inner = (
-          <motion.div
-            key={sponsor.id}
-            variants={staggerItem}
-            className="relative bg-white rounded-2xl border border-neutral-200 transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 overflow-hidden"
-          >
+          <div className={`relative ${pack.surfaces.cardClass} overflow-hidden`}>
             {/* Logo area */}
             <div className="flex items-center justify-center bg-neutral-50/60 p-4 min-h-[80px]">
               {sponsor.logo_url ? (
@@ -682,7 +618,7 @@ function HoleSponsorGrid({
                 </span>
               )}
             </div>
-          </motion.div>
+          </div>
         );
         return sponsor.website_url ? (
           <a key={sponsor.id} href={sponsor.website_url} target="_blank" rel="noopener noreferrer" className="block">
@@ -692,7 +628,7 @@ function HoleSponsorGrid({
           <div key={sponsor.id}>{inner}</div>
         );
       })}
-    </motion.div>
+    </div>
   );
 }
 
@@ -700,20 +636,21 @@ function HoleSponsorGrid({
 // Sponsor card
 // ---------------------------------------------------------------------------
 
-function SponsorCard({ sponsor, size }: { sponsor: Sponsor; size: 'large' | 'small' }) {
+function SponsorCard({
+  sponsor,
+  size,
+  pack,
+}: {
+  sponsor: Sponsor;
+  size: 'large' | 'small';
+  pack: ThemePackDefinition;
+}) {
   const isLarge = size === 'large';
 
   const card = (
-    <div
-      className={`
-        group relative rounded-2xl border bg-white transition-all duration-200
-        hover:shadow-lg hover:-translate-y-0.5
-        border-neutral-200
-        flex flex-col
-      `}
-    >
+    <div className={`group relative ${pack.surfaces.cardClass} flex flex-col overflow-hidden`}>
       {/* Logo / placeholder area */}
-      <div className={`flex items-center justify-center bg-neutral-50/60 rounded-t-2xl ${
+      <div className={`flex items-center justify-center bg-neutral-50/60 ${
         isLarge ? 'p-5 min-h-[100px]' : 'p-4 min-h-[72px]'
       }`}>
         {sponsor.logo_url ? (

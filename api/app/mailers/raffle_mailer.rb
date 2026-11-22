@@ -104,7 +104,7 @@ class RaffleMailer
       purpose: "raffle_ticket_confirmation",
       tournament: @tournament,
       messageable: tickets.first,
-      metadata: { ticket_ids: tickets.map(&:id), ticket_numbers: tickets.map(&:display_number), buyer_name: buyer_name }
+      metadata: { ticket_ids: tickets.map(&:id), ticket_numbers: tickets.map(&:display_number), buyer_name: buyer_name, raffle_sale_batch_id: tickets.first&.raffle_sale_batch_id }.compact
     )
   end
 

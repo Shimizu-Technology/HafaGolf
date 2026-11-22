@@ -794,6 +794,502 @@ class Api::V1::RaffleControllerTest < ActionDispatch::IntegrationTest
     assert_nil controller.send(:mask_delivery_recipient, nil)
   end
 
+  test "sell tickets rejects bare prefixes and short phone numbers with 422" do
+    %w[+1671 1671 671 +1670 1670 670 555-1234 +1671555123].each do |bad_phone|
+      assert_no_difference -> { @tournament.raffle_tickets.count } do
+        assert_no_difference -> { @tournament.raffle_sale_batches.count } do
+          post "/api/v1/tournaments/#{@tournament.id}/raffle/sell",
+               params: {
+                 quantity: 4,
+                 price_cents: 2000,
+                 buyer_name: "Bad Phone Buyer",
+                 buyer_email: "buyer@example.com",
+                 buyer_phone: bad_phone
+               },
+               headers: @headers
+        end
+      end
+
+      assert_response :unprocessable_entity, "Expected 422 for #{bad_phone}"
+      assert JSON.parse(response.body).fetch("error").present?
+    end
+  end
+
+  test "create tickets rejects bare prefixes and short phone numbers with 422" do
+    %w[+1671 671 +1670 5551234].each do |bad_phone|
+      assert_no_difference -> { @tournament.raffle_tickets.count } do
+        post "/api/v1/tournaments/#{@tournament.id}/raffle/tickets",
+             params: {
+               quantity: 2,
+               purchaser_name: "Manual Buyer",
+               purchaser_phone: bad_phone,
+               mark_paid: true
+             },
+             headers: @headers
+      end
+
+      assert_response :unprocessable_entity, "Expected 422 for #{bad_phone}"
+      assert JSON.parse(response.body).fetch("error").present?
+    end
+  end
+
+  test "sell tickets normalizes 10-digit buyer phone on batch and tickets" do
+    sms_stub = ->(tickets:, buyer_phone:, buyer_name:, tournament:) { { success: true, status: "accepted", message_id: "sms_norm" } }
+
+    with_singleton_method(RaffleSmsService, :purchase_confirmation, sms_stub) do
+      post "/api/v1/tournaments/#{@tournament.id}/raffle/sell",
+           params: {
+             quantity: 2,
+             price_cents: 1000,
+             buyer_name: "Normalized Buyer",
+             buyer_phone: "671-555-4321"
+           },
+           headers: @headers
+    end
+
+    assert_response :created
+    batch = @tournament.raffle_sale_batches.last
+    assert_equal "+16715554321", batch.buyer_phone
+    assert_equal [ "+16715554321" ], batch.raffle_tickets.pluck(:purchaser_phone).uniq
+  end
+
+  test "admin_tickets includes per-batch delivery statuses in 1 query and supports needs_attention filter" do
+    # 1. Delivered batch (2 tickets, delivery attached only to first ticket)
+    delivered_batch = @tournament.raffle_sale_batches.create!(
+      buyer_name: "Delivered Buyer",
+      buyer_email: "delivered@example.com",
+      buyer_phone: "+16715550101",
+      quantity: 2,
+      total_cents: 1000,
+      purchased_at: Time.current,
+      sold_by_user: @admin
+    )
+    delivered_t1 = @tournament.raffle_tickets.create!(
+      raffle_sale_batch: delivered_batch,
+      purchaser_name: "Delivered Buyer",
+      purchaser_email: "delivered@example.com",
+      purchaser_phone: "+16715550101",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+    delivered_t2 = @tournament.raffle_tickets.create!(
+      raffle_sale_batch: delivered_batch,
+      purchaser_name: "Delivered Buyer",
+      purchaser_email: "delivered@example.com",
+      purchaser_phone: "+16715550101",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+    MessageDelivery.create!(
+      provider: "clicksend",
+      channel: "sms",
+      purpose: "raffle_ticket_confirmation",
+      recipient: "+16715550101",
+      status: "delivered",
+      organization: @tournament.organization,
+      tournament: @tournament,
+      messageable: delivered_t1,
+      delivered_at: Time.current,
+      last_event_at: Time.current
+    )
+
+    # 2. Failed SMS batch (2 tickets)
+    failed_batch = @tournament.raffle_sale_batches.create!(
+      buyer_name: "Failed Buyer",
+      buyer_phone: "+16715550102",
+      quantity: 2,
+      total_cents: 1000,
+      purchased_at: Time.current,
+      sold_by_user: @admin
+    )
+    failed_t1 = @tournament.raffle_tickets.create!(
+      raffle_sale_batch: failed_batch,
+      purchaser_name: "Failed Buyer",
+      purchaser_phone: "+16715550102",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+    failed_t2 = @tournament.raffle_tickets.create!(
+      raffle_sale_batch: failed_batch,
+      purchaser_name: "Failed Buyer",
+      purchaser_phone: "+16715550102",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+    MessageDelivery.create!(
+      provider: "clicksend",
+      channel: "sms",
+      purpose: "raffle_ticket_confirmation",
+      recipient: "+16715550102",
+      status: "failed",
+      error_text: "Carrier blocked message",
+      organization: @tournament.organization,
+      tournament: @tournament,
+      messageable: failed_t1,
+      failed_at: Time.current,
+      last_event_at: Time.current
+    )
+
+    # 3. Accepted-only (unconfirmed) ticket
+    pending_ticket = @tournament.raffle_tickets.create!(
+      purchaser_name: "Pending Buyer",
+      purchaser_email: "pending@example.com",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+    MessageDelivery.create!(
+      provider: "resend",
+      channel: "email",
+      purpose: "raffle_ticket_confirmation",
+      recipient: "pending@example.com",
+      status: "accepted",
+      organization: @tournament.organization,
+      tournament: @tournament,
+      messageable: pending_ticket,
+      last_event_at: Time.current
+    )
+
+    # 4. Missing contact ticket
+    no_contact_ticket = @tournament.raffle_tickets.create!(
+      purchaser_name: "No Contact Buyer",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+
+    # 5. Voided ticket with failed delivery (should NOT need attention)
+    voided_ticket = @tournament.raffle_tickets.create!(
+      purchaser_name: "Voided Buyer",
+      purchaser_phone: "+16715550105",
+      price_cents: 500,
+      payment_status: "voided",
+      voided_at: Time.current
+    )
+    MessageDelivery.create!(
+      provider: "clicksend",
+      channel: "sms",
+      purpose: "raffle_ticket_confirmation",
+      recipient: "+16715550105",
+      status: "failed",
+      error_text: "Old failure",
+      organization: @tournament.organization,
+      tournament: @tournament,
+      messageable: voided_ticket,
+      last_event_at: Time.current
+    )
+
+    # Add extra tickets to verify no N+1 on message_deliveries
+    8.times do |idx|
+      @tournament.raffle_tickets.create!(
+        purchaser_name: "Complimentary #{idx}",
+        purchaser_email: "comp#{idx}@example.com",
+        price_cents: 0,
+        payment_status: "paid",
+        purchased_at: Time.current
+      )
+    end
+
+    delivery_queries = 0
+    callback = lambda do |_name, _started, _finished, _unique_id, payload|
+      next if payload[:name] == "SCHEMA"
+      sql = payload[:sql].to_s
+      delivery_queries += 1 if sql.match?(/\ASELECT/i) && sql.include?("message_deliveries")
+    end
+
+    ActiveSupport::Notifications.subscribed(callback, "sql.active_record") do
+      get "/api/v1/tournaments/#{@tournament.id}/raffle/admin/tickets",
+          params: { per_page: 50 },
+          headers: @headers
+    end
+
+    assert_response :success
+    assert_equal 1, delivery_queries, "Expected exactly 1 message_deliveries query (no N+1)"
+
+    json = JSON.parse(response.body)
+    by_id = json.fetch("tickets").index_by { |t| t.fetch("id") }
+
+    # Both tickets in delivered batch share the delivered SMS status
+    assert_equal "delivered", by_id.fetch(delivered_t1.id).dig("delivery_status", "sms", "status")
+    assert_equal "delivered", by_id.fetch(delivered_t2.id).dig("delivery_status", "sms", "status")
+    assert_equal false, by_id.fetch(delivered_t2.id).dig("delivery_status", "needs_attention")
+
+    # Both tickets in failed batch share failed SMS + error_text
+    assert_equal "failed", by_id.fetch(failed_t2.id).dig("delivery_status", "sms", "status")
+    assert_equal "Carrier blocked message", by_id.fetch(failed_t2.id).dig("delivery_status", "sms", "error_text")
+    assert_equal true, by_id.fetch(failed_t2.id).dig("delivery_status", "needs_attention")
+    assert_equal "failed", by_id.fetch(failed_t2.id).dig("delivery_status", "attention_reason")
+
+    # Accepted-only & no-contact flagged
+    assert_equal true, by_id.fetch(pending_ticket.id).dig("delivery_status", "needs_attention")
+    assert_equal "unconfirmed", by_id.fetch(pending_ticket.id).dig("delivery_status", "attention_reason")
+    assert_equal true, by_id.fetch(no_contact_ticket.id).dig("delivery_status", "needs_attention")
+    assert_equal "no_contact", by_id.fetch(no_contact_ticket.id).dig("delivery_status", "attention_reason")
+    assert_equal false, by_id.fetch(voided_ticket.id).dig("delivery_status", "needs_attention")
+
+    # Filter by needs_attention
+    get "/api/v1/tournaments/#{@tournament.id}/raffle/admin/tickets",
+        params: { type: "needs_attention" },
+        headers: @headers
+
+    assert_response :success
+    filtered = JSON.parse(response.body)
+    filtered_ids = filtered.fetch("tickets").map { |t| t.fetch("id") }
+    assert_equal 4, filtered.dig("stats", "needs_attention")
+    assert_equal [ failed_t1.id, failed_t2.id, pending_ticket.id, no_contact_ticket.id ].sort, filtered_ids.sort
+  end
+
+  test "update_ticket_contact updates sale batch and all sibling tickets, resends notifications, and logs activity" do
+    batch = @tournament.raffle_sale_batches.create!(
+      buyer_name: "Typo Buyer",
+      buyer_email: "typo@example.com",
+      buyer_phone: "+16715550111",
+      quantity: 3,
+      total_cents: 1500,
+      purchased_at: Time.current,
+      sold_by_user: @admin
+    )
+    batch_tickets = 3.times.map do
+      @tournament.raffle_tickets.create!(
+        raffle_sale_batch: batch,
+        purchaser_name: "Typo Buyer",
+        purchaser_email: "typo@example.com",
+        purchaser_phone: "+16715550111",
+        price_cents: 500,
+        payment_status: "paid",
+        purchased_at: Time.current,
+        sold_by_user: @admin
+      )
+    end
+    other_batch_ticket = @tournament.raffle_tickets.create!(
+      purchaser_name: "Typo Buyer",
+      purchaser_email: "typo@example.com",
+      purchaser_phone: "+16715550111",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: 15.minutes.ago,
+      sold_by_user: @admin
+    )
+
+    sms_calls = []
+    email_calls = []
+    sms_stub = lambda do |tickets:, buyer_phone:, buyer_name:, tournament:|
+      sms_calls << { ticket_ids: tickets.map(&:id), buyer_phone: buyer_phone, buyer_name: buyer_name }
+      { success: true, status: "accepted", message_id: "sms_fixed_1" }
+    end
+    email_stub = lambda do |tickets:, buyer_email:, buyer_name:, tournament:|
+      email_calls << { ticket_ids: tickets.map(&:id), buyer_email: buyer_email, buyer_name: buyer_name }
+      { success: true, status: "accepted", message_id: "email_fixed_1" }
+    end
+
+    assert_difference -> { ActivityLog.where(action: "raffle_ticket_contact_updated").count }, 1 do
+      with_singleton_method(RaffleSmsService, :purchase_confirmation, sms_stub) do
+        with_singleton_method(RaffleMailer, :purchase_confirmation_email, email_stub) do
+          patch "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{batch_tickets.second.id}/contact",
+                params: {
+                  buyer_name: "Corrected Buyer",
+                  buyer_email: "FIXED@Example.com",
+                  buyer_phone: "671-555-8888",
+                  resend: true
+                },
+                headers: @headers
+        end
+      end
+    end
+
+    assert_response :success
+    json = JSON.parse(response.body)
+    assert_equal 3, json.fetch("ticket_count")
+    assert_equal "Corrected Buyer", json.dig("buyer", "name")
+    assert_equal "fixed@example.com", json.dig("buyer", "email")
+    assert_equal "+16715558888", json.dig("buyer", "phone")
+    assert_equal true, json.dig("delivery", "sms", "success")
+    assert_equal true, json.dig("delivery", "email", "success")
+
+    # Verify batch and all sibling tickets updated, while unrelated ticket untouched
+    batch.reload
+    assert_equal "Corrected Buyer", batch.buyer_name
+    assert_equal "fixed@example.com", batch.buyer_email
+    assert_equal "+16715558888", batch.buyer_phone
+
+    batch_tickets.each do |t|
+      t.reload
+      assert_equal "Corrected Buyer", t.purchaser_name
+      assert_equal "fixed@example.com", t.purchaser_email
+      assert_equal "+16715558888", t.purchaser_phone
+    end
+
+    other_batch_ticket.reload
+    assert_equal "+16715550111", other_batch_ticket.purchaser_phone
+
+    assert_equal 1, sms_calls.size
+    assert_equal batch_tickets.map(&:id), sms_calls.first.fetch(:ticket_ids)
+    assert_equal "+16715558888", sms_calls.first.fetch(:buyer_phone)
+    assert_equal 1, email_calls.size
+    assert_equal "fixed@example.com", email_calls.first.fetch(:buyer_email)
+
+    log = ActivityLog.where(action: "raffle_ticket_contact_updated").last
+    assert_equal batch_tickets.second.id, log.target_id
+    assert_equal batch.id, log.metadata.fetch("raffle_sale_batch_id")
+    assert_equal true, log.metadata.fetch("resend_requested")
+    assert_equal "+16715558888", log.metadata.dig("after", "phone")
+  end
+
+  test "update_ticket_contact rejects bare phone prefix and voided tickets without mutating records" do
+    batch = @tournament.raffle_sale_batches.create!(
+      buyer_name: "Original Buyer",
+      buyer_phone: "+16715550111",
+      quantity: 1,
+      total_cents: 500,
+      purchased_at: Time.current
+    )
+    ticket = @tournament.raffle_tickets.create!(
+      raffle_sale_batch: batch,
+      purchaser_name: "Original Buyer",
+      purchaser_phone: "+16715550111",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+
+    patch "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{ticket.id}/contact",
+          params: { buyer_phone: "+1671", resend: true },
+          headers: @headers
+
+    assert_response :unprocessable_entity
+    assert_equal "+16715550111", ticket.reload.purchaser_phone
+    assert_equal "+16715550111", batch.reload.buyer_phone
+
+    ticket.void!(reason: "Refunded")
+    patch "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{ticket.id}/contact",
+          params: { buyer_phone: "+16715559999", resend: false },
+          headers: @headers
+
+    assert_response :unprocessable_entity
+  end
+
+  test "update_ticket_contact allows save without resend and works for volunteers" do
+    volunteer = User.create!(
+      clerk_id: "test_clerk_volunteer_#{SecureRandom.hex(4)}",
+      email: "volunteer-#{SecureRandom.hex(4)}@example.com",
+      name: "POS Volunteer"
+    )
+    OrganizationMembership.create!(user: volunteer, organization: @tournament.organization, role: "volunteer")
+    volunteer_headers = { "Authorization" => "Bearer test_token_#{volunteer.id}" }
+
+    ticket = @tournament.raffle_tickets.create!(
+      purchaser_name: "Walk-in Buyer",
+      purchaser_phone: "+16715550111",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+
+    sms_called = false
+    sms_stub = ->(**) { sms_called = true; { success: true } }
+
+    with_singleton_method(RaffleSmsService, :purchase_confirmation, sms_stub) do
+      patch "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{ticket.id}/contact",
+            params: {
+              buyer_name: "Walk-in Buyer",
+              buyer_email: "walkin@example.com",
+              buyer_phone: "",
+              resend: false
+            },
+            headers: volunteer_headers
+    end
+
+    assert_response :success
+    assert_not sms_called
+    ticket.reload
+    assert_equal "walkin@example.com", ticket.purchaser_email
+    assert_nil ticket.purchaser_phone
+  end
+
+  test "resend_ticket_confirmation rejects legacy stored bare prefix when no email and skips SMS when email is present" do
+    legacy_phone_only = @tournament.raffle_tickets.create!(
+      purchaser_name: "Legacy Bare Prefix",
+      purchaser_email: nil,
+      purchaser_phone: "+16715550111",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+    legacy_phone_only.update_columns(purchaser_phone: "+1671")
+
+    sms_called = false
+    sms_stub = ->(**) { sms_called = true; { success: true } }
+    with_singleton_method(RaffleSmsService, :purchase_confirmation, sms_stub) do
+      post "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{legacy_phone_only.id}/resend_confirmation",
+           headers: @headers
+    end
+
+    assert_response :unprocessable_entity
+    assert_not sms_called
+    assert_match(/incomplete/i, JSON.parse(response.body).fetch("error"))
+
+    legacy_with_email = @tournament.raffle_tickets.create!(
+      purchaser_name: "Legacy Dual Contact",
+      purchaser_email: "legacy@example.com",
+      purchaser_phone: "+16715550111",
+      price_cents: 500,
+      payment_status: "paid",
+      purchased_at: Time.current
+    )
+    legacy_with_email.update_columns(purchaser_phone: "+1671")
+
+    email_called = false
+    email_stub = ->(**) { email_called = true; { success: true, status: "accepted", message_id: "em_1" } }
+    with_singleton_method(RaffleSmsService, :purchase_confirmation, sms_stub) do
+      with_singleton_method(RaffleMailer, :purchase_confirmation_email, email_stub) do
+        post "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{legacy_with_email.id}/resend_confirmation",
+             headers: @headers
+      end
+    end
+
+    assert_response :success
+    assert email_called
+    assert_not sms_called
+  end
+
+  test "update_ticket_contact allows name-only edit on legacy batch with invalid stored phone and reports resent false when no paid tickets" do
+    legacy_batch = @tournament.raffle_sale_batches.create!(
+      buyer_name: "Legacy Batch",
+      buyer_email: "legacy-batch@example.com",
+      buyer_phone: "+16715550111",
+      quantity: 1,
+      total_cents: 500,
+      purchased_at: Time.current
+    )
+    legacy_batch.update_columns(buyer_phone: "+1671")
+
+    pending_ticket = @tournament.raffle_tickets.create!(
+      raffle_sale_batch: legacy_batch,
+      purchaser_name: "Legacy Batch",
+      purchaser_email: "legacy-batch@example.com",
+      purchaser_phone: "+16715550111",
+      price_cents: 500,
+      payment_status: "pending"
+    )
+    pending_ticket.update_columns(purchaser_phone: "+1671")
+
+    patch "/api/v1/tournaments/#{@tournament.id}/raffle/tickets/#{pending_ticket.id}/contact",
+          params: { buyer_name: "Fixed Name Only", resend: true },
+          headers: @headers
+
+    assert_response :success
+    json = JSON.parse(response.body)
+    assert_equal false, json.fetch("resent")
+    assert_match(/no paid tickets to resend/i, json.fetch("message"))
+    assert_equal "Fixed Name Only", legacy_batch.reload.buyer_name
+    assert_equal "+1671", legacy_batch.buyer_phone
+    assert_equal "Fixed Name Only", pending_ticket.reload.purchaser_name
+  end
+
   private
 
   def build_png_upload
