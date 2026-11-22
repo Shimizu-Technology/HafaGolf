@@ -118,6 +118,21 @@ function SponsorGrid({
 // Hole sponsor grid (static)
 // ---------------------------------------------------------------------------
 
+function safeExternalUrl(raw?: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function HoleSponsorGrid({
   sponsors,
   courseConfigs,
@@ -152,7 +167,7 @@ function HoleSponsorGrid({
               {sponsor.display_label && (
                 <p className="text-[10px] text-neutral-500 mt-1">{sponsor.display_label}</p>
               )}
-              {sponsor.website_url && (
+              {safeExternalUrl(sponsor.website_url) && (
                 <span className="inline-flex items-center gap-1 text-[10px] text-brand-600 mt-1">
                   <ExternalLink className="w-2.5 h-2.5" />
                   Visit
@@ -161,8 +176,9 @@ function HoleSponsorGrid({
             </div>
           </div>
         );
-        return sponsor.website_url ? (
-          <a key={sponsor.id} href={sponsor.website_url} target="_blank" rel="noopener noreferrer" className="block">
+        const safeHref = safeExternalUrl(sponsor.website_url);
+        return safeHref ? (
+          <a key={sponsor.id} href={safeHref} target="_blank" rel="noopener noreferrer" className="block">
             {inner}
           </a>
         ) : (
@@ -220,7 +236,7 @@ function SponsorCard({
             {sponsor.description}
           </p>
         )}
-        {sponsor.website_url && (
+        {safeExternalUrl(sponsor.website_url) && (
           <span className={`inline-flex items-center gap-1 text-brand-600 mt-1.5 ${
             isLarge ? 'text-xs' : 'text-[10px]'
           }`}>
@@ -232,9 +248,10 @@ function SponsorCard({
     </div>
   );
 
-  if (sponsor.website_url) {
+  const safeHref = safeExternalUrl(sponsor.website_url);
+  if (safeHref) {
     return (
-      <a href={sponsor.website_url} target="_blank" rel="noopener noreferrer" className="block">
+      <a href={safeHref} target="_blank" rel="noopener noreferrer" className="block">
         {card}
       </a>
     );

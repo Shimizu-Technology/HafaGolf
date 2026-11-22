@@ -31,6 +31,8 @@ class Sponsor < ApplicationRecord
   validates :payment_amount_cents, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
   validates :stripe_fee_cents, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
   validates :refund_amount_cents, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
+  validates :logo_url, public_image_url: true, if: :will_save_change_to_logo_url?
+  validate :website_url_must_be_http, if: :will_save_change_to_website_url?
 
   before_validation :normalize_hole_assignment
 
@@ -149,6 +151,17 @@ class Sponsor < ApplicationRecord
   end
 
   private
+
+  def website_url_must_be_http
+    return if website_url.blank?
+
+    uri = URI.parse(website_url.to_s.strip)
+    unless uri.is_a?(URI::HTTP) && uri.host.present? && uri.userinfo.nil?
+      errors.add(:website_url, 'must be a valid http or https URL')
+    end
+  rescue URI::InvalidURIError
+    errors.add(:website_url, 'must be a valid http or https URL')
+  end
 
   def normalize_hole_assignment
     self.course_key = course_key.presence

@@ -8,7 +8,8 @@ module Waivers
       player.with_lock do
         next if player[timestamp].present?
 
-        player.update!(timestamp => Time.current)
+        now = Time.current
+        player.update_columns(timestamp => now, updated_at: now)
         ActivityLog.log(
           admin: staff,
           action: "waiver_signed",
