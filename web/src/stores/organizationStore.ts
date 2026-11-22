@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { FeatureMap } from '../utils/features';
 
 export interface HomepageStat {
   value: string;
@@ -13,6 +14,7 @@ export interface OrganizationSettings {
   primary_color?: string;
   secondary_color?: string;
   accent_color?: string;
+  features?: FeatureMap;
   theme_preset?: string;
 }
 
@@ -44,6 +46,8 @@ export interface Organization {
   offseason_cta_label?: string | null;
   offseason_cta_url?: string | null;
   settings?: OrganizationSettings;
+  features?: FeatureMap;
+  feature_overrides?: FeatureMap;
   tournament_count?: number;
 }
 

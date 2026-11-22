@@ -24,6 +24,7 @@ import { useOrganization } from './OrganizationProvider';
 import { useTournament, useAdmin } from '../contexts';
 import { adminEventPath, adminOrgRoutes, getAdminEventSection, getAdminEventSlug } from '../utils/adminRoutes';
 import { useApplyBranding } from '../utils/branding';
+import { isFeatureEnabled } from '../utils/features';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -108,6 +109,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const openTournaments = tournaments.filter((tournament) => tournament.status !== 'archived');
   const archivedTournaments = tournaments.filter((tournament) => tournament.status === 'archived');
 
+  const orgSponsorsEnabled = isFeatureEnabled(organization?.features, 'sponsors', true);
+  const eventFeatures = activeTournament?.features ?? organization?.features;
+  const eventRaffleEnabled = isFeatureEnabled(eventFeatures, 'raffle', true);
+  const eventSponsorsEnabled = isFeatureEnabled(eventFeatures, 'sponsors', true);
+
   const allOrganizationNav: NavItem[] = [
     {
       label: 'Dashboard',
@@ -125,12 +131,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         return pathname.startsWith('/admin/events/') && !isEventWorkspaceRoute;
       },
     },
-    {
-      label: 'Sponsors',
-      path: adminOrgRoutes.sponsors,
-      icon: Building2,
-      match: (pathname) => pathname === adminOrgRoutes.sponsors,
-    },
+    ...(orgSponsorsEnabled
+      ? [
+          {
+            label: 'Sponsors',
+            path: adminOrgRoutes.sponsors,
+            icon: Building2,
+            match: (pathname: string) => pathname === adminOrgRoutes.sponsors,
+          },
+        ]
+      : []),
     {
       label: 'Activity Log',
       path: '/admin/activity',
@@ -187,18 +197,26 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           icon: Flag,
           match: () => routeSection === 'groups',
         },
-        {
-          label: 'Raffle',
-          path: adminEventPath(activeTournament.slug, 'raffle'),
-          icon: Ticket,
-          match: () => routeSection === 'raffle',
-        },
-        {
-          label: 'Sponsors',
-          path: adminEventPath(activeTournament.slug, 'sponsors'),
-          icon: HandCoins,
-          match: () => routeSection === 'sponsors',
-        },
+        ...(eventRaffleEnabled
+          ? [
+              {
+                label: 'Raffle',
+                path: adminEventPath(activeTournament.slug, 'raffle'),
+                icon: Ticket,
+                match: () => routeSection === 'raffle',
+              },
+            ]
+          : []),
+        ...(eventSponsorsEnabled
+          ? [
+              {
+                label: 'Sponsors',
+                path: adminEventPath(activeTournament.slug, 'sponsors'),
+                icon: HandCoins,
+                match: () => routeSection === 'sponsors',
+              },
+            ]
+          : []),
         {
           label: 'Reports',
           path: adminEventPath(activeTournament.slug, 'reports'),
@@ -516,25 +534,40 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-200 bg-white/95 backdrop-blur lg:hidden">
-        <div className="grid h-16 grid-cols-4">
-          {organizationNav.filter((item) => item.label !== 'Activity Log').map((item) => {
-            const Icon = item.icon;
-            const isActive = item.match ? item.match(location.pathname) : location.pathname === item.path;
+        {(() => {
+          const mobileItems = organizationNav.filter((item) => item.label !== 'Activity Log');
+          const gridColsClass =
+            mobileItems.length <= 1
+              ? 'grid-cols-1'
+              : mobileItems.length === 2
+              ? 'grid-cols-2'
+              : mobileItems.length === 3
+              ? 'grid-cols-3'
+              : mobileItems.length === 4
+              ? 'grid-cols-4'
+              : 'grid-cols-5';
+          return (
+            <div className={`grid h-16 ${gridColsClass}`}>
+              {mobileItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = item.match ? item.match(location.pathname) : location.pathname === item.path;
 
-            return (
-              <button
-                key={item.path}
-                onClick={() => handleNavigate(item.path)}
-                className={`flex flex-col items-center justify-center gap-1 text-[11px] transition ${
-                  isActive ? 'text-brand-600' : 'text-neutral-500'
-                }`}
-              >
-                <Icon className="h-5 w-5" />
-                <span className="font-medium">{item.label}</span>
-              </button>
-            );
-          })}
-        </div>
+                return (
+                  <button
+                    key={item.path}
+                    onClick={() => handleNavigate(item.path)}
+                    className={`flex flex-col items-center justify-center gap-1 text-[11px] transition ${
+                      isActive ? 'text-brand-600' : 'text-neutral-500'
+                    }`}
+                  >
+                    <Icon className="h-5 w-5" />
+                    <span className="font-medium">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
       </nav>
     </div>
   );

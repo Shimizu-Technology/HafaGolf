@@ -125,6 +125,24 @@ module Api
           per_page: collection.limit_value
         }
       end
+
+      def require_feature!(feature_key, organization: nil, tournament: nil)
+        resolved_tournament = tournament || (defined?(@tournament) ? @tournament : nil)
+        resolved_org = organization ||
+                       resolved_tournament&.organization ||
+                       (defined?(@organization) ? @organization : nil) ||
+                       Current.organization
+
+        unless Features.for(resolved_org, resolved_tournament).enabled?(feature_key)
+          render json: {
+            error: "Feature '#{feature_key}' is disabled for this event",
+            feature: feature_key.to_s
+          }, status: :forbidden
+          return false
+        end
+
+        true
+      end
     end
   end
 end

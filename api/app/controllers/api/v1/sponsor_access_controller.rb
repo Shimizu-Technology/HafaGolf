@@ -11,13 +11,24 @@ module Api
           return
         end
 
-        sponsors = Sponsor.active.where("LOWER(login_email) = ?", email)
-        if sponsors.empty?
+        sponsors = Sponsor.active.includes(tournament: :organization).where("LOWER(login_email) = ?", email)
+        if Current.organization.present?
+          sponsors = sponsors.joins(:tournament).where(tournaments: { organization_id: Current.organization.id })
+        end
+
+        # Filter to sponsors on tournaments where the sponsors feature is enabled.
+        # Always return the same generic 200 message when no enabled sponsors match
+        # so request_link never acts as an email-enumeration oracle.
+        enabled_sponsors = sponsors.select do |sponsor|
+          Features.for(sponsor.tournament&.organization, sponsor.tournament).enabled?(:sponsors)
+        end
+
+        if enabled_sponsors.empty?
           render json: { message: "If that email is associated with a sponsor account, you will receive an access link." }
           return
         end
 
-        sponsors.find_each do |sponsor|
+        enabled_sponsors.each do |sponsor|
           begin
             token = sponsor.generate_access_token!
             # Send access links synchronously so this login flow does not depend on
@@ -43,6 +54,8 @@ module Api
           return
         end
 
+        return unless require_feature!(:sponsors, tournament: sponsor.tournament)
+
         render json: {
           status: "requires_email_verification",
           sponsor_name: sponsor.name,
@@ -62,6 +75,8 @@ module Api
           render json: { error: "Invalid or expired access link" }, status: :unauthorized
           return
         end
+
+        return unless require_feature!(:sponsors, tournament: sponsor.tournament)
 
         unless email.present? && sponsor.login_email&.downcase == email
           render json: { error: "Email does not match. Please enter the email associated with this sponsorship." }, status: :forbidden

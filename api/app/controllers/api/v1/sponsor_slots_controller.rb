@@ -3,6 +3,7 @@ module Api
     class SponsorSlotsController < BaseController
       skip_before_action :authenticate_user!
       before_action :authenticate_sponsor!
+      before_action -> { require_feature!(:sponsors, tournament: @sponsor.tournament) }
 
       # GET /api/v1/sponsor_slots
       def index

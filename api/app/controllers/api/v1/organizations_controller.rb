@@ -28,6 +28,7 @@ module Api
           offseason_cta_label: organization.offseason_cta_label,
           offseason_cta_url: organization.offseason_cta_url,
           settings: organization.settings || {},
+          features: Features.for(organization).to_h,
           tournament_count: organization.tournament_count
         }
       rescue ActiveRecord::RecordNotFound
@@ -246,6 +247,119 @@ module Api
         render json: { errors: ["Domain update conflicted with another request. Please try again."] }, status: :unprocessable_entity
       end
 
+      # GET /api/v1/admin/organizations/:slug/features
+      def features
+        organization = Organization.find_by_slug!(params[:slug])
+        require_org_admin!(organization)
+        return if performed?
+
+        render json: features_response(organization)
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Organization not found' }, status: :not_found
+      end
+
+      # PATCH /api/v1/admin/organizations/:slug/features
+      def update_features
+        organization = Organization.find_by_slug!(params[:slug])
+        require_org_admin!(organization)
+        return if performed?
+
+        org_input = if params.key?(:organization_features)
+                      normalize_feature_input(params[:organization_features])
+                    elsif params[:tournament_id].blank? && params.key?(:features)
+                      normalize_feature_input(params[:features])
+                    end
+
+        tournament_input = if params[:tournament_id].present?
+                             raw_t = params.key?(:tournament_features) ? params[:tournament_features] : params[:features]
+                             normalize_feature_input(raw_t)
+                           end
+
+        if org_input.nil? && tournament_input.nil?
+          return render json: { error: 'No feature updates provided', errors: ['No feature updates provided'] },
+                        status: :unprocessable_entity
+        end
+
+        validation_errors = []
+        if org_input == :invalid
+          validation_errors << 'Organization features payload must be an object'
+        elsif org_input.present?
+          validation_errors.concat(GolfFeaturesCatalog.validate_overrides(org_input, scope: :organization))
+        end
+
+        tournament = nil
+        if params[:tournament_id].present?
+          tournament = organization.tournaments.find(params[:tournament_id])
+          if tournament_input == :invalid
+            validation_errors << 'Tournament features payload must be an object'
+          elsif tournament_input.present?
+            validation_errors.concat(GolfFeaturesCatalog.validate_overrides(tournament_input, scope: :tournament))
+          end
+        end
+
+        if validation_errors.any?
+          return render json: { error: validation_errors.join(', '), errors: validation_errors },
+                        status: :unprocessable_entity
+        end
+
+        ActiveRecord::Base.transaction do
+          if org_input.is_a?(Hash) && org_input.any?
+            settings = (organization.settings || {}).deep_dup
+            existing_features = settings['features'].is_a?(Hash) ? settings['features'].deep_dup : {}
+
+            org_input.each do |key, value|
+              if value.nil?
+                existing_features.delete(key)
+              else
+                existing_features[key] = value
+              end
+            end
+
+            settings['features'] = existing_features
+            org_updates = { settings: settings }
+
+            if org_input.key?('offseason_mode')
+              org_updates[:offseason_enabled] = org_input['offseason_mode'].nil? ? GolfFeaturesCatalog.default_for(:offseason_mode) : org_input['offseason_mode']
+            end
+
+            organization.update!(org_updates)
+          end
+
+          if tournament.present? && tournament_input.is_a?(Hash) && tournament_input.any?
+            config = (tournament.config || {}).deep_dup
+            existing_features = config['features'].is_a?(Hash) ? config['features'].deep_dup : {}
+
+            tournament_input.each do |key, value|
+              if value.nil?
+                existing_features.delete(key)
+              else
+                existing_features[key] = value
+              end
+            end
+
+            config['features'] = existing_features
+            tournament_updates = { config: config }
+
+            if tournament_input.key?('raffle')
+              # When clearing a tournament override to nil ("inherit"), set legacy raffle_enabled = true
+              # so Features#compute_resolved defers cleanly to the organization setting even if the org
+              # later re-enables raffle.
+              tournament_updates[:raffle_enabled] = tournament_input['raffle'].nil? ? true : tournament_input['raffle']
+            end
+
+            tournament.update!(tournament_updates)
+          end
+        end
+
+        render json: features_response(organization.reload)
+      rescue ActiveRecord::RecordNotFound => e
+        message = e.model == 'Tournament' ? 'Tournament not found' : 'Organization not found'
+        render json: { error: message }, status: :not_found
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: e.record.errors.full_messages.join(', '), errors: e.record.errors.full_messages },
+               status: :unprocessable_entity
+      end
+
       # PATCH /api/v1/admin/organizations/:slug
       # Admin endpoint - update organization settings
       def update
@@ -253,7 +367,28 @@ module Api
         require_org_admin!(organization)
         return if performed?
 
-        if organization.update(organization_params)
+        attrs = organization_params.to_h
+        if attrs.key?('settings') && attrs['settings'].is_a?(Hash)
+          incoming_settings = attrs['settings'].deep_stringify_keys
+          # /admin/organizations/:slug/features is the sole owner of settings["features"];
+          # strip incoming features so generic settings saves cannot clobber concurrent feature edits.
+          incoming_settings.delete('features')
+          if organization.settings.is_a?(Hash) && organization.settings.key?('features')
+            incoming_settings['features'] = organization.settings['features']
+          end
+          attrs['settings'] = incoming_settings
+        end
+
+        if attrs.key?('offseason_enabled')
+          offseason_value = ActiveModel::Type::Boolean.new.cast(attrs['offseason_enabled'])
+          current_settings = (attrs['settings'] || organization.settings || {}).deep_dup.deep_stringify_keys
+          if current_settings['features'].is_a?(Hash) && current_settings['features'].key?('offseason_mode')
+            current_settings['features'] = current_settings['features'].merge('offseason_mode' => offseason_value)
+            attrs['settings'] = current_settings
+          end
+        end
+
+        if organization.update(attrs)
           render json: organization_response(organization)
         else
           render json: { errors: organization.errors.full_messages }, status: :unprocessable_entity
@@ -302,7 +437,10 @@ module Api
             sponsor_reserved_teams: sponsor_teams,
             walkin_fee: t.walkin_fee,
             walkin_swipe_simple_url: t.walkin_swipe_simple_url,
-            entry_fee_display: t.entry_fee_display
+            entry_fee_display: t.entry_fee_display,
+            raffle_enabled: t.raffle_enabled,
+            features: Features.for(organization, t).to_h,
+            feature_overrides: Features.for(organization, t).tournament_overrides
           }
         end
 
@@ -956,11 +1094,58 @@ module Api
           offseason_cta_label: org.offseason_cta_label,
           offseason_cta_url: org.offseason_cta_url,
           settings: org.settings || {},
+          features: Features.for(org).to_h,
+          feature_overrides: Features.for(org).organization_overrides,
           subscription_status: org.subscription_status,
           tournament_count: org.tournament_count,
           admin_count: org.admin_count,
           created_at: org.created_at,
           updated_at: org.updated_at
+        }
+      end
+
+      def normalize_feature_input(raw)
+        return nil if raw.nil?
+        return :invalid unless raw.is_a?(ActionController::Parameters) || raw.is_a?(Hash)
+
+        raw.keys.each_with_object({}) do |key, acc|
+          val = raw[key]
+          acc[key.to_s] = case val
+                          when true, "true" then true
+                          when false, "false" then false
+                          when nil, "" then nil
+                          else val
+                          end
+        end
+      end
+
+      def features_response(organization)
+        org_features = Features.for(organization)
+        tournaments = organization.tournaments.order(year: :desc, created_at: :desc)
+
+        {
+          catalog: GolfFeaturesCatalog.as_json,
+          organization: {
+            id: organization.id,
+            name: organization.name,
+            slug: organization.slug,
+            offseason_enabled: organization.offseason_enabled,
+            features: org_features.to_h,
+            feature_overrides: org_features.organization_overrides
+          },
+          tournaments: tournaments.map do |tournament|
+            t_features = Features.for(organization, tournament)
+            {
+              id: tournament.id,
+              name: tournament.name,
+              slug: tournament.slug,
+              year: tournament.year,
+              status: tournament.status,
+              raffle_enabled: tournament.raffle_enabled,
+              features: t_features.to_h,
+              feature_overrides: t_features.tournament_overrides
+            }
+          end
         }
       end
     end
