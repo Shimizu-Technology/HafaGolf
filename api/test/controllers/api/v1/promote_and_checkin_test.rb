@@ -180,6 +180,61 @@ class Api::V1::PromoteAndCheckinTest < ActionDispatch::IntegrationTest
     assert_nil @cancelled_golfer.checked_in_at
   end
 
+  test "rejects mark_paid true on an already-paid golfer without overwriting payment details and allows mark_paid false" do
+    paid_waitlisted = @tournament_a.golfers.create!(
+      name: "Prepaid Waitlist",
+      email: "prepaid-#{SecureRandom.hex(3)}@example.com",
+      phone: "+16715552099",
+      team_category: "Co-Ed",
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      receipt_number: "ORIG-RCPT-1",
+      payment_amount_cents: 12500,
+      paid_at: 1.day.ago,
+      payment_verified_by_id: @admin_a.id,
+      payment_verified_by_name: @admin_a.name,
+      payment_verified_at: 1.day.ago,
+      registration_status: "waitlist",
+      waiver_accepted_at: Time.current
+    )
+
+    # Attempt with mark_paid: true must fail with 422 and leave payment + status untouched
+    post "/api/v1/golfers/#{paid_waitlisted.id}/promote_and_checkin",
+         params: {
+           mark_paid: true,
+           payment_method: "cash",
+           receipt_number: "OVERWRITE-99",
+           payment_amount_cents: 100
+         },
+         headers: @volunteer_a_headers,
+         as: :json
+
+    assert_response :unprocessable_entity
+    paid_waitlisted.reload
+    assert_equal "waitlist", paid_waitlisted.registration_status
+    assert_nil paid_waitlisted.checked_in_at
+    assert_equal "stripe", paid_waitlisted.payment_method
+    assert_equal "ORIG-RCPT-1", paid_waitlisted.receipt_number
+    assert_equal 12500, paid_waitlisted.payment_amount_cents
+    assert_equal @admin_a.id, paid_waitlisted.payment_verified_by_id
+
+    # Promoting with mark_paid: false succeeds and preserves original payment details
+    post "/api/v1/golfers/#{paid_waitlisted.id}/promote_and_checkin",
+         params: { mark_paid: false },
+         headers: @volunteer_a_headers,
+         as: :json
+
+    assert_response :success
+    paid_waitlisted.reload
+    assert_equal "confirmed", paid_waitlisted.registration_status
+    assert_not_nil paid_waitlisted.checked_in_at
+    assert_equal "stripe", paid_waitlisted.payment_method
+    assert_equal "ORIG-RCPT-1", paid_waitlisted.receipt_number
+    assert_equal 12500, paid_waitlisted.payment_amount_cents
+    assert_equal @admin_a.id, paid_waitlisted.payment_verified_by_id
+  end
+
   test "rejects cross-org admin with 403" do
     post "/api/v1/golfers/#{@waitlisted_golfer.id}/promote_and_checkin",
          params: { mark_paid: true, payment_method: "cash" },

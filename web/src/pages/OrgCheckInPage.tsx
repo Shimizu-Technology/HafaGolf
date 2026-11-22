@@ -267,6 +267,7 @@ export const OrgCheckInPage: React.FC = () => {
     e.preventDefault();
     if (!promotingGolfer) return;
 
+    const shouldRecordPayment = promotingGolfer.payment_status !== 'paid' && promoteMarkPaid;
     const payload: {
       mark_paid: boolean;
       payment_method?: string;
@@ -274,10 +275,10 @@ export const OrgCheckInPage: React.FC = () => {
       payment_amount_cents?: number;
       payment_notes?: string;
     } = {
-      mark_paid: promoteMarkPaid,
+      mark_paid: shouldRecordPayment,
     };
 
-    if (promoteMarkPaid) {
+    if (shouldRecordPayment) {
       const parsedDollars = Number(promoteAmountDollars);
       if (Number.isNaN(parsedDollars) || parsedDollars < 0) {
         toast.error('Enter a valid non-negative payment amount');
@@ -1192,22 +1193,31 @@ export const OrgCheckInPage: React.FC = () => {
                 )}
               </div>
 
-              <label className="flex items-center gap-3 rounded-xl border border-gray-200 p-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={promoteMarkPaid}
-                  onChange={(e) => setPromoteMarkPaid(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300 accent-purple-600"
-                />
-                <div>
-                  <span className="text-sm font-medium text-gray-900">Record payment now</span>
-                  <p className="text-xs text-gray-500">
-                    Atomically promotes from waitlist, marks paid, and checks in.
-                  </p>
+              {promotingGolfer.payment_status === 'paid' ? (
+                <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                  <CheckCircle className="w-4 h-4 text-green-600 shrink-0" />
+                  <span>
+                    Payment is already recorded. This will promote and check in without altering payment details.
+                  </span>
                 </div>
-              </label>
+              ) : (
+                <label className="flex items-center gap-3 rounded-xl border border-gray-200 p-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={promoteMarkPaid}
+                    onChange={(e) => setPromoteMarkPaid(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 accent-purple-600"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-gray-900">Record payment now</span>
+                    <p className="text-xs text-gray-500">
+                      Atomically promotes from waitlist, marks paid, and checks in.
+                    </p>
+                  </div>
+                </label>
+              )}
 
-              {promoteMarkPaid && (
+              {promotingGolfer.payment_status !== 'paid' && promoteMarkPaid && (
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <div>

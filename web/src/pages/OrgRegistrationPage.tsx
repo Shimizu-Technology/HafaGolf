@@ -105,7 +105,6 @@ export const OrgRegistrationPage: React.FC = () => {
   const [employeeValidation, setEmployeeValidation] = useState<{
     status: 'idle' | 'checking' | 'valid' | 'invalid';
     employeeNumber?: string;
-    employeeName?: string | null;
     employeeEntryFeeCents?: number | null;
     message?: string;
   }>({ status: 'idle' });
@@ -154,11 +153,8 @@ export const OrgRegistrationPage: React.FC = () => {
         setEmployeeValidation({
           status: 'valid',
           employeeNumber: result.employee_number || normalized,
-          employeeName: result.employee_name,
           employeeEntryFeeCents: result.employee_entry_fee_cents,
-          message: result.employee_name
-            ? `Verified employee: ${result.employee_name}`
-            : 'Employee number verified',
+          message: 'Employee number verified',
         });
       } else {
         setEmployeeValidation({

@@ -29,7 +29,7 @@ class Rack::Attack
 
   throttle("req/ip/employee-number-validation", limit: 20, period: 1.minute) do |req|
     next unless req.post?
-    next unless req.path == "/api/v1/employee_numbers/validate"
+    next unless req.path.match?(%r{\A/api/v1/employee_numbers/validate(?:\.json)?/?\z})
 
     req.ip
   end

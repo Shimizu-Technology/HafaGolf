@@ -124,6 +124,35 @@ class EmployeeNumberTest < ActiveSupport::TestCase
     assert_nil record.used_by_golfer_id
   end
 
+  test "expected_entry_fee_cents preserves standard entry_fee for non-employee and sponsored golfers" do
+    @tournament.update!(
+      entry_fee: 15000,
+      early_bird_fee: 10000,
+      early_bird_deadline: 10.days.from_now,
+      employee_entry_fee: 5000
+    )
+
+    regular = create_golfer(@tournament, name: "Regular Player")
+    assert_equal 15000, regular.expected_entry_fee_cents
+
+    sponsored = @tournament.golfers.create!(
+      name: "Sponsored Player",
+      email: "sponsored-#{SecureRandom.hex(3)}@example.com",
+      payment_type: "sponsor",
+      payment_status: "paid",
+      registration_status: "confirmed"
+    )
+    assert_equal 15000, sponsored.expected_entry_fee_cents
+
+    record = @tournament.employee_numbers.create!(organization: @org, employee_number: "EMP-FEE-1")
+    record.claim!(regular)
+    assert_equal 5000, regular.reload.expected_entry_fee_cents
+
+    # Falls back to tournament.entry_fee when employee_pricing feature is disabled
+    @org.update!(settings: { "features" => { "employee_pricing" => false } })
+    assert_equal 15000, regular.reload.expected_entry_fee_cents
+  end
+
   private
 
   def create_golfer(tournament, name:)

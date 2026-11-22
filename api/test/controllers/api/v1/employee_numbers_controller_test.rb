@@ -123,7 +123,7 @@ class Api::V1::EmployeeNumbersControllerTest < ActionDispatch::IntegrationTest
     body = JSON.parse(response.body)
     assert_equal true, body["valid"]
     assert_equal true, body["available"]
-    assert_equal "Alice Santos", body["employee_name"]
+    assert_not body.key?("employee_name"), "Public validate must not leak employee_name"
     assert_equal 5000, body["employee_entry_fee_cents"]
 
     # Invalid number
@@ -134,6 +134,7 @@ class Api::V1::EmployeeNumbersControllerTest < ActionDispatch::IntegrationTest
     body = JSON.parse(response.body)
     assert_equal false, body["valid"]
     assert_equal false, body["available"]
+    assert_not body.key?("employee_name")
 
     # Cross-org: Org A host cannot validate Org B's employee number via Org A tournament
     post "/api/v1/employee_numbers/validate",
@@ -143,7 +144,7 @@ class Api::V1::EmployeeNumbersControllerTest < ActionDispatch::IntegrationTest
     body = JSON.parse(response.body)
     assert_equal false, body["valid"]
     assert_equal false, body["available"]
-    assert_nil body["employee_name"]
+    assert_not body.key?("employee_name")
 
     # Cross-org: Org A host cannot target Org B's tournament_id
     post "/api/v1/employee_numbers/validate",
@@ -152,7 +153,7 @@ class Api::V1::EmployeeNumbersControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
     body = JSON.parse(response.body)
     assert_equal false, body["valid"]
-    assert_nil body["employee_name"]
+    assert_not body.key?("employee_name")
   end
 
   test "admin CRUD, search, bulk_create, release, and delete with used protection" do
@@ -366,6 +367,95 @@ class Api::V1::EmployeeNumbersControllerTest < ActionDispatch::IntegrationTest
          headers: host_a,
          as: :json
     assert_feature_disabled("employee_pricing")
+  end
+
+  test "blank tournament employee_entry_fee rejects validation and registration without burning employee number" do
+    host_a = { "X-Tenant-Host" => "alpha-#{@org_a.slug}.example.com" }
+    @tournament_a.update!(employee_entry_fee: nil)
+
+    post "/api/v1/employee_numbers/validate",
+         params: { tournament_id: @tournament_a.id, employee_number: "EMP-1001" },
+         headers: host_a
+    assert_response :unprocessable_entity
+
+    post "/api/v1/golfers",
+         params: {
+           tournament_id: @tournament_a.id,
+           waiver_accepted: true,
+           is_employee: true,
+           employee_number: "EMP-1001",
+           golfer: {
+             name: "Unconfigured Fee Player",
+             email: "unconfigured-#{SecureRandom.hex(3)}@example.com",
+             phone: "+16715551239",
+             payment_type: "pay_on_day",
+             team_category: "Co-Ed"
+           }
+         },
+         headers: host_a,
+         as: :json
+    assert_response :unprocessable_entity
+    assert_not @emp_a1.reload.used?, "Employee number must not be burned when employee_entry_fee is blank"
+  end
+
+  test "admin golfer update blocks setting is_employee true without a claimed employee number and allows clearing false" do
+    regular = @tournament_a.golfers.create!(
+      name: "Regular Golfer",
+      email: "regular-#{SecureRandom.hex(3)}@example.com",
+      phone: "+16715551240",
+      team_category: "Co-Ed",
+      payment_type: "pay_on_day",
+      payment_status: "unpaid",
+      registration_status: "confirmed",
+      waiver_accepted_at: Time.current
+    )
+
+    patch "/api/v1/golfers/#{regular.id}",
+          params: { golfer: { is_employee: true } },
+          headers: @admin_a_headers,
+          as: :json
+    assert_response :unprocessable_entity
+    assert_not regular.reload.is_employee?
+
+    # Claim via EmployeeNumber then clear via PATCH is_employee: false
+    @emp_a1.claim!(regular)
+    assert regular.reload.is_employee?
+
+    patch "/api/v1/golfers/#{regular.id}",
+          params: { golfer: { is_employee: false } },
+          headers: @admin_a_headers,
+          as: :json
+    assert_response :success
+    assert_not regular.reload.is_employee?
+    assert_not @emp_a1.reload.used?
+  end
+
+  test "employee_numbers update rolls back release when rename fails uniqueness validation" do
+    other_emp = @tournament_a.employee_numbers.create!(
+      organization: @org_a,
+      employee_number: "EMP-9999"
+    )
+    golfer = @tournament_a.golfers.create!(
+      name: "Claimed Golfer",
+      email: "claimed-#{SecureRandom.hex(3)}@example.com",
+      phone: "+16715551241",
+      team_category: "Co-Ed",
+      payment_type: "pay_on_day",
+      payment_status: "unpaid",
+      registration_status: "confirmed",
+      waiver_accepted_at: Time.current
+    )
+    @emp_a1.claim!(golfer)
+
+    patch "/api/v1/employee_numbers/#{@emp_a1.id}",
+          params: { release: true, employee_number: other_emp.employee_number },
+          headers: @admin_a_headers,
+          as: :json
+    assert_response :unprocessable_entity
+
+    assert @emp_a1.reload.used?, "Release must roll back when rename fails"
+    assert_equal golfer.id, @emp_a1.used_by_golfer_id
+    assert golfer.reload.is_employee?
   end
 
   private

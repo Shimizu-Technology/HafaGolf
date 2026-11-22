@@ -29,7 +29,7 @@ module Api
           unless tournament
             outcome = {
               status: :not_found,
-              body: { valid: false, available: false, employee_name: nil, error: "Tournament not found" }
+              body: { valid: false, available: false, error: "Tournament not found" }
             }
             next
           end
@@ -45,10 +45,22 @@ module Api
             next
           end
 
+          if tournament.employee_entry_fee.blank?
+            outcome = {
+              status: :unprocessable_entity,
+              body: {
+                valid: false,
+                available: false,
+                error: "Employee pricing fee is not configured for this event"
+              }
+            }
+            next
+          end
+
           if normalized.blank?
             outcome = {
               status: :unprocessable_entity,
-              body: { valid: false, available: false, employee_name: nil, error: "Employee number is required" }
+              body: { valid: false, available: false, error: "Employee number is required" }
             }
             next
           end
@@ -61,7 +73,6 @@ module Api
               body: {
                 valid: false,
                 available: false,
-                employee_name: nil,
                 message: "Invalid employee number"
               }
             }
@@ -71,7 +82,6 @@ module Api
               body: {
                 valid: true,
                 available: false,
-                employee_name: nil,
                 message: "This employee number has already been used"
               }
             }
@@ -82,7 +92,6 @@ module Api
                 valid: true,
                 available: true,
                 employee_number: record.employee_number,
-                employee_name: record.employee_name,
                 employee_entry_fee_cents: tournament.employee_entry_fee
               }
             }
@@ -129,6 +138,8 @@ module Api
         else
           render json: { errors: record.errors.full_messages }, status: :unprocessable_entity
         end
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Employee number already exists for this tournament"] }, status: :unprocessable_entity
       end
 
       # POST /api/v1/employee_numbers/bulk_create
@@ -197,18 +208,29 @@ module Api
         should_release = ActiveModel::Type::Boolean.new.cast(params[:release]) ||
                          (attrs.key?(:used) && ActiveModel::Type::Boolean.new.cast(attrs[:used]) == false)
 
-        if should_release
-          @employee_number.release!
-        elsif attrs.key?(:used) && ActiveModel::Type::Boolean.new.cast(attrs[:used]) == true && !@employee_number.used?
-          @employee_number.update!(used: true, used_at: Time.current)
-        end
-
         update_fields = {}
         update_fields[:employee_number] = attrs[:employee_number] if attrs.key?(:employee_number) && attrs[:employee_number].present?
         update_fields[:employee_name] = attrs[:employee_name] if attrs.key?(:employee_name)
 
-        if update_fields.any? && !@employee_number.update(update_fields)
-          render json: { errors: @employee_number.errors.full_messages }, status: :unprocessable_entity
+        validation_errors = nil
+
+        ActiveRecord::Base.transaction(requires_new: true) do
+          @employee_number.lock!
+
+          if should_release
+            @employee_number.release!
+          elsif attrs.key?(:used) && ActiveModel::Type::Boolean.new.cast(attrs[:used]) == true && !@employee_number.used?
+            @employee_number.update!(used: true, used_at: Time.current)
+          end
+
+          if update_fields.any? && !@employee_number.update(update_fields)
+            validation_errors = @employee_number.errors.full_messages
+            raise ActiveRecord::Rollback
+          end
+        end
+
+        if validation_errors
+          render json: { errors: validation_errors }, status: :unprocessable_entity
           return
         end
 
@@ -217,6 +239,8 @@ module Api
           employee_number: serialize_employee_number(@employee_number),
           stats: stats_for(@employee_number.tournament)
         }
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Employee number already exists for this tournament"] }, status: :unprocessable_entity
       end
 
       # DELETE /api/v1/employee_numbers/:id

@@ -217,7 +217,7 @@ class Golfer < ApplicationRecord
       payment_verified_by_name: admin.name || admin.email,
       payment_verified_at: Time.current
     )
-    attrs[:payment_amount_cents] = expected_entry_fee_cents if payment_amount_cents.blank?
+    attrs[:payment_amount_cents] = expected_entry_fee_cents(fallback: nil) if payment_amount_cents.blank?
     assign_attributes(attrs)
     save!(validate: false)
   end
@@ -232,15 +232,13 @@ class Golfer < ApplicationRecord
     name.split.last
   end
 
-  def expected_entry_fee_cents
-    return 0 if sponsored?
-
+  def expected_entry_fee_cents(fallback: 12500)
     if is_employee? &&
        tournament&.employee_entry_fee.present? &&
        Features.for(tournament.organization, tournament).enabled?(:employee_pricing)
       tournament.employee_entry_fee
     else
-      tournament&.current_fee || tournament&.entry_fee || 12500
+      tournament&.entry_fee || fallback
     end
   end
 

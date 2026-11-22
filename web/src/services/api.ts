@@ -653,7 +653,7 @@ export interface EmployeeNumberValidationResponse {
   valid: boolean;
   available: boolean;
   employee_number?: string;
-  employee_name: string | null;
+  employee_name?: string | null;
   employee_entry_fee_cents?: number | null;
   message?: string;
   error?: string;

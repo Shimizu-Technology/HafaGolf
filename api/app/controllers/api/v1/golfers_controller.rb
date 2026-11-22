@@ -107,6 +107,15 @@ module Api
             next
           end
 
+          if requested_employee && tournament.employee_entry_fee.blank?
+            error_response = {
+              error: "Employee pricing fee is not configured for this event.",
+              errors: ["Employee pricing fee is not configured for this event."],
+              status: :unprocessable_entity
+            }
+            next
+          end
+
           # Wrap in transaction with row locking to prevent race conditions
           ActiveRecord::Base.transaction(requires_new: true) do
             # Lock the tournament row to prevent concurrent capacity checks
@@ -220,10 +229,27 @@ module Api
           return
         end
 
-        if golfer.update(permitted)
-          if permitted.key?(:is_employee) && ActiveModel::Type::Boolean.new.cast(permitted[:is_employee]) == false
-            golfer.release_employee_number!
+        if permitted.key?(:is_employee)
+          requested_is_employee = ActiveModel::Type::Boolean.new.cast(permitted[:is_employee])
+          if requested_is_employee && golfer.employee_number_record_id.blank?
+            render json: { errors: ["Cannot enable employee pricing without claiming a valid employee number"] }, status: :unprocessable_entity
+            return
           end
+        end
+
+        updated = false
+        ActiveRecord::Base.transaction(requires_new: true) do
+          if golfer.update(permitted)
+            if permitted.key?(:is_employee) && ActiveModel::Type::Boolean.new.cast(permitted[:is_employee]) == false
+              golfer.release_employee_number!
+            end
+            updated = true
+          else
+            raise ActiveRecord::Rollback
+          end
+        end
+
+        if updated
           # Log activity for meaningful changes
           log_golfer_update(golfer, old_values)
           broadcast_golfer_update(golfer)
@@ -688,6 +714,14 @@ module Api
           }
 
           if should_mark_paid
+            if golfer.payment_status == "paid"
+              error_response = {
+                error: "Golfer is already marked as paid; pass mark_paid: false to promote and check in without overwriting payment details",
+                status: :unprocessable_entity
+              }
+              raise ActiveRecord::Rollback
+            end
+
             payment_method = params[:payment_method].to_s.strip.presence
             if payment_method.blank?
               error_response = { error: "Payment method is required when recording payment", status: :unprocessable_entity }
@@ -886,7 +920,7 @@ module Api
             payment_method: params[:payment_method],
             payment_notes: params[:payment_notes],
             receipt_number: params[:receipt_number],
-            payment_amount_cents: params[:payment_amount_cents] || golfer.expected_entry_fee_cents || 0,
+            payment_amount_cents: params[:payment_amount_cents] || golfer.expected_entry_fee_cents(fallback: 0),
             payment_verified_by_id: current_admin&.id,
             payment_verified_by_name: admin_name,
             payment_verified_at: Time.current
