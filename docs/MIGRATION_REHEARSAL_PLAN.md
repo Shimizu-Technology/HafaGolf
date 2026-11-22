@@ -3,7 +3,7 @@
 > **Standing Gate (Leon, Nov 22, 2026):** Original GIAA (`giaa-tournament-*`) and Make-A-Wish (`make-a-wish-guam`) production databases and deployments remain **strictly read-only**. Zero production database connections or exports may run until Leon approves **Gate B** (staging snapshot export) or **Gate D** (cutover).
 
 This document defines the exact, repeatable rehearsal workflow for:
-1. **Make-A-Wish Guam & CNMI** (`golfforwishes.com`) — **Feb 22, 2027 Go/No-Go** for **Mar 1, 2027** cutover
+1. **Make-A-Wish Guam & CNMI** (`golfforwishes.com`) — **MAW runs its 2027 event (date unconfirmed, likely Thu Apr 29 or Fri Apr 30, 2027) on HafaGolf** (Leon decision, Nov 22, 2026); **Feb 22, 2027 Hard Go/No-Go** for cutover ahead of the event (target **Mar 1, 2027**). All raffle fixes live in HafaGolf only (`make-a-wish-guam` stays untouched).
 2. **FD Alumni Golf** (`fd-golf.shimizu-technology.com`) — **Mar 8, 2027 Go/No-Go** for **Mar 15, 2027** native launch
 3. **GIAA Memorial Golf** (`giaa-tournament.com`) — Post-2027 event (or upon full staging acceptance)
 
@@ -23,7 +23,12 @@ This document defines the exact, repeatable rehearsal workflow for:
 
 ## 2. Rehearsal 1 — Make-A-Wish Guam & CNMI (`golfforwishes.com`)
 
-**Target Rehearsal Window:** Early–Mid February 2027 (**Hard Go/No-Go: Feb 22, 2027**)
+**2027 Event Window:** Date still unconfirmed (likely **Thu Apr 29 or Fri Apr 30, 2027**) — MAW runs its 2027 event on **HafaGolf**, not on `make-a-wish-guam` (Leon decision, Nov 22, 2026). All raffle fixes stay in **HafaGolf only** (`make-a-wish-guam` stays untouched).  
+**Target Rehearsal Window:** Early–Mid February 2027 (**Hard Go/No-Go: Feb 22, 2027**; target cutover **Mar 1, 2027**, cleanly ahead of the event)  
+**Cutover Sequence (each production step requires Leon's explicit OK at the time):**
+1. **Staging rehearsal with a copy of MAW data** (Steps 1–5 below — Leon Gate B)
+2. **Raffle draw rehearsal with Mr. Eric's team** (Step 6 + MAW Raffle QA Gate below — on HafaGolf staging)
+3. **Production switch** (Leon Gate C hosting provisioning + Leon Gate D final data move & pointing `golfforwishes.com` at HafaGolf — see `docs/HOSTING_AND_ACTIVATION.md` §5.3)
 
 ### Step-by-Step Rehearsal Checklist
 1. **Snapshot & Restore (Leon Gate B required):**
@@ -50,11 +55,22 @@ This document defines the exact, repeatable rehearsal workflow for:
    - **Row counts:** tournaments, groups (preserving `starting_course_key`), golfers (confirmed / waitlist / cancelled), `team_members` (`source_golfers + non-blank partner_name`, when Real Teams tables are migrated), sponsors, sponsor slots, raffle sale batches, raffle prizes, raffle tickets, message deliveries (with `organization_id` backfilled), activity logs.
    - **Cent-exact financial sums:** `SUM(payment_amount_cents)` for paid/refunded golfers, `SUM(refund_amount_cents)` for refunds, `SUM(price_cents)` for paid raffle tickets, count of Stripe `payment_intent_id`s and `refund_id`s.
    - **Referential integrity:** zero orphaned `golfer.group_id`, `golfer.sponsor_id`, or `raffle_prize.winning_ticket_id` references (plus operator check on `active_storage_attachments` in Step 4).
-6. **Functional & Guam Carrier QA:**
+6. **Functional, Guam Carrier & Raffle Draw Rehearsal (with Mr. Eric's Team):**
    - **Clone 2026 → 2027 Draft:** Run `Tournaments::CloneService` on the imported 2026 tournament; confirm 2027 starts in `draft`, clears stale deadlines/SwipeSimple URLs, and issues year-prefixed raffle tickets (`MAWG27-0001`) with zero collision against 2026 tickets.
    - **Guam SMS Carrier Rehearsal:** Send live ClickSend test messages to real **IT&E**, **Docomo Pacific**, and **GTA** numbers; compare alphanumeric vs numeric sender ID; verify ClickSend delivery webhooks transition `message_deliveries.status` to `delivered`.
-   - **Raffle Reliability Walkthrough with Eric Tydingco's Team:** Test POS double-entry phone confirmation, bare `+1671` rejection, "Needs Attention" failed-SMS filter + one-tap edit/resend, Pre-Draw Readiness modal (requiring `delivered` status or audited override), and live projector **Hold Winner on Screen** draw over `async` ActionCable.
-   - **Fallback Trigger:** If any P1 item fails on Feb 22, trigger **Lane F fallback** on `make-a-wish-guam` (Leon-gated) rather than rushing cutover.
+   - **Raffle Draw Rehearsal with Mr. Eric's Team:** Walk through the full event-day raffle workflow on HafaGolf staging (POS ticket sale, double-entry phone check, delivery tracking + resend, pre-draw readiness modal, and live projector draw showing the winner's name over `async` ActionCable).
+   - **Production Switch (only after Feb 22 Go + Leon Gate C & D OK):** Provision production hosting, run the final read-only MAW data move + verification, and point `golfforwishes.com` (+ `www`) at HafaGolf per `docs/HOSTING_AND_ACTIVATION.md` §5.3.
+   - **Fallback Trigger (if Feb 22, 2027 Go/No-Go fails):** Run the 2027 event on MAW's existing `make-a-wish-guam` app with **paper raffle tickets at the event**. Do **not** build or backport raffle code into `make-a-wish-guam`.
+
+### MAW Raffle QA Gate Checklist (Required in HafaGolf Once Admin Sign-In Works)
+
+All 5 flows below MUST pass end-to-end browser QA (phone `390×844` + desktop `1280×800`) on HafaGolf once local/staging Clerk admin sign-in is enabled, and again during staging rehearsal with Mr. Eric's team:
+
+- [ ] **1. POS Sale:** Sell quick-bundle and custom-quantity raffle tickets in `RaffleManagementPage`; verify buyer name is required, `RaffleSaleBatch` + year-prefixed `RaffleTicket`s (`MAWG27-0001`, …) persist in Postgres, and ticket count/revenue totals update immediately.
+- [ ] **2. Double-Entry Phone Confirmation:** Enter buyer phone + confirm phone field on `SellTicketsTab`; verify mismatched numbers block submission, bare `+1671` / `+1670` prefixes are rejected both client-side and server-side, and the high-contrast read-back confirmation prompt displays the formatted number before saving.
+- [ ] **3. Delivery Status + Resend:** Verify per-buyer SMS & email delivery badges (`Delivered`, `Pending`/`Sent`, `Failed`, `Bounced`, `No contact`) render on the Tickets/Batches view; confirm `"Needs Attention"` filters failed/unconfirmed batches; exercise one-tap **Edit Contact & Resend** (`RaffleEditContactModal`) to fix a contact across the batch and re-trigger delivery.
+- [ ] **4. Pre-Draw Readiness Check:** Click `Draw` / `Draw All` to open `RafflePreDrawModal` (`GET /raffle/draw_readiness`); verify eligible paid ticket count, missing-name alerts, failed (red) and accepted-only/unconfirmed (amber) delivery warnings (requiring `delivered` status, not merely `accepted`), one-click jump to `"Needs Attention"`, and explicit audited override (`ActivityLog` entry) when proceeding with warnings.
+- [ ] **5. Draw Screen Showing Winner's Name:** Run a live draw with `RaffleBoardPage` open alongside admin; confirm `draw_started` → `prize_won` streams over `async` ActionCable, the **winner's name** (plus ticket number) is the largest focal element on the draw screen, banquet **"Hold Winner on Screen"** keeps the winner displayed until explicitly cleared (no 9-second auto-dismiss), and **Resend** winner notification works from the Prizes view.
 
 ---
 
