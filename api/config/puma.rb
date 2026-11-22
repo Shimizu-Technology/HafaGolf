@@ -8,5 +8,5 @@ port ENV.fetch("PORT", 3000)
 workers ENV.fetch("WEB_CONCURRENCY", 0)
 
 plugin :tmp_restart
-plugin :solid_queue if ENV["SOLID_QUEUE_IN_PUMA"]
+plugin :solid_queue if ENV["SOLID_QUEUE_IN_PUMA"] == "true"
 pidfile ENV["PIDFILE"] if ENV["PIDFILE"]

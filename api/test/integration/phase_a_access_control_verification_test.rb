@@ -55,6 +55,7 @@ class PhaseAAccessControlVerificationTest < ActionDispatch::IntegrationTest
       name: "Org B Golfer",
       email: "org-b-golfer-#{SecureRandom.hex(4)}@example.com",
       phone: "671-555-1000",
+      team_category: "Co-Ed",
       payment_type: "pay_on_day",
       payment_status: "unpaid",
       registration_status: "confirmed",

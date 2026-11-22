@@ -20,7 +20,7 @@ class GolferMailerTest < ActionMailer::TestCase
   test "confirmation_email for confirmed golfer" do
     mail = GolferMailer.confirmation_email(@golfer)
     
-    assert_equal "Your Golf Tournament Registration is Confirmed!", mail.subject
+    assert_equal "Test Tournament — Registration Confirmed!", mail.subject
     assert_equal [@golfer.email], mail.to
     assert_match @golfer.name, mail.body.encoded
   end
@@ -28,14 +28,14 @@ class GolferMailerTest < ActionMailer::TestCase
   test "confirmation_email for waitlist golfer" do
     mail = GolferMailer.confirmation_email(@waitlist_golfer)
     
-    assert_equal "You've Been Added to the Waitlist", mail.subject
+    assert_equal "Test Tournament — You've Been Added to the Waitlist", mail.subject
     assert_equal [@waitlist_golfer.email], mail.to
   end
 
   test "promotion_email for waitlist to confirmed" do
     mail = GolferMailer.promotion_email(@waitlist_golfer)
     
-    assert_equal "Great News! Your Golf Tournament Spot is Confirmed!", mail.subject
+    assert_equal "Test Tournament — A Spot Has Opened Up!", mail.subject
     assert_equal [@waitlist_golfer.email], mail.to
     assert_match "confirmed", mail.body.encoded.downcase
   end
@@ -44,7 +44,7 @@ class GolferMailerTest < ActionMailer::TestCase
     @golfer.update!(payment_method: "cash", receipt_number: "TEST123")
     mail = GolferMailer.payment_confirmation_email(@golfer)
     
-    assert_equal "Payment Received - Golf Tournament Registration", mail.subject
+    assert_equal "Test Tournament — Payment Confirmed!", mail.subject
     assert_equal [@golfer.email], mail.to
   end
 

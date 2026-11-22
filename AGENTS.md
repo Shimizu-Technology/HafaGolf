@@ -1,72 +1,41 @@
-# AGENTS.md — Make-A-Wish Guam & CNMI Events Platform
+# AGENTS.md — HafaGolf
 
 ## Project Context
 
-**Make-A-Wish Guam & CNMI Events Platform** — Event registration and management for Make-A-Wish Guam charity events.
+**HafaGolf** (`Shimizu-Technology/HafaGolf`) is Shimizu Technology's multi-client golf tournament management platform (companion to `HafaPass`).
 
-**Origin:** Forked from Pacific Golf (multi-tenant golf tournament SaaS), customized for a single organization.
+- **Architecture & Migration Plan:** Read **[docs/PLATFORM_ARCHITECTURE_AND_MIGRATION.md](docs/PLATFORM_ARCHITECTURE_AND_MIGRATION.md)** first.
+- **Admin host:** `golf.shimizu-technology.com` (one Clerk production app; client public domains never load Clerk).
+- **Public client hosts:** Mapped via `organization_domains` on one Netlify site using free Domain Aliases (e.g. `fd-golf.shimizu-technology.com`, `golfforwishes.com`, `giaa-tournament.com`, future `<client>.shimizu-technology.com`; optional `hafagolf.com` later).
 
-**Client:** Eric Tydingco (etydingco@guam.wish.org)
+## Non-Negotiable Architecture Rules
 
-**BOG Contact:** Lesley-Anne Leon Guerrero (lesley-anne.leonguerrero@bankofguam.com)
+1. **Zero client names in code logic:** Never branch on a client name, org slug, or hardcoded client domain in `api/app/` or `web/src/`. Use Brand Kit data, generic Theme Pack IDs, `Features.for(org, tournament)` (enforced in the API with `403`), and `organization_payment_configs`. Enforced in CI by `scripts/check-no-client-names.sh`.
+2. **Strict tenant isolation:** Treat `X-Tenant-Host`/`Origin` as a routing hint, never a security boundary. Scope every query, token endpoint, webhook, and ActionCable stream to the resolved/authorized organization. Add cross-org tests for every new endpoint or channel.
+3. **Database safety:** Local databases are `hafagolf_development` and `hafagolf_test`. Always confirm the target database identity before any `db:` command; never touch shared local databases or production data.
+4. **Neon & Netlify hygiene:**
+   - Render health check uses boot-only `/up` (never DB-dependent `/health`).
+   - Do not use `solid_cable` (0.1s DB polling breaks Neon scale-to-zero). Single-process Puma uses `async` cable with `SOLID_QUEUE_IN_PUMA=false` parsed explicitly as a boolean.
+   - Keep `scripts/netlify-ignore-build.sh` intact and `autoDeploy: false` in `api/render.yaml` until Leon authorizes staging/production activation.
+5. **No emojis in UI:** Use Lucide icons (SVGs).
+6. **Restrained motion:** Public landing pages get at most one signature moment per theme pack (`prefers-reduced-motion` respected, no animation libraries, no marquees/count-ups). Registration, check-in, scoring, raffle POS, and admin stay quiet.
 
-**First Event:** Golf for Wishes, May 2, 2026, LeoPalace Resort, Yona, Guam
+## Gates (Ask Leon First)
 
-**Payment:**
-- Interim: SwipeSimple link redirect (https://swipesimple.com/links/lnk_e1c8f45f9c401c93552781ef3d52fdfc)
-- Future: CardPointe API (after April 3 BOG meeting)
+- Paid services or hosting plan changes
+- DNS, Clerk, Render, Netlify, Neon, Stripe, or Square changes
+- Production data access or changes to live `make-a-wish-guam` / `giaa-tournament-*` deployments
+- Client outreach or archiving legacy repositories
 
-## Repository
+## Development Commands
 
-- **Repo:** https://github.com/Shimizu-Technology/make-a-wish-guam
-- **API:** Render (Singapore region) — make-a-wish-api.onrender.com
-- **Web:** Netlify — make-a-wish-web.netlify.app
+```bash
+# API tests (confirm DB is hafagolf_test)
+(cd api && bundle exec rails test)
 
-## Monorepo Structure
+# API security checks
+(cd api && bundle exec brakeman --no-pager && bundle exec bundler-audit check)
 
+# Web checks
+(cd web && npm run typecheck && npm test && npm run build)
 ```
-make-a-wish-guam/
-├── api/          # Rails 8.1 API
-├── web/          # React + TypeScript frontend
-├── docs/         # Documentation
-└── packages/     # Shared code (future)
-```
-
-## Development Servers
-
-- API: `http://localhost:3000`
-- Web: `http://localhost:5173`
-
-## Key Architecture Notes
-
-- **Single-org app** — MAW is the organization. No multi-tenant SaaS flows.
-- **Team registration** — Golf for Wishes uses 2-person teams ($300/team)
-- **Real-time** — ActionCable WebSockets for check-in, raffle, scoring
-- **Auth** — Clerk
-- **Payments** — SwipeSimple redirect (interim), Stripe (existing), CardPointe (future)
-- **Email** — Resend
-
-## Key Decisions
-
-| Decision | Choice |
-|----------|--------|
-| Multi-tenancy | Removed — single org (MAW) |
-| Payments | SwipeSimple redirect (interim) → CardPointe API (future) |
-| Teams | 2-person teams for golf events |
-| Real-time | ActionCable WebSockets |
-| Auth | Clerk |
-| Deployment | Render (API) + Netlify (Web) |
-
-## Coding Standards
-
-Follow the starter-app guides in `docs/starter-app/`:
-- FRONTEND_DESIGN_GUIDE.md — UI patterns
-- TESTING_GUIDE.md — Test coverage
-- CLERK_AUTH_SETUP_GUIDE.md — Auth patterns
-- WEBSOCKETS_GUIDE.md — Real-time features
-
-## Design Principles
-
-1. **No emojis in UI** — Use Lucide icons (SVGs)
-2. **Mobile-first** — Design for phone use first
-3. **Simple by default** — Don't overwhelm charity event organizers

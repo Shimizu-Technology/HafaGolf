@@ -1,13 +1,13 @@
 services:
   - type: web
-    name: make-a-wish-api
+    name: hafagolf-api
     env: ruby
     rootDir: api
     plan: starter
-    autoDeploy: true
+    autoDeploy: false
     buildCommand: bundle install && bundle exec rails db:migrate
     startCommand: bundle exec puma -C config/puma.rb
-    healthCheckPath: /health
+    healthCheckPath: /up
     envVars:
       - key: RAILS_ENV
         value: production
@@ -19,6 +19,10 @@ services:
         value: "true"
       - key: FORCE_SSL
         value: "true"
+      - key: SOLID_QUEUE_IN_PUMA
+        value: "false"
+      - key: WEB_CONCURRENCY
+        value: "0"
       - key: AWS_REGION
         value: us-east-1
       - key: AWS_ACCESS_KEY_ID

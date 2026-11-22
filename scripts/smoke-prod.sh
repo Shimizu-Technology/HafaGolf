@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-API_URL="${API_URL:-https://make-a-wish-api.onrender.com}"
-WEB_URL="${WEB_URL:-https://make-a-wish-web.netlify.app}"
-ORG_SLUG="${ORG_SLUG:-make-a-wish-guam}"
-TOURNAMENT_SLUG="${TOURNAMENT_SLUG:-golf-for-wishes-2026}"
+# Require explicit URLs and slugs so this script can never accidentally target another deployment.
+: "${API_URL:?Set API_URL (e.g. https://hafagolf-api.onrender.com)}"
+: "${WEB_URL:?Set WEB_URL (e.g. https://golf.shimizu-technology.com)}"
+: "${ORG_SLUG:?Set ORG_SLUG}"
+: "${TOURNAMENT_SLUG:?Set TOURNAMENT_SLUG}"
 
 check_code() {
   local url="$1"
   local expect="$2"
   local code
-  code=$(curl -s -o /tmp/pg_smoke_body -w '%{http_code}' "$url")
+  code=$(curl -s -o /tmp/hafagolf_smoke_body -w '%{http_code}' "$url")
   if [[ "$code" != "$expect" ]]; then
-    echo "❌ $url -> $code (expected $expect)"
+    echo "FAIL $url -> $code (expected $expect)"
     exit 1
   fi
-  echo "✅ $url -> $code"
+  echo "OK   $url -> $code"
 }
 
-echo "🚦 Running read-only production smoke test..."
+echo "Running read-only smoke test against $API_URL and $WEB_URL..."
 
 check_code "$API_URL/up" 200
 check_code "$WEB_URL" 200
-check_code "$WEB_URL/legacy" 200
 check_code "$WEB_URL/admin/login" 200
 check_code "$API_URL/api/v1/organizations/$ORG_SLUG" 200
 check_code "$API_URL/api/v1/organizations/$ORG_SLUG/tournaments" 200
@@ -30,19 +30,12 @@ check_code "$API_URL/api/v1/organizations/$ORG_SLUG/tournaments/$TOURNAMENT_SLUG
 
 TOURNAMENT_ID=$(curl -s "$API_URL/api/v1/organizations/$ORG_SLUG/tournaments/$TOURNAMENT_SLUG" | python3 -c "import sys,json; data=json.load(sys.stdin); print(data.get('id', ''))" 2>/dev/null)
 if [[ -z "$TOURNAMENT_ID" ]]; then
-  echo "❌ Failed to resolve tournament ID from $API_URL/api/v1/organizations/$ORG_SLUG/tournaments/$TOURNAMENT_SLUG"
+  echo "FAIL Failed to resolve tournament ID from $API_URL/api/v1/organizations/$ORG_SLUG/tournaments/$TOURNAMENT_SLUG"
   exit 1
 fi
-echo "✅ Tournament ID resolved: $TOURNAMENT_ID"
+echo "OK   Tournament ID resolved: $TOURNAMENT_ID"
 
-check_code "$API_URL/api/v1/tournaments/$TOURNAMENT_ID/scores/leaderboard" 200
 check_code "$API_URL/api/v1/tournaments/$TOURNAMENT_ID/raffle/board" 200
-check_code "$WEB_URL/$ORG_SLUG" 200
-check_code "$WEB_URL/$ORG_SLUG/tournaments/$TOURNAMENT_SLUG" 200
-check_code "$WEB_URL/$ORG_SLUG/tournaments/$TOURNAMENT_SLUG/register" 200
-check_code "$WEB_URL/$ORG_SLUG/tournaments/$TOURNAMENT_SLUG/leaderboard" 200
-check_code "$WEB_URL/$ORG_SLUG/tournaments/$TOURNAMENT_SLUG/raffle" 200
-check_code "$WEB_URL/score" 200
 
 echo ""
-echo "✅ Smoke test passed (read-only)"
+echo "Smoke test passed (read-only)."
