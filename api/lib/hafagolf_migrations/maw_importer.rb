@@ -206,8 +206,8 @@ module HafagolfMigrations
             logo_url_override: row["logo_url_override"],
             signature_image_url_override: row["signature_image_url_override"],
             tournament_info: row["tournament_info"],
-            config: parse_json(row["config"], {}),
-            event_schedule: parse_json(row["event_schedule"], nil),
+            event_schedule: row["event_schedule"],
+            config: parse_json(row["config"], {}, expected_type: Hash),
             flights_config: parse_json(row["flights_config"], nil),
             hole_pars: parse_json(row["hole_pars"], nil),
             hole_handicaps: parse_json(row["hole_handicaps"], nil),
@@ -220,8 +220,7 @@ module HafagolfMigrations
             raffle_draw_time: row["raffle_draw_time"],
             raffle_auto_draw: truthy?(row["raffle_auto_draw"])
           }.compact
-          # Re-apply booleans that .compact does not drop (false stays), and ensure config hash stays present
-          attrs[:config] ||= {}
+          attrs[:config] = {} unless attrs[:config].is_a?(Hash)
           if tournament.respond_to?(:capacity_unit=)
             attrs[:capacity_unit] = attrs[:team_size] > 1 ? "teams" : "players"
           end
@@ -510,6 +509,12 @@ module HafagolfMigrations
 
     def import_raffle_tickets!(tournament_map, golfer_map, batch_map, prize_map, user_map)
       map = {}
+      registrations_by_legacy_id = if defined?(Registration)
+                                     Registration.where(legacy_source: LEGACY_SOURCE, tournament_id: tournament_map.values.map(&:id))
+                                                 .index_by(&:legacy_id)
+                                   else
+                                     {}
+                                   end
       @source.rows("raffle_tickets").each do |row|
         tournament = tournament_map[row["tournament_id"].to_s]
         next unless tournament
@@ -517,7 +522,7 @@ module HafagolfMigrations
         ticket_num = row["ticket_number"].presence || "MAW-#{row['id']}"
         ticket = tournament.raffle_tickets.find_or_initialize_by(ticket_number: ticket_num)
         golfer = golfer_map[row["golfer_id"].to_s]
-        registration = golfer && defined?(Registration) ? Registration.find_by(legacy_source: LEGACY_SOURCE, legacy_id: row["golfer_id"].to_s) : nil
+        registration = golfer ? registrations_by_legacy_id[row["golfer_id"].to_s] : nil
         ticket.assign_attributes(
           sequence_number: (row["sequence_number"] || row["id"]).to_i,
           purchaser_name: row["purchaser_name"].presence || "Raffle Buyer",
@@ -694,12 +699,19 @@ module HafagolfMigrations
       ActiveModel::Type::Boolean.new.cast(val) == true
     end
 
-    def parse_json(val, fallback)
+    def parse_json(val, fallback, expected_type: nil)
       return fallback if val.nil?
-      return val if val.is_a?(Hash) || val.is_a?(Array)
 
-      JSON.parse(val.to_s)
-    rescue JSON::ParserError
+      parsed = if val.is_a?(Hash) || val.is_a?(Array)
+                 val
+               else
+                 JSON.parse(val.to_s)
+               end
+      return fallback if expected_type && !parsed.is_a?(expected_type)
+
+      parsed
+    rescue JSON::ParserError => e
+      Rails.logger.warn("[MawImporter] Failed to parse JSON column: #{e.class}")
       fallback
     end
   end

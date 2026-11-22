@@ -304,6 +304,13 @@ module HafagolfMigrations
     def import_employee_numbers!(org, tournament_map, golfer_map)
       return unless defined?(EmployeeNumber)
 
+      registrations_by_legacy_id = if defined?(Registration)
+                                     Registration.where(legacy_source: LEGACY_SOURCE, tournament_id: tournament_map.values.map(&:id))
+                                                 .index_by(&:legacy_id)
+                                   else
+                                     {}
+                                   end
+
       @source.rows("employee_numbers").each do |row|
         tournament = tournament_map[row["tournament_id"].to_s] || tournament_map.values.first
         next unless tournament
@@ -313,7 +320,7 @@ module HafagolfMigrations
           employee_number: row["employee_number"].to_s.strip.upcase
         )
         golfer = golfer_map[row["used_by_golfer_id"].to_s]
-        registration = golfer && defined?(Registration) ? Registration.find_by(legacy_source: LEGACY_SOURCE, legacy_id: row["used_by_golfer_id"].to_s) : nil
+        registration = golfer ? registrations_by_legacy_id[row["used_by_golfer_id"].to_s] : nil
         record.assign_attributes(
           organization: org,
           employee_name: row["employee_name"],

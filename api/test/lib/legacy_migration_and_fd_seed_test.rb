@@ -306,8 +306,13 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
         {
           "id" => 11, "slug" => "maw-multicourse-2026", "name" => "Multi Course 2026",
           "year" => 2026, "status" => "open", "team_size" => 2, "max_capacity" => 1,
-          "entry_fee" => 30_000, "raffle_enabled" => true, "config" => course_config_json
+          "entry_fee" => 30_000, "raffle_enabled" => true, "config" => course_config_json,
+          "event_schedule" => "7:00 AM Registration\n8:00 AM Shotgun Start"
         }
+      ],
+      "sponsors" => [
+        { "id" => 151, "tournament_id" => 11, "name" => "Duplicate Tier Sponsor", "tier" => "hole", "hole_number" => 1, "course_key" => "north", "slot_count" => 0, "active" => true },
+        { "id" => 152, "tournament_id" => 11, "name" => "Duplicate Tier Sponsor", "tier" => "hole", "hole_number" => 2, "course_key" => "south", "slot_count" => 0, "active" => true }
       ],
       "groups" => [
         { "id" => 101, "tournament_id" => 11, "group_number" => 1, "hole_number" => 1, "starting_course_key" => "north" },
@@ -334,7 +339,7 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
       ],
       "raffle_tickets" => [
         {
-          "id" => 301, "tournament_id" => 11, "ticket_number" => "SYN26-0001", "sequence_number" => 1,
+          "id" => 301, "tournament_id" => 11, "golfer_id" => 201, "ticket_number" => "SYN26-0001", "sequence_number" => 1,
           "purchaser_name" => "Avery Lindqvist", "purchaser_phone" => "+16715550101",
           "price_cents" => 500, "payment_status" => "paid", "payment_method" => nil
         },
@@ -352,13 +357,18 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
     assert_equal 2, report1.dig("target", "groups")
     assert_equal 2, report1.dig("target", "golfers")
     assert_equal 3, report1.dig("target", "team_members")
+    assert_equal 2, report1.dig("target", "sponsors")
     assert_equal 2, report1.dig("target", "raffle_prizes")
     assert_equal 500, report1.dig("target", "raffle_paid_cents")
 
     tournament = Tournament.find_by!(slug: "maw-multicourse-2026")
     assert_equal %w[north south], tournament.course_configs.map { |c| c["key"] }
+    assert_equal "7:00 AM Registration\n8:00 AM Shotgun Start", tournament.event_schedule
     assert_equal "north", tournament.groups.find_by!(group_number: 1).starting_course_key
-    assert_nil tournament.raffle_tickets.find_by!(ticket_number: "SYN26-0001").payment_method
+    ticket1 = tournament.raffle_tickets.find_by!(ticket_number: "SYN26-0001")
+    assert_nil ticket1.payment_method
+    assert_equal Registration.find_by!(legacy_source: "maw", legacy_id: "201").id, ticket1.registration_id
+    assert_equal %w[151 152], tournament.sponsors.where(legacy_source: "maw").order(:legacy_id).pluck(:legacy_id)
 
     report2 = HafagolfMigrations::MawImporter.new(source_reader: reader, expected_db_name: @current_db).run!
     assert_equal report1["target"], report2["target"]
@@ -406,7 +416,9 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
 
     emp = EmployeeNumber.find_by!(tournament: tournament, employee_number: "EMP-001")
     reg = Registration.find_by!(legacy_source: "giaa", legacy_id: "401")
+    golfer = Golfer.find(emp.used_by_golfer_id)
     assert_equal reg.id, emp.used_by_registration_id
+    assert_equal emp.id, golfer.employee_number_record_id
     assert_equal emp.id, reg.team_members.first.employee_number_record_id
     assert_equal true, reg.team_members.first.is_employee
 

@@ -340,6 +340,7 @@ class Registration < ApplicationRecord
 
   def team_category_matches_tournament_config
     return unless tournament
+    # legacy_source is not permitted in controller params; imported historical rows keep their original category.
     return if sponsored? || legacy_source.present?
 
     categories = tournament.team_categories
