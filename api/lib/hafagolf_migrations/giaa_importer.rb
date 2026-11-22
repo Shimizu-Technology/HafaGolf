@@ -24,6 +24,8 @@ module HafagolfMigrations
 
     def run!
       DatabaseGuard.verify!(expected_db_name: @expected_db_name)
+      DatabaseGuard.verify_source_distinct!(source_db_name: @source.database_name)
+      @source.require_non_empty_tables!("tournaments", "golfers")
 
       report = nil
       TenantContext.with_platform_access do
@@ -50,28 +52,30 @@ module HafagolfMigrations
     def import_organization!
       legacy_setting = @source.rows("settings").first || {}
       org = Organization.find_or_initialize_by(slug: ORG_SLUG)
-      org.assign_attributes(
-        name: legacy_setting["organization_name"].presence || "GIAA Memorial Golf Tournament",
-        description: "Annual Memorial Golf Classic",
-        primary_color: "#1B365D",
-        contact_email: legacy_setting["contact_email"].presence,
-        contact_phone: legacy_setting["contact_phone"].presence,
-        website_url: "https://#{PRIMARY_HOST}",
-        subscription_status: "active",
-        settings: (org.settings || {}).merge(
-          "secondary_color" => "#0F223D",
-          "accent_color" => "#C5A059",
-          "features" => ((org.settings || {})["features"] || {}).merge(
-            "employee_pricing" => true,
-            "checkin_alpha_lanes" => true,
-            "waitlist" => true,
-            "raffle" => false,
-            "scoring" => false,
-            "live_leaderboard" => false
+      if org.new_record?
+        org.assign_attributes(
+          name: legacy_setting["organization_name"].presence || "GIAA Memorial Golf Tournament",
+          description: "Annual Memorial Golf Classic",
+          primary_color: "#1B365D",
+          contact_email: legacy_setting["contact_email"].presence,
+          contact_phone: legacy_setting["contact_phone"].presence,
+          website_url: "https://#{PRIMARY_HOST}",
+          subscription_status: "active",
+          settings: (org.settings || {}).merge(
+            "secondary_color" => "#0F223D",
+            "accent_color" => "#C5A059",
+            "features" => ((org.settings || {})["features"] || {}).merge(
+              "employee_pricing" => true,
+              "checkin_alpha_lanes" => true,
+              "waitlist" => true,
+              "raffle" => false,
+              "scoring" => false,
+              "live_leaderboard" => false
+            )
           )
         )
-      )
-      org.save!
+        org.save!
+      end
       org
     end
 
@@ -79,8 +83,10 @@ module HafagolfMigrations
       return unless defined?(OrganizationDomain)
 
       domain = org.organization_domains.find_or_initialize_by(hostname: PRIMARY_HOST)
-      domain.is_primary = true
-      domain.save!
+      if domain.new_record?
+        domain.is_primary = true
+        domain.save!
+      end
     end
 
     def import_payment_config!(org)
@@ -88,6 +94,8 @@ module HafagolfMigrations
 
       # Intentionally NEVER copies plaintext Stripe keys from legacy `settings`
       config = org.organization_payment_config || org.build_organization_payment_config
+      return unless config.new_record?
+
       config.assign_attributes(
         payment_mode: "platform_collect",
         processor_provider: "stripe",
@@ -118,8 +126,10 @@ module HafagolfMigrations
         end
 
         membership = OrganizationMembership.find_or_initialize_by(user: user, organization: org)
-        membership.role = "admin"
-        membership.save!
+        if membership.new_record?
+          membership.role = "admin"
+          membership.save!
+        end
 
         map[row["id"].to_s] = user
       end
@@ -131,25 +141,27 @@ module HafagolfMigrations
       @source.rows("tournaments").each do |row|
         slug = row["slug"].presence || "giaa-#{row['year'] || 2026}-#{row['id']}"
         tournament = org.tournaments.find_or_initialize_by(slug: slug)
-        attrs = {
-          name: row["name"].presence || "GIAA Memorial Golf #{row['year'] || 2026}",
-          year: (row["year"] || 2026).to_i,
-          edition: row["edition"],
-          status: Tournament::STATUSES.include?(row["status"]) ? row["status"] : "completed",
-          event_date: row["event_date"],
-          location_name: row["location_name"],
-          location_address: row["location_address"],
-          format_name: row["format_name"],
-          team_size: 1,
-          max_capacity: (row["max_capacity"] || 144).to_i,
-          reserved_slots: (row["reserved_slots"] || 0).to_i,
-          entry_fee: (row["entry_fee"] || 12_500).to_i,
-          registration_open: ActiveModel::Type::Boolean.new.cast(row["registration_open"]) == true,
-          theme_preset: "memorial-formal"
-        }
-        attrs[:capacity_unit] = "players" if tournament.respond_to?(:capacity_unit=)
-        tournament.assign_attributes(attrs)
-        tournament.save!
+        if tournament.new_record?
+          attrs = {
+            name: row["name"].presence || "GIAA Memorial Golf #{row['year'] || 2026}",
+            year: (row["year"] || 2026).to_i,
+            edition: row["edition"],
+            status: Tournament::STATUSES.include?(row["status"]) ? row["status"] : "completed",
+            event_date: row["event_date"],
+            location_name: row["location_name"],
+            location_address: row["location_address"],
+            format_name: row["format_name"],
+            team_size: 1,
+            max_capacity: (row["max_capacity"] || 144).to_i,
+            reserved_slots: (row["reserved_slots"] || 0).to_i,
+            entry_fee: (row["entry_fee"] || 12_500).to_i,
+            registration_open: ActiveModel::Type::Boolean.new.cast(row["registration_open"]) == true,
+            theme_preset: "memorial-formal"
+          }
+          attrs[:capacity_unit] = "players" if tournament.respond_to?(:capacity_unit=)
+          tournament.assign_attributes(attrs)
+          tournament.save!
+        end
         map[row["id"].to_s] = tournament
       end
       map

@@ -12,6 +12,10 @@ namespace :hafagolf do
       begin
         report = HafagolfMigrations::MawImporter.new(source_reader: reader).run!
         puts JSON.pretty_generate(report)
+      rescue HafagolfMigrations::VerificationMismatchError => e
+        warn e.message
+        warn JSON.pretty_generate(e.report)
+        exit 1
       ensure
         reader.close
       end
@@ -23,6 +27,10 @@ namespace :hafagolf do
       begin
         report = HafagolfMigrations::GiaaImporter.new(source_reader: reader).run!
         puts JSON.pretty_generate(report)
+      rescue HafagolfMigrations::VerificationMismatchError => e
+        warn e.message
+        warn JSON.pretty_generate(e.report)
+        exit 1
       ensure
         reader.close
       end

@@ -27,6 +27,8 @@ module HafagolfMigrations
 
     def run!
       DatabaseGuard.verify!(expected_db_name: @expected_db_name)
+      DatabaseGuard.verify_source_distinct!(source_db_name: @source.database_name)
+      @source.require_non_empty_tables!("tournaments", "golfers")
 
       report = nil
       TenantContext.with_platform_access do
@@ -59,28 +61,30 @@ module HafagolfMigrations
     def import_organization!
       src_org = @source.rows("organizations").first || {}
       org = Organization.find_or_initialize_by(slug: ORG_SLUG)
-      org.assign_attributes(
-        name: src_org["name"].presence || "Make-A-Wish Guam & CNMI",
-        description: src_org["description"].presence || "Golf for Wishes Charity Tournament",
-        primary_color: valid_hex(src_org["primary_color"], "#0057B8"),
-        contact_email: src_org["contact_email"].presence,
-        contact_phone: src_org["contact_phone"].presence,
-        website_url: src_org["website_url"].presence || "https://golfforwishes.com",
-        subscription_status: "active",
-        settings: (org.settings || {}).merge(
-          "secondary_color" => valid_hex(src_org["secondary_color"], "#003D82"),
-          "accent_color" => valid_hex(src_org["accent_color"], "#F5A623"),
-          "features" => ((org.settings || {})["features"] || {}).merge(
-            "raffle" => true,
-            "sponsor_portal" => true,
-            "sms_notifications" => true,
-            "waitlist" => true,
-            "scoring" => false,
-            "live_leaderboard" => false
+      if org.new_record?
+        org.assign_attributes(
+          name: src_org["name"].presence || "Make-A-Wish Guam & CNMI",
+          description: src_org["description"].presence || "Golf for Wishes Charity Tournament",
+          primary_color: valid_hex(src_org["primary_color"], "#0057B8"),
+          contact_email: src_org["contact_email"].presence,
+          contact_phone: src_org["contact_phone"].presence,
+          website_url: src_org["website_url"].presence || "https://golfforwishes.com",
+          subscription_status: "active",
+          settings: (org.settings || {}).merge(
+            "secondary_color" => valid_hex(src_org["secondary_color"], "#003D82"),
+            "accent_color" => valid_hex(src_org["accent_color"], "#F5A623"),
+            "features" => ((org.settings || {})["features"] || {}).merge(
+              "raffle" => true,
+              "sponsor_portal" => true,
+              "sms_notifications" => true,
+              "waitlist" => true,
+              "scoring" => false,
+              "live_leaderboard" => false
+            )
           )
         )
-      )
-      org.save!
+        org.save!
+      end
       org
     end
 
@@ -92,8 +96,10 @@ module HafagolfMigrations
         [WWW_HOST, false]
       ].each do |hostname, is_primary|
         domain = org.organization_domains.find_or_initialize_by(hostname: hostname)
-        domain.is_primary = is_primary
-        domain.save!
+        if domain.new_record?
+          domain.is_primary = is_primary
+          domain.save!
+        end
       end
     end
 
@@ -101,6 +107,8 @@ module HafagolfMigrations
       return unless defined?(OrganizationPaymentConfig)
 
       config = org.organization_payment_config || org.build_organization_payment_config
+      return unless config.new_record?
+
       # Never migrate plaintext Stripe secrets from legacy `settings`
       config.assign_attributes(
         payment_mode: "external_link",
@@ -122,7 +130,8 @@ module HafagolfMigrations
         user = User.where("LOWER(email) = ?", email).first || User.new(email: email)
         if user.new_record?
           user.name = row["name"].presence || email.split("@").first
-          user.role = %w[super_admin org_admin tournament_admin].include?(row["role"]) ? row["role"] : "org_admin"
+          # Never grant platform-wide super_admin during tenant import
+          user.role = %w[org_admin tournament_admin].include?(row["role"]) ? row["role"] : "org_admin"
           user.clerk_id = "pending_#{Digest::SHA256.hexdigest(email)[0, 32]}"
           user.save!
         end
@@ -130,8 +139,10 @@ module HafagolfMigrations
         membership_row = memberships_by_user[row["id"].to_s]
         role = membership_row && %w[admin volunteer].include?(membership_row["role"]) ? membership_row["role"] : "admin"
         membership = OrganizationMembership.find_or_initialize_by(user: user, organization: org)
-        membership.role = role
-        membership.save!
+        if membership.new_record?
+          membership.role = role
+          membership.save!
+        end
 
         user_map[row["id"].to_s] = user
       end
@@ -144,28 +155,30 @@ module HafagolfMigrations
       @source.rows("tournaments").each do |row|
         slug = row["slug"].presence || "maw-#{row['year'] || 2026}-#{row['id']}"
         tournament = org.tournaments.find_or_initialize_by(slug: slug)
-        attrs = {
-          name: row["name"].presence || "Golf for Wishes #{row['year'] || 2026}",
-          year: (row["year"] || 2026).to_i,
-          edition: row["edition"],
-          status: valid_tournament_status(row["status"]),
-          event_date: row["event_date"],
-          location_name: row["location_name"],
-          location_address: row["location_address"],
-          format_name: row["format_name"],
-          team_size: (row["team_size"] || 2).to_i,
-          max_capacity: (row["max_capacity"] || 144).to_i,
-          reserved_slots: (row["reserved_slots"] || 0).to_i,
-          entry_fee: (row["entry_fee"] || 25_000).to_i,
-          registration_open: truthy?(row["registration_open"]),
-          theme_preset: "charity-bright",
-          raffle_enabled: truthy?(row["raffle_enabled"])
-        }
-        if tournament.respond_to?(:capacity_unit=)
-          attrs[:capacity_unit] = attrs[:team_size] > 1 ? "teams" : "players"
+        if tournament.new_record?
+          attrs = {
+            name: row["name"].presence || "Golf for Wishes #{row['year'] || 2026}",
+            year: (row["year"] || 2026).to_i,
+            edition: row["edition"],
+            status: valid_tournament_status(row["status"]),
+            event_date: row["event_date"],
+            location_name: row["location_name"],
+            location_address: row["location_address"],
+            format_name: row["format_name"],
+            team_size: (row["team_size"] || 2).to_i,
+            max_capacity: (row["max_capacity"] || 144).to_i,
+            reserved_slots: (row["reserved_slots"] || 0).to_i,
+            entry_fee: (row["entry_fee"] || 25_000).to_i,
+            registration_open: truthy?(row["registration_open"]),
+            theme_preset: "charity-bright",
+            raffle_enabled: truthy?(row["raffle_enabled"])
+          }
+          if tournament.respond_to?(:capacity_unit=)
+            attrs[:capacity_unit] = attrs[:team_size] > 1 ? "teams" : "players"
+          end
+          tournament.assign_attributes(attrs)
+          tournament.save!
         end
-        tournament.assign_attributes(attrs)
-        tournament.save!
         map[row["id"].to_s] = tournament
       end
       map
@@ -470,7 +483,7 @@ module HafagolfMigrations
           provider: row["provider"].presence || "clicksend",
           purpose: row["purpose"].presence || "raffle_purchase_confirmation",
           recipient: row["recipient"].presence || "unknown",
-          status: row["status"].presence || "delivered",
+          status: row["status"].presence || "pending",
           messageable: messageable
         )
         delivery.save!

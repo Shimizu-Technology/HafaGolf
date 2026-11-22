@@ -19,9 +19,15 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
       HafagolfMigrations::DatabaseGuard.verify!(expected_db_name: "wrong_db_name")
     end
 
-    fake_conn = Struct.new(:current_database).new("api_development")
+    %w[api_development hafagolf_development].each do |forbidden|
+      fake_conn = Struct.new(:current_database).new(forbidden)
+      assert_raises(HafagolfMigrations::UnsafeDatabaseError) do
+        HafagolfMigrations::DatabaseGuard.verify!(expected_db_name: forbidden, connection: fake_conn)
+      end
+    end
+
     assert_raises(HafagolfMigrations::UnsafeDatabaseError) do
-      HafagolfMigrations::DatabaseGuard.verify!(expected_db_name: "api_development", connection: fake_conn)
+      HafagolfMigrations::DatabaseGuard.verify_source_distinct!(source_db_name: @current_db)
     end
 
     assert_equal @current_db, HafagolfMigrations::DatabaseGuard.verify!(expected_db_name: @current_db)
@@ -188,5 +194,77 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
     assert_equal true, Features.for(org).enabled?(:donations)
     assert org.organization_domains.exists?(hostname: "fd-golf.shimizu-technology.com", is_primary: true)
     assert_equal 1, org.tournaments.where(slug: "fd-alumni-golf-2027").count
+
+    # Live admin edits MUST survive re-running the seeder
+    tournament = org.tournaments.find_by!(slug: "fd-alumni-golf-2027")
+    tournament.update!(status: "open", registration_open: true, entry_fee: 17_500)
+    org.update!(name: "FD Alumni Golf Custom")
+
+    HafagolfSeeds::FdAlumniGolfSeeder.seed!(expected_db_name: @current_db)
+    tournament.reload
+    org.reload
+    assert_equal "open", tournament.status
+    assert_equal true, tournament.registration_open
+    assert_equal 17_500, tournament.entry_fee
+    assert_equal "FD Alumni Golf Custom", org.name
+  end
+
+  test "importers cap legacy super_admin to org_admin, refuse empty/same-DB sources, default blank delivery status to pending, and preserve live edits on rerun" do
+    # 1. Empty / missing core tables refused (never silent 0 == 0)
+    empty_reader = HafagolfMigrations::SourceReader.from_hash({})
+    assert_raises(HafagolfMigrations::InvalidSourceError) do
+      HafagolfMigrations::MawImporter.new(source_reader: empty_reader, expected_db_name: @current_db).run!
+    end
+    assert_raises(HafagolfMigrations::InvalidSourceError) do
+      HafagolfMigrations::GiaaImporter.new(source_reader: empty_reader, expected_db_name: @current_db).run!
+    end
+
+    # 2. Same source DB as target DB refused
+    same_db_reader = HafagolfMigrations::SourceReader.from_hash(
+      { "tournaments" => [{ "id" => 1 }], "golfers" => [{ "id" => 1 }] },
+      database_name: @current_db
+    )
+    assert_raises(HafagolfMigrations::UnsafeDatabaseError) do
+      HafagolfMigrations::MawImporter.new(source_reader: same_db_reader, expected_db_name: @current_db).run!
+    end
+
+    # 3. Legacy super_admin capped at org_admin + blank delivery status -> pending + reruns preserve live edits
+    fixture = {
+      "users" => [
+        { "id" => 77, "name" => "Legacy Super", "email" => "legacy-super@maw-sec.test", "role" => "super_admin" }
+      ],
+      "tournaments" => [
+        { "id" => 77, "slug" => "maw-sec-2026", "name" => "MAW Security 2026", "year" => 2026, "status" => "draft", "registration_open" => false, "entry_fee" => 25_000 }
+      ],
+      "golfers" => [
+        { "id" => 770, "tournament_id" => 77, "name" => "Sec Golfer", "email" => "sec@maw-sec.test", "phone" => "671-555-7700", "payment_status" => "paid", "payment_amount_cents" => 25_000 }
+      ],
+      "message_deliveries" => [
+        { "id" => 771, "tournament_id" => 77, "golfer_id" => 770, "recipient" => "+16715557700", "status" => "", "provider_message_id" => "cs-blank-status-771" }
+      ]
+    }
+    reader = HafagolfMigrations::SourceReader.from_hash(fixture)
+    HafagolfMigrations::MawImporter.new(source_reader: reader, expected_db_name: @current_db).run!
+
+    imported_user = User.find_by!(email: "legacy-super@maw-sec.test")
+    assert_equal "org_admin", imported_user.role, "Importer must NEVER escalate a legacy user to super_admin"
+
+    delivery = MessageDelivery.find_by!(provider_message_id: "cs-blank-status-771")
+    assert_equal "pending", delivery.status, "Blank legacy status must default to pending, not delivered"
+
+    org = Organization.find_by!(slug: "make-a-wish-guam")
+    tournament = org.tournaments.find_by!(slug: "maw-sec-2026")
+    membership = OrganizationMembership.find_by!(user: imported_user, organization: org)
+    tournament.update!(status: "open", registration_open: true, entry_fee: 30_000)
+    membership.update!(role: "volunteer")
+
+    # Re-run MUST preserve live edits
+    HafagolfMigrations::MawImporter.new(source_reader: reader, expected_db_name: @current_db).run!
+    tournament.reload
+    membership.reload
+    assert_equal "open", tournament.status
+    assert_equal true, tournament.registration_open
+    assert_equal 30_000, tournament.entry_fee
+    assert_equal "volunteer", membership.role
   end
 end
