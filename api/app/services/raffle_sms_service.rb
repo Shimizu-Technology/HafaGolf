@@ -26,7 +26,7 @@ class RaffleSmsService
         tournament: tournament,
         messageable: tickets.first,
         request_payload: { ticket_ids: tickets.map(&:id), ticket_numbers: ticket_numbers, body_chars: body.length },
-        metadata: { buyer_name: buyer_name, ticket_count: tickets.size }
+        metadata: { buyer_name: buyer_name, ticket_count: tickets.size, raffle_sale_batch_id: tickets.first&.raffle_sale_batch_id }.compact
       )
 
       result = ClicksendClient.send_sms(

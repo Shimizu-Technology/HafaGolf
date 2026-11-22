@@ -106,4 +106,62 @@ class RaffleTicketTest < ActiveSupport::TestCase
       duplicate.save!(validate: false)
     end
   end
+
+  test "golfer with 7-digit phone still receives complimentary and purchased raffle tickets cleanly" do
+    @tournament_2027.update!(
+      raffle_enabled: true,
+      raffle_ticket_price_cents: 500,
+      config: (@tournament_2027.config || {}).merge("raffle_include_with_registration" => true)
+    )
+
+    golfer = @tournament_2027.golfers.create!(
+      name: "Local Golfer",
+      email: "local-golfer@example.com",
+      phone: "555-1234",
+      partner_name: "Local Partner",
+      partner_phone: "555-5678",
+      payment_type: "pay_on_day",
+      payment_status: "paid",
+      registration_status: "confirmed",
+      waiver_accepted_at: Time.current,
+      team_category: "Male",
+      raffle_tickets_requested: 2
+    )
+
+    assert_nothing_raised do
+      golfer.create_raffle_tickets!
+      golfer.create_purchased_raffle_tickets!
+    end
+
+    complimentary = @tournament_2027.raffle_tickets.where(golfer_id: golfer.id, price_cents: [ 0, nil ]).order(:id)
+    purchased = @tournament_2027.raffle_tickets.where(golfer_id: golfer.id).where("price_cents > 0")
+
+    assert_equal 2, complimentary.count
+    assert_equal "555-1234", complimentary.first.purchaser_phone
+    assert_equal "555-5678", complimentary.second.purchaser_phone
+    assert_equal 2, purchased.count
+    assert_equal [ "555-1234" ], purchased.pluck(:purchaser_phone).uniq
+  end
+
+  test "golfer with valid 10-digit phone gets normalized E164 phone on raffle tickets" do
+    @tournament_2027.update!(
+      raffle_enabled: true,
+      config: (@tournament_2027.config || {}).merge("raffle_include_with_registration" => true)
+    )
+
+    golfer = @tournament_2027.golfers.create!(
+      name: "Normalized Golfer",
+      email: "norm-golfer@example.com",
+      phone: "671-555-1234",
+      payment_type: "pay_on_day",
+      payment_status: "paid",
+      registration_status: "confirmed",
+      waiver_accepted_at: Time.current,
+      team_category: "Male"
+    )
+
+    golfer.create_raffle_tickets!
+    ticket = @tournament_2027.raffle_tickets.find_by!(golfer_id: golfer.id)
+    assert_equal "+16715551234", ticket.purchaser_phone
+  end
 end

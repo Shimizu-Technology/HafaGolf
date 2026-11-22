@@ -14,6 +14,7 @@ class RaffleTicket < ApplicationRecord
   validates :payment_status, inclusion: { in: PAYMENT_STATUSES }
   validates :purchaser_name, presence: true
   validates :payment_method, inclusion: { in: %w[swipe_simple swipesimple cash check card credit comp stripe], allow_blank: true }
+  validate :purchaser_phone_must_be_complete, if: -> { golfer_id.nil? && purchaser_phone.present? && (new_record? || will_save_change_to_purchaser_phone?) }
 
   before_validation :generate_ticket_number, on: :create
 
@@ -69,6 +70,11 @@ class RaffleTicket < ApplicationRecord
   end
 
   private
+
+  def purchaser_phone_must_be_complete
+    result = RafflePhoneValidator.validate(purchaser_phone)
+    errors.add(:purchaser_phone, result[:error]) unless result[:valid]
+  end
 
   def generate_ticket_number
     return if ticket_number.present? || tournament.blank?

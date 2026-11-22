@@ -12,6 +12,7 @@ import {
   Play,
   RotateCcw,
   CheckCircle,
+  CheckCircle2,
   ArrowLeft,
   RefreshCw,
   Loader2,
@@ -28,12 +29,25 @@ import {
   User,
   ImageOff,
   Upload,
-  Settings
+  Settings,
+  AlertCircle,
+  AlertTriangle,
+  Mail,
+  MessageSquare,
+  Phone,
+  Pencil
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { ActivityLog } from '../services/api';
 import { adminEventPath } from '../utils/adminRoutes';
 import { formatDate, formatDateTime } from '../utils/dates';
+import { formatPhoneReadback, validateRafflePhonePair } from '../utils/rafflePhone';
+import {
+  getChannelBadgeMeta,
+  type DeliveryBadgeMeta,
+  type TicketDeliveryStatus,
+} from '../utils/raffleDelivery';
+import { RaffleEditContactModal } from '../components/RaffleEditContactModal';
 
 interface Prize {
   id: number;
@@ -59,8 +73,9 @@ interface RaffleTicket {
   id: number;
   ticket_number: string;
   purchaser_name: string;
-  purchaser_email: string;
+  purchaser_email: string | null;
   purchaser_phone: string | null;
+  raffle_sale_batch_id?: number | null;
   payment_status: string;
   is_winner: boolean;
   purchased_at: string | null;
@@ -73,6 +88,7 @@ interface RaffleTicket {
   payment_method?: string | null;
   receipt_number?: string | null;
   payment_notes?: string | null;
+  delivery_status?: TicketDeliveryStatus;
 }
 
 interface DeliveryResult {
@@ -95,6 +111,7 @@ interface Stats {
   winners: number;
   complimentary: number;
   purchased: number;
+  needs_attention?: number;
   additional_revenue_cents: number;
 }
 
@@ -177,6 +194,8 @@ interface SellTicketsTabProps {
   onBuyerEmailChange: (v: string) => void;
   sellBuyerPhone: string;
   onBuyerPhoneChange: (v: string) => void;
+  sellBuyerPhoneConfirm: string;
+  onBuyerPhoneConfirmChange: (v: string) => void;
   sellPaymentMethod: string;
   onPaymentMethodChange: (v: string) => void;
   sellLoading: boolean;
@@ -184,6 +203,46 @@ interface SellTicketsTabProps {
   onSellBundle: (bundle: RaffleBundleDef) => void;
   onSellCustom: (qty: number, priceCents: number) => void;
   stats: Stats | null;
+}
+
+function DeliveryChannelPill({
+  channel,
+  meta,
+}: {
+  channel: 'SMS' | 'Email';
+  meta: DeliveryBadgeMeta;
+}) {
+  const toneClasses =
+    meta.tone === 'delivered'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : meta.tone === 'failed'
+        ? 'border-red-200 bg-red-50 text-red-700'
+        : meta.tone === 'pending'
+          ? 'border-amber-200 bg-amber-50 text-amber-800'
+          : 'border-slate-200 bg-slate-100 text-slate-600';
+
+  const Icon =
+    meta.tone === 'delivered'
+      ? CheckCircle2
+      : meta.tone === 'failed'
+        ? AlertTriangle
+        : meta.tone === 'pending'
+          ? Clock
+          : channel === 'SMS'
+            ? MessageSquare
+            : Mail;
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${toneClasses}`}
+      title={meta.detail ? `${channel}: ${meta.label} — ${meta.detail}` : `${channel}: ${meta.label}`}
+    >
+      <Icon className="h-3 w-3 shrink-0" />
+      <span>
+        {channel}: {meta.label}
+      </span>
+    </span>
+  );
 }
 
 function SellTicketsTab({
@@ -194,6 +253,8 @@ function SellTicketsTab({
   onBuyerEmailChange,
   sellBuyerPhone,
   onBuyerPhoneChange,
+  sellBuyerPhoneConfirm,
+  onBuyerPhoneConfirmChange,
   sellPaymentMethod,
   onPaymentMethodChange,
   sellLoading,
@@ -211,10 +272,19 @@ function SellTicketsTab({
   const customPricePlaceholder = customQtyNumber > 0
     ? (customQtyNumber * ticketPriceCents / 100).toFixed(2)
     : (ticketPriceCents / 100).toFixed(2);
-  const phoneValue = sellBuyerPhone.trim().replace(/^\+1671$/, '');
-  const hasBuyerName = sellBuyerName.trim() !== '';
-  const hasContact = sellBuyerEmail.trim() !== '' || phoneValue !== '';
-  const canSell = hasBuyerName && hasContact;
+
+  const trimmedName = sellBuyerName.trim();
+  const trimmedEmail = sellBuyerEmail.trim();
+  const phoneValidation = useMemo(
+    () => validateRafflePhonePair(sellBuyerPhone, sellBuyerPhoneConfirm),
+    [sellBuyerPhone, sellBuyerPhoneConfirm]
+  );
+
+  const hasBuyerName = trimmedName !== '';
+  const phoneBlocked =
+    phoneValidation.status === 'incomplete' || phoneValidation.status === 'mismatch';
+  const hasContact = trimmedEmail !== '' || phoneValidation.status === 'valid';
+  const canSell = hasBuyerName && !phoneBlocked && hasContact;
 
   return (
     <div className="space-y-6">
@@ -223,76 +293,143 @@ function SellTicketsTab({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-white rounded-xl shadow-sm p-4 text-center">
             <p className="text-2xl font-bold text-brand-600">{stats.paid}</p>
-            <p className="text-xs text-gray-500 mt-1">Total tickets sold</p>
+            <p className="text-xs text-slate-500 mt-1">Total tickets sold</p>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-4 text-center">
-            <p className="text-2xl font-bold text-green-600">
+            <p className="text-2xl font-bold text-emerald-600">
               ${((stats.additional_revenue_cents || 0) / 100).toFixed(0)}
             </p>
-            <p className="text-xs text-gray-500 mt-1">Ticket revenue</p>
+            <p className="text-xs text-slate-500 mt-1">Ticket revenue</p>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-4 text-center">
-            <p className="text-2xl font-bold text-gray-900">{stats.purchased || 0}</p>
-            <p className="text-xs text-gray-500 mt-1">Purchased tickets</p>
+            <p className="text-2xl font-bold text-slate-900">{stats.purchased || 0}</p>
+            <p className="text-xs text-slate-500 mt-1">Purchased tickets</p>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-4 text-center">
-            <p className="text-2xl font-bold text-gray-900">{stats.complimentary || 0}</p>
-            <p className="text-xs text-gray-500 mt-1">Complimentary</p>
+            <p className="text-2xl font-bold text-slate-900">{stats.complimentary || 0}</p>
+            <p className="text-xs text-slate-500 mt-1">Complimentary</p>
           </div>
         </div>
       )}
 
       {/* Buyer info */}
-      <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6 space-y-3">
+      <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label htmlFor="sell-buyer-name" className="block text-sm font-medium text-slate-700 mb-1">
             Buyer name <span className="text-red-500">*</span>
           </label>
           <input
+            id="sell-buyer-name"
             type="text"
             value={sellBuyerName}
             onChange={(e) => onBuyerNameChange(e.target.value)}
             placeholder="Full name"
-            className="w-full px-4 py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="w-full px-4 py-3 border border-slate-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
             required
           />
         </div>
-        <div>
-          <p className="block text-sm font-medium text-gray-700 mb-1">
-            Contact method <span className="text-red-500">*</span>
-          </p>
+
+        {/* Double-entry Phone Confirmation */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 sm:p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-slate-800">
+              Phone number (for SMS ticket numbers)
+            </p>
+            <span className="text-xs text-slate-500">Enter twice to prevent typos</span>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input
-                type="email"
-                value={sellBuyerEmail}
-                onChange={(e) => onBuyerEmailChange(e.target.value)}
-                placeholder="buyer@email.com"
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
+              <label htmlFor="sell-buyer-phone" className="block text-xs font-medium text-slate-600 mb-1">
+                Phone number
+              </label>
+              <div className="relative">
+                <Phone className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  id="sell-buyer-phone"
+                  type="tel"
+                  value={sellBuyerPhone}
+                  onChange={(e) => onBuyerPhoneChange(e.target.value)}
+                  placeholder="671-555-1234"
+                  className={`w-full pl-9 pr-4 py-3 border rounded-xl text-base bg-white focus:outline-none focus:ring-2 ${
+                    phoneValidation.status === 'incomplete'
+                      ? 'border-red-400 focus:ring-red-500'
+                      : phoneValidation.status === 'valid'
+                        ? 'border-emerald-400 focus:ring-emerald-500'
+                        : 'border-slate-300 focus:ring-brand-500'
+                  }`}
+                />
+              </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-              <input
-                type="tel"
-                value={sellBuyerPhone}
-                onChange={(e) => onBuyerPhoneChange(e.target.value)}
-                placeholder="+1671..."
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
+              <label htmlFor="sell-buyer-phone-confirm" className="block text-xs font-medium text-slate-600 mb-1">
+                Confirm phone number
+              </label>
+              <div className="relative">
+                <Phone className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  id="sell-buyer-phone-confirm"
+                  type="tel"
+                  autoComplete="off"
+                  value={sellBuyerPhoneConfirm}
+                  onChange={(e) => onBuyerPhoneConfirmChange(e.target.value)}
+                  placeholder="Re-enter phone number"
+                  className={`w-full pl-9 pr-4 py-3 border rounded-xl text-base bg-white focus:outline-none focus:ring-2 ${
+                    phoneValidation.status === 'mismatch'
+                      ? 'border-red-400 focus:ring-red-500'
+                      : phoneValidation.status === 'valid'
+                        ? 'border-emerald-400 focus:ring-emerald-500'
+                        : 'border-slate-300 focus:ring-brand-500'
+                  }`}
+                />
+              </div>
             </div>
           </div>
+
+          {phoneValidation.error && (
+            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+              <span>{phoneValidation.error}</span>
+            </div>
+          )}
+
+          {phoneValidation.status === 'valid' && (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+              <span>Phone numbers match: {phoneValidation.formatted}</span>
+            </div>
+          )}
         </div>
-        <p className="text-xs text-gray-500">
-          Name plus at least one contact method are required so ticket numbers can be found and delivered.
-        </p>
+
+        {/* Email (encouraged alongside phone for dual-channel fallback) */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Payment method</label>
+          <label htmlFor="sell-buyer-email" className="block text-sm font-medium text-slate-700 mb-1">
+            Email <span className="text-xs font-normal text-slate-500">(recommended for backup delivery)</span>
+          </label>
+          <div className="relative">
+            <Mail className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <input
+              id="sell-buyer-email"
+              type="email"
+              value={sellBuyerEmail}
+              onChange={(e) => onBuyerEmailChange(e.target.value)}
+              placeholder="buyer@email.com"
+              className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">
+            Adding an email alongside a phone number sends tickets on both channels in case carrier SMS is delayed. Phone-only walk-ups are still allowed.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="sell-payment-method" className="block text-sm font-medium text-slate-700 mb-1">
+            Payment method
+          </label>
           <select
+            id="sell-payment-method"
             value={sellPaymentMethod}
             onChange={(e) => onPaymentMethodChange(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+            className="w-full px-4 py-3 border border-slate-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
           >
             <option value="swipe_simple">SwipeSimple</option>
             <option value="cash">Cash</option>
@@ -301,25 +438,63 @@ function SellTicketsTab({
             <option value="comp">Comp</option>
           </select>
         </div>
+
+        {/* High-contrast read-back confirmation strip */}
+        {canSell && (
+          <div className="rounded-2xl bg-slate-900 px-4 py-4 sm:px-5 text-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                Read back to buyer before tapping Sell
+              </p>
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Ready to sell
+              </span>
+            </div>
+            <div className="mt-2.5 flex flex-col gap-1.5 sm:flex-row sm:items-baseline sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-white truncate">{trimmedName}</p>
+                {trimmedEmail ? (
+                  <p className="text-sm text-slate-200 flex items-center gap-1.5 mt-0.5 truncate">
+                    <Mail className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                    <span className="truncate">{trimmedEmail}</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-amber-300 mt-0.5">
+                    SMS only — ask if buyer wants email backup too
+                  </p>
+                )}
+              </div>
+              {phoneValidation.normalized && (
+                <div className="sm:text-right">
+                  <p className="text-[11px] uppercase tracking-wider text-slate-400">SMS Number</p>
+                  <p className="font-mono text-xl sm:text-2xl font-bold tracking-wide text-emerald-300">
+                    {formatPhoneReadback(phoneValidation.normalized)}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Quick-tap bundles */}
       <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-        <h3 className="text-sm font-semibold text-gray-900 mb-4">Quick sell</h3>
+        <h3 className="text-sm font-semibold text-slate-900 mb-4">Quick sell</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {bundles.map((bundle, idx) => (
             <button
               key={idx}
               onClick={() => onSellBundle(bundle)}
               disabled={sellLoading || !canSell}
-              className="flex flex-col items-center gap-2 p-5 rounded-2xl border-2 border-gray-200 bg-white hover:border-brand-500 hover:bg-brand-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex flex-col items-center gap-2 p-5 rounded-2xl border-2 border-slate-200 bg-white hover:border-brand-500 hover:bg-brand-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span className="text-3xl font-bold text-brand-600">{bundle.quantity}</span>
-              <span className="text-sm text-gray-600">tickets</span>
-              <span className="text-lg font-bold text-gray-900">
+              <span className="text-sm text-slate-600">tickets</span>
+              <span className="text-lg font-bold text-slate-900">
                 {formatMoney(bundle.price_cents)}
               </span>
-              <span className="text-xs text-gray-500">{formatMoney(bundlePerTicketCents(bundle), 2)}/ticket</span>
+              <span className="text-xs text-slate-500">{formatMoney(bundlePerTicketCents(bundle), 2)}/ticket</span>
               {sellLoading && (
                 <Loader2 className="w-4 h-4 animate-spin text-brand-500" />
               )}
@@ -330,21 +505,21 @@ function SellTicketsTab({
 
       {/* Custom amount */}
       <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-        <h3 className="text-sm font-semibold text-gray-900 mb-4">Custom sale</h3>
+        <h3 className="text-sm font-semibold text-slate-900 mb-4">Custom sale</h3>
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex-1">
-            <label className="block text-xs font-medium text-gray-600 mb-1">Quantity</label>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Quantity</label>
             <input
               type="number"
               min="1"
               value={customQty}
               onChange={(e) => setCustomQty(e.target.value)}
               placeholder="10"
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
           <div className="flex-1">
-            <label className="block text-xs font-medium text-gray-600 mb-1">Total price ($)</label>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Total price ($)</label>
             <input
               type="number"
               min="0"
@@ -352,7 +527,7 @@ function SellTicketsTab({
               value={customPrice}
               onChange={(e) => setCustomPrice(e.target.value)}
               placeholder={customPricePlaceholder}
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
           <div className="flex items-end">
@@ -367,7 +542,7 @@ function SellTicketsTab({
                 }
               }}
               disabled={sellLoading || !customQty || !customPrice || !canSell}
-              className="px-5 py-2.5 bg-brand-600 text-white rounded-xl font-medium text-sm hover:bg-brand-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              className="px-5 py-2.5 bg-brand-600 text-white rounded-xl font-medium text-sm hover:bg-brand-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
             >
               {sellLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Sell'}
             </button>
@@ -377,20 +552,20 @@ function SellTicketsTab({
 
       {/* Last sale confirmation */}
       {lastSale && (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-2">
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
           <div className="flex items-center gap-3">
-            <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
+            <CheckCircle className="w-6 h-6 text-emerald-600 flex-shrink-0" />
             <div>
-              <p className="text-sm font-medium text-green-800">
+              <p className="text-sm font-medium text-emerald-900">
                 Sold {lastSale.quantity} tickets for {lastSale.total}
               </p>
-              <p className="text-xs text-green-600">Buyer: {lastSale.buyer}</p>
+              <p className="text-xs text-emerald-700">Buyer: {lastSale.buyer}</p>
             </div>
           </div>
           {lastSale.ticketNumbers && lastSale.ticketNumbers.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pt-1">
               {lastSale.ticketNumbers.map((num, i) => (
-                <span key={i} className="inline-flex items-center px-2 py-0.5 bg-green-100 text-green-800 font-mono text-xs rounded-md">
+                <span key={i} className="inline-flex items-center px-2 py-0.5 bg-emerald-100 text-emerald-800 font-mono text-xs rounded-md">
                   #{num}
                 </span>
               ))}
@@ -414,7 +589,7 @@ export const RaffleManagementPage: React.FC = () => {
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [ticketSearchInput, setTicketSearchInput] = useState('');
   const [ticketSearch, setTicketSearch] = useState('');
-  const [ticketFilter, setTicketFilter] = useState<'' | 'purchased' | 'complimentary' | 'winners' | 'voided'>('');
+  const [ticketFilter, setTicketFilter] = useState<'' | 'needs_attention' | 'purchased' | 'complimentary' | 'winners' | 'voided'>('');
   const [ticketPage, setTicketPage] = useState(1);
   const [prizeSearch, setPrizeSearch] = useState('');
   const [prizeTierFilter, setPrizeTierFilter] = useState('');
@@ -428,13 +603,15 @@ export const RaffleManagementPage: React.FC = () => {
   // Sell tickets state
   const [sellBuyerName, setSellBuyerName] = useState('');
   const [sellBuyerEmail, setSellBuyerEmail] = useState('');
-  const [sellBuyerPhone, setSellBuyerPhone] = useState('+1671');
+  const [sellBuyerPhone, setSellBuyerPhone] = useState('');
+  const [sellBuyerPhoneConfirm, setSellBuyerPhoneConfirm] = useState('');
   const [sellPaymentMethod, setSellPaymentMethod] = useState('swipe_simple');
   const [sellLoading, setSellLoading] = useState(false);
   const [lastSale, setLastSale] = useState<{ quantity: number; total: string; buyer: string; ticketNumbers?: string[] } | null>(null);
   
-  // Ticket detail expand
+  // Ticket detail expand & contact edit modal
   const [expandedTicketId, setExpandedTicketId] = useState<number | null>(null);
+  const [editingContactTicket, setEditingContactTicket] = useState<RaffleTicket | null>(null);
 
   // Activity log
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
@@ -784,19 +961,40 @@ export const RaffleManagementPage: React.FC = () => {
     }
   };
 
-  const handleSellBundle = async (bundle: RaffleBundleDef) => {
-    if (!tournament) return;
-    const phoneForValidation = sellBuyerPhone.trim().replace(/^\+1671$/, '').replace(/^\+1670$/, '');
-    if (!sellBuyerEmail.trim() && !phoneForValidation) {
-      toast.error('Please enter an email or phone number');
-      return;
-    }
+  const validateSellContact = () => {
     const buyerLabel = sellBuyerName.trim();
     if (!buyerLabel) {
       toast.error('Please enter the buyer name');
-      return;
+      return null;
     }
-    if (!confirm(`Sell ${bundle.quantity} tickets for $${(bundle.price_cents / 100).toFixed(0)} to "${buyerLabel}"?`)) return;
+
+    const phoneValidation = validateRafflePhonePair(sellBuyerPhone, sellBuyerPhoneConfirm);
+    if (phoneValidation.status === 'incomplete' || phoneValidation.status === 'mismatch') {
+      toast.error(phoneValidation.error || 'Please confirm a valid 10-digit phone number');
+      return null;
+    }
+
+    const emailValue = sellBuyerEmail.trim();
+    if (!emailValue && !phoneValidation.normalized) {
+      toast.error('Please enter an email or confirmed 10-digit phone number');
+      return null;
+    }
+
+    return {
+      buyerLabel,
+      emailValue: emailValue || undefined,
+      phoneValue: phoneValidation.normalized || undefined,
+    };
+  };
+
+  const handleSellBundle = async (bundle: RaffleBundleDef) => {
+    if (!tournament) return;
+    const validated = validateSellContact();
+    if (!validated) return;
+    const { buyerLabel, emailValue, phoneValue } = validated;
+
+    const phoneReadback = phoneValue ? ` (${formatPhoneReadback(phoneValue)})` : '';
+    if (!confirm(`Sell ${bundle.quantity} tickets for $${(bundle.price_cents / 100).toFixed(0)} to "${buyerLabel}"${phoneReadback}?`)) return;
     setSellLoading(true);
     try {
       const token = await getToken();
@@ -809,8 +1007,8 @@ export const RaffleManagementPage: React.FC = () => {
             quantity: bundle.quantity,
             price_cents: bundle.price_cents,
             buyer_name: buyerLabel,
-            buyer_email: sellBuyerEmail.trim() || undefined,
-            buyer_phone: sellBuyerPhone.trim() || undefined,
+            buyer_email: emailValue,
+            buyer_phone: phoneValue,
             payment_method: sellPaymentMethod,
           }),
         }
@@ -832,7 +1030,8 @@ export const RaffleManagementPage: React.FC = () => {
       });
       setSellBuyerName('');
       setSellBuyerEmail('');
-      setSellBuyerPhone('+1671');
+      setSellBuyerPhone('');
+      setSellBuyerPhoneConfirm('');
       setSellPaymentMethod('swipe_simple');
       toast.success(`Sold ${bundle.quantity} tickets for ${totalDollars}`);
       const deliveryWarning = deliveryFailureMessage(data.delivery);
@@ -849,17 +1048,12 @@ export const RaffleManagementPage: React.FC = () => {
 
   const handleSellCustom = async (quantity: number, priceCents: number) => {
     if (!tournament || quantity <= 0 || priceCents <= 0) return;
-    const phoneForValidation = sellBuyerPhone.trim().replace(/^\+1671$/, '').replace(/^\+1670$/, '');
-    if (!sellBuyerEmail.trim() && !phoneForValidation) {
-      toast.error('Please enter an email or phone number');
-      return;
-    }
-    const buyerLabel = sellBuyerName.trim();
-    if (!buyerLabel) {
-      toast.error('Please enter the buyer name');
-      return;
-    }
-    if (!confirm(`Sell ${quantity} tickets for $${(priceCents / 100).toFixed(2)} to "${buyerLabel}"?`)) return;
+    const validated = validateSellContact();
+    if (!validated) return;
+    const { buyerLabel, emailValue, phoneValue } = validated;
+
+    const phoneReadback = phoneValue ? ` (${formatPhoneReadback(phoneValue)})` : '';
+    if (!confirm(`Sell ${quantity} tickets for $${(priceCents / 100).toFixed(2)} to "${buyerLabel}"${phoneReadback}?`)) return;
     setSellLoading(true);
     try {
       const token = await getToken();
@@ -872,8 +1066,8 @@ export const RaffleManagementPage: React.FC = () => {
             quantity,
             price_cents: priceCents,
             buyer_name: buyerLabel,
-            buyer_email: sellBuyerEmail.trim() || undefined,
-            buyer_phone: sellBuyerPhone.trim() || undefined,
+            buyer_email: emailValue,
+            buyer_phone: phoneValue,
             payment_method: sellPaymentMethod,
           }),
         }
@@ -895,7 +1089,8 @@ export const RaffleManagementPage: React.FC = () => {
       });
       setSellBuyerName('');
       setSellBuyerEmail('');
-      setSellBuyerPhone('+1671');
+      setSellBuyerPhone('');
+      setSellBuyerPhoneConfirm('');
       setSellPaymentMethod('swipe_simple');
       toast.success(`Sold ${quantity} tickets for ${totalDollars}`);
       const deliveryWarning = deliveryFailureMessage(data.delivery);
@@ -970,56 +1165,8 @@ export const RaffleManagementPage: React.FC = () => {
     }
   };
 
-  const handleResendTicketConfirmation = async (ticket: RaffleTicket) => {
-    if (!tournament) return;
-
-    const nextEmail = prompt('Email for ticket confirmation (optional):', ticket.purchaser_email || '');
-    if (nextEmail === null) return;
-
-    const nextPhone = prompt('Phone for ticket confirmation (optional):', ticket.purchaser_phone || '');
-    if (nextPhone === null) return;
-
-    if (!nextEmail.trim() && !nextPhone.trim()) {
-      toast.error('Please enter an email or phone number');
-      return;
-    }
-
-    if (!confirm(`Resend ticket numbers for ${ticket.purchaser_name || ticket.ticket_number}?`)) return;
-
-    setActionLoading(`resend-ticket-${ticket.id}`);
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament.id}/raffle/tickets/${ticket.id}/resend_confirmation`,
-        {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            buyer_email: nextEmail.trim(),
-            buyer_phone: nextPhone.trim(),
-          }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || deliveryFailureMessage(data.delivery) || 'Failed to resend ticket numbers');
-      }
-
-      const channels = deliverySuccessLabels(data.delivery);
-      const channelText = channels.length > 0 ? ` via ${channels.join(' and ')}` : '';
-      toast.success(`Resent ${data.ticket_count || 1} ticket number${data.ticket_count === 1 ? '' : 's'}${channelText}`);
-
-      const deliveryWarning = deliveryFailureMessage(data.delivery);
-      if (deliveryWarning) {
-        toast.error(deliveryWarning);
-      }
-
-      await fetchTickets(tournament.id, ticketSearch, ticketFilter, ticketPage);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to resend ticket numbers');
-    } finally {
-      setActionLoading(null);
-    }
+  const handleOpenEditContact = (ticket: RaffleTicket) => {
+    setEditingContactTicket(ticket);
   };
 
   if (loading) {
@@ -1527,6 +1674,8 @@ export const RaffleManagementPage: React.FC = () => {
             onBuyerEmailChange={setSellBuyerEmail}
             sellBuyerPhone={sellBuyerPhone}
             onBuyerPhoneChange={setSellBuyerPhone}
+            sellBuyerPhoneConfirm={sellBuyerPhoneConfirm}
+            onBuyerPhoneConfirmChange={setSellBuyerPhoneConfirm}
             sellPaymentMethod={sellPaymentMethod}
             onPaymentMethodChange={setSellPaymentMethod}
             sellLoading={sellLoading}
@@ -1557,97 +1706,161 @@ export const RaffleManagementPage: React.FC = () => {
               )}
               <button
                 onClick={() => setActiveTab('sell')}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
               >
                 <Plus className="w-5 h-5" />
                 Sell Tickets
               </button>
             </div>
 
+            {/* Needs Attention Banner */}
+            {Boolean(stats?.needs_attention && stats.needs_attention > 0) && ticketFilter !== 'needs_attention' && (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-900">
+                      {stats?.needs_attention} ticket{stats?.needs_attention === 1 ? '' : 's'} need delivery attention
+                    </p>
+                    <p className="text-xs text-amber-800">
+                      Includes failed, bounced, unconfirmed (pending), or missing-contact deliveries.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setTicketFilter('needs_attention'); setTicketPage(1); }}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 whitespace-nowrap"
+                >
+                  View Needs Attention
+                </button>
+              </div>
+            )}
+
             {/* Search + Filters */}
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   type="text"
                   placeholder="Search by name, email, phone, or ticket #..."
                   value={ticketSearchInput}
                   onChange={(e) => setTicketSearchInput(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
                 {ticketSearchInput && (
                   <button
                     onClick={() => { setTicketSearchInput(''); setTicketSearch(''); setTicketPage(1); setExpandedTicketId(null); }}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 )}
               </div>
-              <div className="flex gap-1.5 bg-gray-100 rounded-xl p-1 overflow-x-auto">
+              <div className="flex gap-1.5 bg-slate-100 rounded-xl p-1 overflow-x-auto">
                 {([
                   { key: '' as const, label: 'All' },
+                  { key: 'needs_attention' as const, label: 'Needs Attention' },
                   { key: 'purchased' as const, label: 'Purchased' },
                   { key: 'complimentary' as const, label: 'Included' },
                   { key: 'winners' as const, label: 'Winners' },
                   { key: 'voided' as const, label: 'Voided' },
-                ] as const).map((f) => (
-                  <button
-                    key={f.key}
-                    onClick={() => { setTicketFilter(f.key); setTicketPage(1); }}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                      ticketFilter === f.key
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
-                    }`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
+                ] as const).map((f) => {
+                  const attentionCount = f.key === 'needs_attention' ? (stats?.needs_attention || 0) : 0;
+                  return (
+                    <button
+                      key={f.key}
+                      onClick={() => { setTicketFilter(f.key); setTicketPage(1); }}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors ${
+                        ticketFilter === f.key
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {f.key === 'needs_attention' && attentionCount > 0 && (
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                      )}
+                      <span>{f.label}</span>
+                      {f.key === 'needs_attention' && attentionCount > 0 && (
+                        <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
+                          {attentionCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
             {/* Tickets Table */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px]">
-                <thead className="bg-gray-50 border-b">
+              <table className="w-full min-w-[840px]">
+                <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 whitespace-nowrap">Ticket #</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Name</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Contact</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Status</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Winner</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Date</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-600 w-16"></th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-600 whitespace-nowrap">Ticket #</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-600">Name</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-600">Contact</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-600">Delivery</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-600">Status</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-600">Winner</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-600">Date</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-600 w-28">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y">
+                <tbody className="divide-y divide-slate-200">
                   {tickets.map((ticket) => {
                     const isVoided = ticket.payment_status === 'voided';
                     const isComplimentary = !ticket.price_cents || ticket.price_cents === 0;
                     const isExpanded = expandedTicketId === ticket.id;
+                    const hasEmail = Boolean(ticket.purchaser_email?.trim());
+                    const hasPhone = Boolean(ticket.purchaser_phone?.trim());
+                    const smsBadge = getChannelBadgeMeta(ticket.delivery_status?.sms, hasPhone);
+                    const emailBadge = getChannelBadgeMeta(ticket.delivery_status?.email, hasEmail);
+                    const hasAnyContact = hasEmail || hasPhone;
+
                     return (
                     <React.Fragment key={ticket.id}>
                     <tr
-                      className={`hover:bg-gray-50 cursor-pointer ${isVoided ? 'opacity-60' : ''}`}
+                      className={`hover:bg-slate-50 cursor-pointer ${isVoided ? 'opacity-60' : ''}`}
                       onClick={() => setExpandedTicketId(isExpanded ? null : ticket.id)}
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
-                          <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform shrink-0 ${isExpanded ? 'rotate-0' : '-rotate-90'}`} />
-                          <span className={`font-mono text-sm font-semibold whitespace-nowrap ${isVoided ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                          <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform shrink-0 ${isExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                          <span className={`font-mono text-sm font-semibold whitespace-nowrap ${isVoided ? 'line-through text-slate-400' : 'text-slate-800'}`}>
                             {ticket.ticket_number}
                           </span>
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <p className={`font-medium text-sm ${isVoided ? 'text-gray-400' : 'text-gray-900'}`}>{ticket.purchaser_name}</p>
+                        <p className={`font-medium text-sm ${isVoided ? 'text-slate-400' : 'text-slate-900'}`}>{ticket.purchaser_name}</p>
                       </td>
                       <td className="px-4 py-3">
-                        {ticket.purchaser_email && <p className="text-sm text-gray-500">{ticket.purchaser_email}</p>}
-                        {ticket.purchaser_phone && <p className="text-sm text-gray-400">{ticket.purchaser_phone}</p>}
-                        {!ticket.purchaser_email && !ticket.purchaser_phone && <span className="text-gray-300">-</span>}
+                        {ticket.purchaser_email && <p className="text-sm text-slate-600">{ticket.purchaser_email}</p>}
+                        {ticket.purchaser_phone && (
+                          <p className="text-sm text-slate-500 font-mono">
+                            {formatPhoneReadback(ticket.purchaser_phone)}
+                          </p>
+                        )}
+                        {!ticket.purchaser_email && !ticket.purchaser_phone && (
+                          <span className="text-xs text-slate-400">No contact</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {isVoided ? (
+                          <span className="text-xs text-slate-400">—</span>
+                        ) : !hasAnyContact ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 whitespace-nowrap">
+                            <AlertCircle className="h-3 w-3 shrink-0" />
+                            No contact
+                          </span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {smsBadge && <DeliveryChannelPill channel="SMS" meta={smsBadge} />}
+                            {emailBadge && <DeliveryChannelPill channel="Email" meta={emailBadge} />}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         {isVoided ? (
@@ -1658,8 +1871,8 @@ export const RaffleManagementPage: React.FC = () => {
                         ) : (
                           <span className={`px-2 py-1 rounded-full text-xs ${
                             isComplimentary
-                              ? 'bg-blue-50 text-blue-700'
-                              : 'bg-green-100 text-green-700'
+                              ? 'bg-brand-50 text-brand-700'
+                              : 'bg-emerald-100 text-emerald-700'
                           }`}>
                             {isComplimentary ? 'Included' : `$${((ticket.price_cents || 0) / 100).toFixed(0)}`}
                           </span>
@@ -1667,46 +1880,60 @@ export const RaffleManagementPage: React.FC = () => {
                       </td>
                       <td className="px-4 py-3">
                         {ticket.is_winner ? (
-                          <span className="flex items-center gap-1 text-yellow-600">
+                          <span className="flex items-center gap-1 text-amber-600">
                             <Trophy className="w-4 h-4" />
                             {ticket.prize_won || 'Yes'}
                           </span>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="text-slate-400">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">
+                      <td className="px-4 py-3 text-sm text-slate-500 whitespace-nowrap">
                         {ticket.purchased_at 
                           ? formatDate(ticket.purchased_at)
                           : '-'
                         }
                       </td>
                       <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                        {!isVoided && !ticket.is_winner && (
-                          <button
-                            onClick={() => handleVoidTicket(ticket)}
-                            disabled={actionLoading === `void-${ticket.id}`}
-                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Void ticket"
-                          >
-                            {actionLoading === `void-${ticket.id}` ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Ban className="w-4 h-4" />
-                            )}
-                          </button>
-                        )}
+                        <div className="inline-flex items-center justify-end gap-1">
+                          {!isVoided && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditContact(ticket)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 transition-colors whitespace-nowrap"
+                              title="Edit contact & resend confirmation"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              Edit &amp; Resend
+                            </button>
+                          )}
+                          {!isVoided && !ticket.is_winner && (
+                            <button
+                              type="button"
+                              onClick={() => handleVoidTicket(ticket)}
+                              disabled={actionLoading === `void-${ticket.id}`}
+                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Void ticket"
+                            >
+                              {actionLoading === `void-${ticket.id}` ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Ban className="w-4 h-4" />
+                              )}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     {isExpanded && (
-                      <tr className="bg-gray-50">
-                        <td colSpan={7} className="px-4 py-3">
+                      <tr className="bg-slate-50">
+                        <td colSpan={8} className="px-4 py-3.5">
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                             <div className="flex items-start gap-2">
-                              <Clock className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                              <Clock className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
                               <div>
-                                <p className="text-xs font-medium text-gray-500">Created</p>
-                                <p className="text-gray-900">
+                                <p className="text-xs font-medium text-slate-500">Created</p>
+                                <p className="text-slate-900">
                                   {ticket.created_at
                                     ? formatDateTime(ticket.created_at)
                                     : ticket.purchased_at
@@ -1716,36 +1943,26 @@ export const RaffleManagementPage: React.FC = () => {
                               </div>
                             </div>
                             <div className="flex items-start gap-2">
-                              <User className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                              <User className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
                               <div>
-                                <p className="text-xs font-medium text-gray-500">Sold by</p>
-                                <p className="text-gray-900">{ticket.sold_by || (isComplimentary ? 'System (registration)' : 'Unknown')}</p>
+                                <p className="text-xs font-medium text-slate-500">Sold by</p>
+                                <p className="text-slate-900">{ticket.sold_by || (isComplimentary ? 'System (registration)' : 'Unknown')}</p>
                               </div>
                             </div>
                             {ticket.payment_method && (
                               <div className="flex items-start gap-2">
-                                <DollarSign className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                                <DollarSign className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-xs font-medium text-gray-500">Payment method</p>
-                                  <p className="text-gray-900">{ticket.payment_method.replace(/_/g, ' ')}</p>
+                                  <p className="text-xs font-medium text-slate-500">Payment method</p>
+                                  <p className="text-slate-900">{ticket.payment_method.replace(/_/g, ' ')}</p>
                                 </div>
                               </div>
                             )}
-                            {/* Mobile-only contact info */}
-                            <div className="sm:hidden flex items-start gap-2">
-                              <Send className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
-                              <div>
-                                <p className="text-xs font-medium text-gray-500">Contact</p>
-                                {ticket.purchaser_email && <p className="text-gray-900">{ticket.purchaser_email}</p>}
-                                {ticket.purchaser_phone && <p className="text-gray-600">{ticket.purchaser_phone}</p>}
-                                {!ticket.purchaser_email && !ticket.purchaser_phone && <p className="text-gray-400">None</p>}
-                              </div>
-                            </div>
                             {isVoided && (
                               <div className="flex items-start gap-2">
                                 <Ban className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-xs font-medium text-gray-500">Voided</p>
+                                  <p className="text-xs font-medium text-slate-500">Voided</p>
                                   <p className="text-red-600">
                                     {ticket.voided_at ? formatDateTime(ticket.voided_at) : 'Unknown'}
                                     {ticket.void_reason && ` — ${ticket.void_reason}`}
@@ -1755,33 +1972,65 @@ export const RaffleManagementPage: React.FC = () => {
                             )}
                             {ticket.is_winner && ticket.prize_won && (
                               <div className="flex items-start gap-2">
-                                <Trophy className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+                                <Trophy className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
                                 <div>
-                                  <p className="text-xs font-medium text-gray-500">Prize won</p>
-                                  <p className="text-yellow-700">{ticket.prize_won}</p>
+                                  <p className="text-xs font-medium text-slate-500">Prize won</p>
+                                  <p className="text-amber-700">{ticket.prize_won}</p>
                                 </div>
                               </div>
                             )}
                             {!isVoided && (
-                              <div className="sm:col-span-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-gray-200 pt-3 mt-1">
-                                <div>
-                                  <p className="text-xs font-medium text-gray-500">Delivery</p>
-                                  <p className="text-gray-600">
-                                    Resend all ticket numbers from this buyer's original sale.
+                              <div className="sm:col-span-3 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 border-t border-slate-200 pt-3 mt-1">
+                                <div className="space-y-1.5 min-w-0">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    Delivery details
                                   </p>
+                                  <div className="space-y-1 text-xs text-slate-600">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-medium text-slate-700">SMS:</span>
+                                      {smsBadge ? (
+                                        <DeliveryChannelPill channel="SMS" meta={smsBadge} />
+                                      ) : (
+                                        <span className="text-slate-400">No phone on file</span>
+                                      )}
+                                      {ticket.delivery_status?.sms?.last_event_at && (
+                                        <span className="text-slate-400">
+                                          {formatDateTime(ticket.delivery_status.sms.last_event_at)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {ticket.delivery_status?.sms?.error_text && (
+                                      <p className="text-red-600">
+                                        SMS error: {ticket.delivery_status.sms.error_text}
+                                      </p>
+                                    )}
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-medium text-slate-700">Email:</span>
+                                      {emailBadge ? (
+                                        <DeliveryChannelPill channel="Email" meta={emailBadge} />
+                                      ) : (
+                                        <span className="text-slate-400">No email on file</span>
+                                      )}
+                                      {ticket.delivery_status?.email?.last_event_at && (
+                                        <span className="text-slate-400">
+                                          {formatDateTime(ticket.delivery_status.email.last_event_at)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {ticket.delivery_status?.email?.error_text && (
+                                      <p className="text-red-600">
+                                        Email error: {ticket.delivery_status.email.error_text}
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
                                 <button
-                                  onClick={() => handleResendTicketConfirmation(ticket)}
-                                  disabled={actionLoading === `resend-ticket-${ticket.id}`}
-                                  className="inline-flex items-center justify-center gap-2 px-3 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  title="Resend ticket numbers"
+                                  type="button"
+                                  onClick={() => handleOpenEditContact(ticket)}
+                                  className="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 shrink-0"
                                 >
-                                  {actionLoading === `resend-ticket-${ticket.id}` ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <Send className="w-4 h-4" />
-                                  )}
-                                  Resend ticket numbers
+                                  <Send className="w-4 h-4" />
+                                  Edit Contact &amp; Resend
                                 </button>
                               </div>
                             )}
@@ -1794,10 +2043,12 @@ export const RaffleManagementPage: React.FC = () => {
                   })}
                   {tickets.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-gray-500">
-                        {ticketSearchInput || ticketFilter
-                          ? 'No tickets match your search or filter.'
-                          : 'No tickets yet. Use the "Sell Tickets" tab to start selling raffle tickets.'
+                      <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                        {ticketFilter === 'needs_attention'
+                          ? 'All active raffle tickets have confirmed deliveries.'
+                          : ticketSearchInput || ticketFilter
+                            ? 'No tickets match your search or filter.'
+                            : 'No tickets yet. Use the "Sell Tickets" tab to start selling raffle tickets.'
                         }
                       </td>
                     </tr>
@@ -1933,7 +2184,21 @@ export const RaffleManagementPage: React.FC = () => {
         />
       )}
 
-      
+      {editingContactTicket && tournament && (
+        <RaffleEditContactModal
+          ticket={editingContactTicket}
+          tournamentId={tournament.id}
+          getToken={getToken}
+          onClose={() => setEditingContactTicket(null)}
+          onSuccess={() => {
+            setEditingContactTicket(null);
+            void fetchTickets(tournament.id, ticketSearch, ticketFilter, ticketPage);
+            if (activeTab === 'activity') {
+              void fetchActivityLogs();
+            }
+          }}
+        />
+      )}
     </div>
   );
 };
