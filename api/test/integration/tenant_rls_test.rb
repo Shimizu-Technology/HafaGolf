@@ -69,6 +69,27 @@ class TenantRlsTest < ActiveSupport::TestCase
         employee_number: "RLS-B-001",
         employee_name: "RLS Employee B"
       )
+      @registration_a = @tournament_a.registrations.create!(
+        organization: @org_a,
+        team_name: "RLS Team A",
+        registration_source: "admin",
+        payment_type: "pay_on_day",
+        team_members_attributes: [
+          { name: "RLS Member A1", email: "rls-m-a1-#{SecureRandom.hex(3)}@example.com", phone: "671-555-3101" }
+        ]
+      )
+      @member_a = @registration_a.team_members.first
+
+      @registration_b = @tournament_b.registrations.create!(
+        organization: @org_b,
+        team_name: "RLS Team B",
+        registration_source: "admin",
+        payment_type: "pay_on_day",
+        team_members_attributes: [
+          { name: "RLS Member B1", email: "rls-m-b1-#{SecureRandom.hex(3)}@example.com", phone: "671-555-3102" }
+        ]
+      )
+      @member_b = @registration_b.team_members.first
       @payment_config_a = @org_a.create_organization_payment_config!(
         payment_mode: "platform_collect",
         processor_provider: "stripe"
@@ -157,6 +178,8 @@ class TenantRlsTest < ActiveSupport::TestCase
       RaffleTicket.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
       MessageDelivery.where(organization_id: org_ids).delete_all if org_ids.any?
       EmployeeNumber.where(organization_id: org_ids).delete_all if org_ids.any?
+      TeamMember.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
+      Registration.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
       Golfer.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
       TournamentAssignment.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
       Tournament.where(id: tournament_ids).delete_all if tournament_ids.any?
@@ -170,6 +193,8 @@ class TenantRlsTest < ActiveSupport::TestCase
       assert_equal 0, Golfer.where(id: [@golfer_a.id, @golfer_b.id]).count
       assert_equal 0, MessageDelivery.where(id: [@delivery_a.id, @delivery_b.id]).count
       assert_equal 0, EmployeeNumber.where(id: [@emp_a.id, @emp_b.id]).count
+      assert_equal 0, Registration.where(id: [@registration_a.id, @registration_b.id]).count
+      assert_equal 0, TeamMember.where(id: [@member_a.id, @member_b.id]).count
       assert_equal 0, OrganizationPaymentConfig.where(id: [@payment_config_a.id, @payment_config_b.id]).count
       assert_equal 0, TournamentSettlement.where(id: [@settlement_a.id, @settlement_b.id]).count
       assert_equal 0, TournamentPayout.where(id: [@payout_a.id, @payout_b.id]).count
@@ -180,6 +205,8 @@ class TenantRlsTest < ActiveSupport::TestCase
         assert_equal 0, Tournament.where(id: [@tournament_a.id, @tournament_b.id]).count
         assert_equal 0, Golfer.where(id: [@golfer_a.id, @golfer_b.id]).count
         assert_equal 0, EmployeeNumber.where(id: [@emp_a.id, @emp_b.id]).count
+        assert_equal 0, Registration.where(id: [@registration_a.id, @registration_b.id]).count
+        assert_equal 0, TeamMember.where(id: [@member_a.id, @member_b.id]).count
       end
     end
   end
@@ -211,6 +238,12 @@ class TenantRlsTest < ActiveSupport::TestCase
             )
           end
         end
+
+        visible_registrations = Registration.where(id: [@registration_a.id, @registration_b.id]).pluck(:id)
+        assert_equal [@registration_a.id], visible_registrations
+
+        visible_members = TeamMember.where(id: [@member_a.id, @member_b.id]).pluck(:id)
+        assert_equal [@member_a.id], visible_members
 
         visible_configs = OrganizationPaymentConfig.where(id: [@payment_config_a.id, @payment_config_b.id]).pluck(:id)
         assert_equal [@payment_config_a.id], visible_configs
@@ -263,6 +296,8 @@ class TenantRlsTest < ActiveSupport::TestCase
         # Cross-tenant UPDATE affects 0 rows
         updated = Golfer.where(id: @golfer_b.id).update_all(name: "Hacked")
         assert_equal 0, updated
+        assert_equal 0, Registration.where(id: @registration_b.id).update_all(team_name: "Hacked Team")
+        assert_equal 0, TeamMember.where(id: @member_b.id).update_all(name: "Hacked Member")
 
         # Cross-tenant INSERT is rejected by RLS WITH CHECK
         assert_raises(ActiveRecord::StatementInvalid) do
@@ -279,6 +314,30 @@ class TenantRlsTest < ActiveSupport::TestCase
             )
           end
         end
+
+        assert_raises(ActiveRecord::StatementInvalid) do
+          ActiveRecord::Base.transaction(requires_new: true) do
+            Registration.new(
+              organization_id: @org_b.id,
+              tournament_id: @tournament_b.id,
+              team_name: "Cross Tenant Reg",
+              registration_source: "admin",
+              registration_status: "confirmed"
+            ).save!(validate: false)
+          end
+        end
+
+        assert_raises(ActiveRecord::StatementInvalid) do
+          ActiveRecord::Base.transaction(requires_new: true) do
+            TeamMember.new(
+              organization_id: @org_b.id,
+              tournament_id: @tournament_b.id,
+              registration_id: @registration_b.id,
+              position: 2,
+              name: "Cross Tenant Member"
+            ).save!(validate: false)
+          end
+        end
       end
 
       # Org B cannot see Org A's org-level activity log
@@ -287,9 +346,11 @@ class TenantRlsTest < ActiveSupport::TestCase
       end
     end
 
-    # Verify Org B golfer was untouched
+    # Verify Org B records were untouched
     TenantContext.with_platform_access do
       assert_equal "RLS Golfer B", @golfer_b.reload.name
+      assert_equal "RLS Team B", @registration_b.reload.team_name
+      assert_equal "RLS Member B1", @member_b.reload.name
     end
   end
 

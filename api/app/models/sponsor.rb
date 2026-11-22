@@ -6,6 +6,7 @@ class Sponsor < ApplicationRecord
   belongs_to :sponsor_tier, optional: true
   has_many :sponsor_slots, dependent: :destroy
   has_many :golfers, dependent: :nullify
+  has_many :registrations, dependent: :nullify
   has_many :message_deliveries, as: :messageable, dependent: :nullify
   has_one_attached :logo
 

@@ -1,14 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { Button, Card } from '../components/ui';
 import { LiabilityWaiver } from '../components/LiabilityWaiver';
 import { PublicHero } from '../components/PublicHero';
-import { Trophy, AlertCircle, Loader2, Calendar, MapPin, ChevronLeft, Check, DollarSign, ChevronRight, BadgeCheck, CheckCircle2 } from 'lucide-react';
+import {
+  Trophy,
+  AlertCircle,
+  Loader2,
+  Calendar,
+  MapPin,
+  ChevronLeft,
+  Check,
+  DollarSign,
+  ChevronRight,
+  BadgeCheck,
+  CheckCircle2,
+  UserPlus,
+  Trash2,
+  Users,
+} from 'lucide-react';
 import { api, Tournament } from '../services/api';
 import { useOrganization } from '../components/OrganizationProvider';
 import { formatEventDate } from '../utils/dates';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
-import { getPublicFacingCapacitySummary } from '../utils/capacity';
+import { getPublicFacingCapacitySummary, isAtCapacity, isPublicAtCapacity } from '../utils/capacity';
 import { useApplyBranding } from '../utils/branding';
 import { getDefaultOrgSlug } from '../utils/tenant';
 import { isFeatureEnabled } from '../utils/features';
@@ -18,40 +33,43 @@ import {
   formatUsdFromCents,
   normalizeEmployeeNumber,
 } from '../utils/employeePricing';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface FormData {
-  player1Name: string;
-  player1Email: string;
-  player1Phone: string;
-  player2Name: string;
-  player2Email: string;
-  player2Phone: string;
-  teamName: string;
-  teamCategory: string;
-  player1WaiverAccepted: boolean;
-  player2WaiverAccepted: boolean;
-}
+import {
+  buildInitialPlayers,
+  buildRegistrationPayload,
+  canAddPlayer,
+  canRemovePlayer,
+  createEmptyPlayerDraft,
+  formatEntryUnitSubtitle,
+  getDisplayTeamName,
+  getStepNames,
+  hasValidationErrors,
+  normalizeTeamSize,
+  validateCaptainStep,
+  validateTeammatesStep,
+  validateWaiverStep,
+  type TeamPlayerDraft,
+  type TeamRegistrationValidationErrors,
+} from '../utils/teamRegistration';
 
 // ---------------------------------------------------------------------------
 // Step indicator
 // ---------------------------------------------------------------------------
 
-const stepNames = ['Team Captain', 'Partner', 'Waiver', 'Review & Pay'];
-
-function StepIndicator({ currentStep }: { currentStep: number }) {
+function StepIndicator({ stepNames, currentStep }: { stepNames: string[]; currentStep: number }) {
   return (
     <div className="flex items-center justify-between mb-8">
       {stepNames.map((stepName, index) => (
-        <React.Fragment key={index}>
+        <React.Fragment key={stepName}>
           <div className="flex flex-col items-center">
-            <div className={`w-9 h-9 rounded-full flex items-center justify-center font-semibold text-sm
-              ${currentStep > index + 1 ? 'bg-brand-600 text-brand-foreground' :
-                currentStep === index + 1 ? 'bg-accent-600 text-accent-foreground' :
-                'bg-neutral-200 text-neutral-500'}`}>
+            <div
+              className={`w-9 h-9 rounded-full flex items-center justify-center font-semibold text-sm ${
+                currentStep > index + 1
+                  ? 'bg-brand-600 text-brand-foreground'
+                  : currentStep === index + 1
+                    ? 'bg-accent-600 text-accent-foreground'
+                    : 'bg-neutral-200 text-neutral-500'
+              }`}
+            >
               {currentStep > index + 1 ? <Check className="w-4 h-4" /> : index + 1}
             </div>
             <span className="text-xs mt-1.5 font-medium text-neutral-600 hidden sm:block">{stepName}</span>
@@ -84,20 +102,26 @@ export const OrgRegistrationPage: React.FC = () => {
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'redirecting'>('idle');
   const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
 
-  const [formData, setFormData] = useState<FormData>({
-    player1Name: '',
-    player1Email: '',
-    player1Phone: '+1671',
-    player2Name: '',
-    player2Email: '',
-    player2Phone: '+1671',
-    teamName: '',
-    teamCategory: '',
-    player1WaiverAccepted: false,
-    player2WaiverAccepted: false,
-  });
+  const [players, setPlayers] = useState<TeamPlayerDraft[]>(() => buildInitialPlayers(2, false));
+  const [teamName, setTeamName] = useState('');
+  const [teamCategory, setTeamCategory] = useState('');
+  const [errors, setErrors] = useState<TeamRegistrationValidationErrors>({ players: {} });
 
-  const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
+  const teamSize = useMemo(() => normalizeTeamSize(tournament?.team_size), [tournament?.team_size]);
+  const allowPartialTeams = Boolean(tournament?.allow_partial_teams);
+  const configuredCategories = useMemo(
+    () => (Array.isArray(tournament?.team_categories) ? tournament.team_categories : []),
+    [tournament?.team_categories]
+  );
+  const stepNames = useMemo(() => getStepNames(teamSize), [teamSize]);
+  const totalSteps = stepNames.length;
+  const isIndividual = teamSize === 1;
+
+  // Logical step mapping (individual skips the Teammates step)
+  const captainStep = 1;
+  const teammatesStep = isIndividual ? -1 : 2;
+  const waiverStep = isIndividual ? 2 : 3;
+  const reviewStep = totalSteps;
 
   // Employee discount pricing state (only active when :employee_pricing feature is enabled)
   const [isEmployee, setIsEmployee] = useState(false);
@@ -184,6 +208,9 @@ export const OrgRegistrationPage: React.FC = () => {
       try {
         const data = await api.getOrganizationTournament(orgSlug, tournamentSlug);
         setTournament(data);
+        setPlayers(buildInitialPlayers(data.team_size, Boolean(data.allow_partial_teams)));
+        setCurrentStep(1);
+        setErrors({ players: {} });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Failed to load tournament';
         console.error('Failed to fetch tournament:', err);
@@ -196,72 +223,81 @@ export const OrgRegistrationPage: React.FC = () => {
     fetchTournament();
   }, [orgSlug, tournamentSlug]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value, type } = e.target;
-    const checked = (e.target as HTMLInputElement).checked;
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value
-    }));
-    if (errors[name as keyof FormData]) {
-      setErrors(prev => ({ ...prev, [name]: undefined }));
-    }
+  const updatePlayer = <K extends keyof TeamPlayerDraft>(index: number, field: K, value: TeamPlayerDraft[K]) => {
+    setPlayers((prev) => prev.map((player, idx) => (idx === index ? { ...player, [field]: value } : player)));
+    setErrors((prev) => {
+      if (!prev.players[index]) return prev;
+      const nextPlayerErrors = { ...prev.players[index] };
+      delete nextPlayerErrors[field as keyof typeof nextPlayerErrors];
+      const nextPlayers = { ...prev.players };
+      if (Object.keys(nextPlayerErrors).length === 0) {
+        delete nextPlayers[index];
+      } else {
+        nextPlayers[index] = nextPlayerErrors;
+      }
+      return { ...prev, players: nextPlayers };
+    });
+  };
+
+  const handleAddPlayer = () => {
+    if (!canAddPlayer(players.length, teamSize, allowPartialTeams)) return;
+    setPlayers((prev) => [...prev, createEmptyPlayerDraft(false)]);
+  };
+
+  const handleRemovePlayer = (index: number) => {
+    if (index === 0 || !canRemovePlayer(players.length, teamSize, allowPartialTeams)) return;
+    setPlayers((prev) => prev.filter((_, idx) => idx !== index));
+    setErrors({ players: {} });
   };
 
   const validateStep = (step: number): boolean => {
-    const newErrors: Partial<Record<keyof FormData, string>> = {};
+    let nextErrors: TeamRegistrationValidationErrors = { players: {} };
 
-    if (step === 1) {
-      if (!formData.player1Name.trim()) newErrors.player1Name = 'Full name is required';
-      if (!formData.player1Email.trim()) {
-        newErrors.player1Email = 'Email is required';
-      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.player1Email)) {
-        newErrors.player1Email = 'Please enter a valid email address';
-      }
-      if (!formData.player1Phone.trim() || !formData.player1Phone.startsWith('+') || formData.player1Phone.replace(/\D/g, '').length < 10) {
-        newErrors.player1Phone = 'Phone number must start with + and have at least 10 digits';
-      }
+    if (step === captainStep) {
+      nextErrors = validateCaptainStep(players, {
+        handicapRequired: Boolean(tournament?.handicap_required),
+        teamCategories: configuredCategories,
+        teamCategory,
+        teamSize,
+      });
       if (employeePricingEnabled && isEmployee) {
         if (!employeeNumberInput.trim()) {
           setEmployeeError('Employee number is required when employee discount is selected');
-          setErrors(newErrors);
+          setErrors(nextErrors);
           return false;
         }
         if (employeeValidation.status !== 'valid') {
           setEmployeeError('Please verify a valid, available employee number before continuing');
-          setErrors(newErrors);
+          setErrors(nextErrors);
           return false;
         }
       }
       setEmployeeError(null);
+    } else if (step === teammatesStep) {
+      nextErrors = validateTeammatesStep(players, {
+        teamSize,
+        allowPartialTeams,
+        handicapRequired: Boolean(tournament?.handicap_required),
+        teamCategories: configuredCategories,
+        teamCategory,
+      });
+    } else if (step === waiverStep) {
+      nextErrors = validateWaiverStep(players);
     }
 
-    if (step === 2) {
-      if (!formData.player2Name.trim()) newErrors.player2Name = 'Full name is required';
-      if (formData.player2Email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.player2Email)) {
-        newErrors.player2Email = 'Please enter a valid email address';
-      }
-      if (!formData.teamCategory) newErrors.teamCategory = 'Team category is required';
-    }
-
-    if (step === 3) {
-      if (!formData.player1WaiverAccepted) newErrors.player1WaiverAccepted = 'Player 1 must accept the waiver';
-      if (!formData.player2WaiverAccepted) newErrors.player2WaiverAccepted = 'Player 2 must accept the waiver';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    setErrors(nextErrors);
+    return !hasValidationErrors(nextErrors);
   };
 
   const handleNext = () => {
     if (validateStep(currentStep)) {
-      setCurrentStep(prev => Math.min(prev + 1, 4));
+      setCurrentStep((prev) => Math.min(prev + 1, totalSteps));
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
   const handleBack = () => {
-    setCurrentStep(prev => Math.max(prev - 1, 1));
+    setCurrentStep((prev) => Math.max(prev - 1, 1));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -272,60 +308,63 @@ export const OrgRegistrationPage: React.FC = () => {
     setSubmitError(null);
 
     try {
-      const result = await api.registerGolfer({
-        golfer: {
-          name: formData.player1Name,
-          email: formData.player1Email,
-          phone: formData.player1Phone,
-          payment_type: 'swipe_simple',
-          partner_name: formData.player2Name,
-          partner_email: formData.player2Email || undefined,
-          partner_phone: formData.player2Phone && formData.player2Phone !== '+1671' ? formData.player2Phone : undefined,
-          partner_waiver_accepted_at: new Date().toISOString(),
-          team_name: formData.teamName || undefined,
-          team_category: formData.teamCategory || undefined,
+      const payload = buildRegistrationPayload(
+        {
+          players,
+          teamName,
+          teamCategory,
         },
-        waiver_accepted: true,
-        tournament_id: tournament.id,
-        ...(isEmployeeValidated && employeeValidation.employeeNumber
-          ? {
-              is_employee: true,
-              employee_number: employeeValidation.employeeNumber,
-            }
-          : {}),
-      });
+        {
+          paymentType: 'swipe_simple',
+          organizationSlug: orgSlug,
+        }
+      );
 
-      const isWaitlisted = result.golfer.registration_status === 'waitlist';
+      const result = await api.createRegistration(tournament.id, payload);
+      const registration = result.registration;
+      const isWaitlisted = registration.registration_status === 'waitlist';
+
+      const golferCompat = {
+        id: registration.id,
+        name: registration.contact_name || players[0]?.name || '',
+        email: registration.contact_email || players[0]?.email || '',
+        phone: registration.contact_phone || players[0]?.phone || '',
+        partner_name: players[1]?.name || null,
+        team_name: registration.display_team_name,
+        registration_status: registration.registration_status,
+        payment_token: registration.payment_token,
+      };
 
       if (isWaitlisted) {
         navigate(`/${tournamentSlug}/success`, {
           state: {
-            golfer: result.golfer,
-            tournament: tournament,
+            golfer: golferCompat,
+            registration,
+            tournament,
             waitlisted: true,
-          }
+          },
         });
         return;
       }
 
-      if (!result.golfer.payment_token) {
+      if (!registration.payment_token) {
         throw new Error('Registration saved, but payment link could not be initialized. Please contact the organizer.');
       }
 
-      const checkoutResponse = await api.createSwipeSimpleCheckout(result.golfer.payment_token);
+      const checkoutResponse = await api.createSwipeSimpleCheckout(registration.payment_token);
 
       if (checkoutResponse.redirect_url) {
         setSubmitState('redirecting');
         setPaymentUrl(checkoutResponse.redirect_url);
-        // Redirect immediately - no delay
         window.location.href = checkoutResponse.redirect_url;
       } else {
         navigate(`/${tournamentSlug}/success`, {
           state: {
-            golfer: result.golfer,
-            tournament: tournament,
+            golfer: golferCompat,
+            registration,
+            tournament,
             swipeSimpleRedirect: true,
-          }
+          },
         });
       }
     } catch (error: unknown) {
@@ -334,7 +373,8 @@ export const OrgRegistrationPage: React.FC = () => {
     }
   };
 
-  const inputClass = "w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20 transition-colors min-h-[44px]";
+  const inputClass =
+    'w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20 transition-colors min-h-[44px]';
 
   if (isLoading) {
     return (
@@ -354,32 +394,35 @@ export const OrgRegistrationPage: React.FC = () => {
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <h1 className="text-xl font-bold text-neutral-900 mb-2">Tournament Not Found</h1>
           <p className="text-neutral-600 mb-4">{submitError || 'The tournament you are looking for does not exist.'}</p>
-          <Button onClick={() => navigate('/')}>
-            Back to Tournaments
-          </Button>
+          <Button onClick={() => navigate('/')}>Back to Tournaments</Button>
         </Card>
       </div>
     );
   }
 
+  const totalAtCapacity = isAtCapacity(tournament);
+  const publicFull = isPublicAtCapacity(tournament);
+  const anyAtCapacity = totalAtCapacity || publicFull;
+
   if (!tournament.can_register) {
-    const isAtCapacity = tournament.at_capacity || tournament.public_at_capacity;
-    const publicOnlyFull = tournament.public_at_capacity && !tournament.at_capacity;
+    const publicOnlyFull = publicFull && !totalAtCapacity;
     const waitlistEnabled = tournament.waitlist_enabled;
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <Card className="p-8 max-w-md text-center">
           <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
           <h1 className="text-xl font-bold text-neutral-900 mb-2">
-            {isAtCapacity && !waitlistEnabled
-              ? (publicOnlyFull ? 'Public Registration Full' : 'Event Full')
+            {anyAtCapacity && !waitlistEnabled
+              ? publicOnlyFull
+                ? 'Public Registration Full'
+                : 'Event Full'
               : 'Registration Closed'}
           </h1>
           <p className="text-neutral-600 mb-4">
-            {isAtCapacity && !waitlistEnabled
-              ? (publicOnlyFull
+            {anyAtCapacity && !waitlistEnabled
+              ? publicOnlyFull
                 ? `Public registration for ${tournament.name} is full because sponsor-reserved slots are held separately.`
-                : `${tournament.name} has reached maximum capacity.`)
+                : `${tournament.name} has reached maximum capacity.`
               : `Registration for ${tournament.name} is currently closed.`}
           </p>
           {tournament.contact_name && (
@@ -389,26 +432,22 @@ export const OrgRegistrationPage: React.FC = () => {
               {tournament.contact_email && ` or ${tournament.contact_email}`}
             </p>
           )}
-          <Button onClick={() => navigate('/')}>
-            Back to Home
-          </Button>
+          <Button onClick={() => navigate('/')}>Back to Home</Button>
         </Card>
       </div>
     );
   }
 
   const capacitySummary = getPublicFacingCapacitySummary(tournament);
-
-  const displayTeamName = formData.teamName || (formData.player1Name && formData.player2Name
-    ? `${formData.player1Name} & ${formData.player2Name}`
-    : 'TBD');
+  const displayTeamName = getDisplayTeamName(teamName, players);
   const heroBannerUrl = branding.bannerUrl;
+  const captain = players[0];
 
   return (
     <div className="min-h-screen bg-neutral-100" data-theme-pack={branding.themePackId}>
       <SignedInAdminBar />
       {/* ================================================================= */}
-      {/* HERO HEADER (quiet operational screen — zero entrance animations)  */}
+      {/* HERO HEADER (quiet operational screen — zero entrance animations) */}
       {/* ================================================================= */}
       <PublicHero
         imageUrl={heroBannerUrl}
@@ -444,10 +483,18 @@ export const OrgRegistrationPage: React.FC = () => {
               {tournament.location_name}
             </span>
           )}
+          <span className="inline-flex items-center gap-1.5">
+            <Users className="w-4 h-4" strokeWidth={1.5} />
+            {isIndividual
+              ? 'Individual (1 player)'
+              : allowPartialTeams
+                ? `Teams up to ${teamSize} players`
+                : `${teamSize}-player teams`}
+          </span>
         </div>
       </PublicHero>
 
-      {(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled && (
+      {anyAtCapacity && tournament.waitlist_enabled && (
         <div className="bg-amber-50 border-b border-amber-200">
           <div className="max-w-6xl mx-auto px-6 py-3">
             <p className="text-sm text-amber-800 font-medium text-center">
@@ -458,67 +505,80 @@ export const OrgRegistrationPage: React.FC = () => {
       )}
 
       {/* ================================================================= */}
-      {/* TWO-COLUMN LAYOUT                                                  */}
+      {/* TWO-COLUMN LAYOUT                                                 */}
       {/* ================================================================= */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* LEFT — Form */}
           <div className="lg:col-span-2 order-last lg:order-first">
-            {/* Step Indicator */}
-            <StepIndicator currentStep={currentStep} />
+            <StepIndicator stepNames={stepNames} currentStep={currentStep} />
 
-            {/* Error Display */}
             {submitError && (
               <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 text-sm mb-6">
                 {submitError}
               </div>
             )}
 
-            {/* Step Content */}
             <div>
-              {/* ---- STEP 1: Team Captain ---- */}
-              {currentStep === 1 && (
-                <div key="step1">
+              {/* ---- STEP 1: Player 1 / Team Captain ---- */}
+              {currentStep === captainStep && captain && (
+                <div key="step-captain">
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
                     <div className="border-l-4 border-brand-600 pl-3 mb-6">
-                      <h2 className="text-lg font-semibold text-neutral-900">Team Captain (Player 1)</h2>
-                      <p className="text-sm text-neutral-500">Primary contact for the team</p>
+                      <h2 className="text-lg font-semibold text-neutral-900">
+                        {isIndividual ? 'Player Information' : 'Team Captain (Player 1)'}
+                      </h2>
+                      <p className="text-sm text-neutral-500">
+                        {isIndividual ? 'Your registration contact details' : 'Primary contact for the team'}
+                      </p>
                     </div>
                     <div className="space-y-4">
                       <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Full Name *</label>
+                        <label htmlFor="captain-name" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          Full Name *
+                        </label>
                         <input
-                          name="player1Name"
-                          value={formData.player1Name}
-                          onChange={handleInputChange}
+                          id="captain-name"
+                          value={captain.name}
+                          onChange={(e) => updatePlayer(0, 'name', e.target.value)}
                           placeholder="John Smith"
                           className={inputClass}
                         />
-                        {errors.player1Name && <p className="text-red-500 text-xs mt-1">{errors.player1Name}</p>}
+                        {errors.players[0]?.name && (
+                          <p className="text-red-500 text-xs mt-1">{errors.players[0].name}</p>
+                        )}
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Email Address *</label>
+                        <label htmlFor="captain-email" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          Email Address *
+                        </label>
                         <input
-                          name="player1Email"
+                          id="captain-email"
                           type="email"
-                          value={formData.player1Email}
-                          onChange={handleInputChange}
+                          value={captain.email}
+                          onChange={(e) => updatePlayer(0, 'email', e.target.value)}
                           placeholder="john@example.com"
                           className={inputClass}
                         />
-                        {errors.player1Email && <p className="text-red-500 text-xs mt-1">{errors.player1Email}</p>}
+                        {errors.players[0]?.email && (
+                          <p className="text-red-500 text-xs mt-1">{errors.players[0].email}</p>
+                        )}
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Phone Number * (Guam: +1671, CNMI: +1670)</label>
+                        <label htmlFor="captain-phone" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          Phone Number * (Guam: +1671, CNMI: +1670)
+                        </label>
                         <input
-                          name="player1Phone"
+                          id="captain-phone"
                           type="tel"
-                          value={formData.player1Phone}
-                          onChange={handleInputChange}
+                          value={captain.phone}
+                          onChange={(e) => updatePlayer(0, 'phone', e.target.value)}
                           placeholder="+1671 xxx-xxxx"
                           className={inputClass}
                         />
-                        {errors.player1Phone && <p className="text-red-500 text-xs mt-1">{errors.player1Phone}</p>}
+                        {errors.players[0]?.phone && (
+                          <p className="text-red-500 text-xs mt-1">{errors.players[0].phone}</p>
+                        )}
                       </div>
 
                       {employeePricingEnabled && (
@@ -612,174 +672,379 @@ export const OrgRegistrationPage: React.FC = () => {
                           )}
                         </div>
                       )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label htmlFor="captain-tshirt" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                            Shirt Size (optional)
+                          </label>
+                          <select
+                            id="captain-tshirt"
+                            value={captain.tshirt_size}
+                            onChange={(e) => updatePlayer(0, 'tshirt_size', e.target.value)}
+                            className={`${inputClass} bg-white`}
+                          >
+                            <option value="">Select size…</option>
+                            <option value="S">S</option>
+                            <option value="M">M</option>
+                            <option value="L">L</option>
+                            <option value="XL">XL</option>
+                            <option value="2XL">2XL</option>
+                            <option value="3XL">3XL</option>
+                          </select>
+                        </div>
+                        {tournament.handicap_required && (
+                          <div>
+                            <label htmlFor="captain-handicap" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                              Handicap *
+                            </label>
+                            <input
+                              id="captain-handicap"
+                              type="number"
+                              min={-10}
+                              max={54}
+                              step="0.1"
+                              value={captain.handicap}
+                              onChange={(e) => updatePlayer(0, 'handicap', e.target.value)}
+                              placeholder="e.g., 14.2"
+                              className={inputClass}
+                            />
+                            {errors.players[0]?.handicap && (
+                              <p className="text-red-500 text-xs mt-1">{errors.players[0].handicap}</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {isIndividual && configuredCategories.length > 0 && (
+                        <div>
+                          <label htmlFor="individual-category" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                            Division / Category <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            id="individual-category"
+                            value={teamCategory}
+                            onChange={(e) => {
+                              setTeamCategory(e.target.value);
+                              setErrors((prev) => ({ ...prev, teamCategory: undefined }));
+                            }}
+                            className={`${inputClass} bg-white ${errors.teamCategory ? 'border-red-400 ring-2 ring-red-100' : ''}`}
+                          >
+                            <option value="">Select…</option>
+                            {configuredCategories.map((cat) => (
+                              <option key={cat} value={cat}>
+                                {cat}
+                              </option>
+                            ))}
+                          </select>
+                          {errors.teamCategory && <p className="text-xs text-red-500 mt-1">{errors.teamCategory}</p>}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* ---- STEP 2: Partner ---- */}
-              {currentStep === 2 && (
-                <div key="step2">
+              {/* ---- STEP 2: Teammates (for 2-player pairs or 4-player foursomes) ---- */}
+              {currentStep === teammatesStep && !isIndividual && (
+                <div key="step-teammates" className="space-y-4">
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
-                    <div className="border-l-4 border-brand-600 pl-3 mb-6">
-                      <h2 className="text-lg font-semibold text-neutral-900">Playing Partner (Player 2)</h2>
-                      <p className="text-sm text-neutral-500">Your teammate</p>
-                    </div>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Full Name *</label>
-                        <input
-                          name="player2Name"
-                          value={formData.player2Name}
-                          onChange={handleInputChange}
-                          placeholder="Jane Doe"
-                          className={inputClass}
-                        />
-                        {errors.player2Name && <p className="text-red-500 text-xs mt-1">{errors.player2Name}</p>}
+                    <div className="flex items-start justify-between gap-4 mb-6">
+                      <div className="border-l-4 border-brand-600 pl-3">
+                        <h2 className="text-lg font-semibold text-neutral-900">
+                          {teamSize === 2 ? 'Playing Partner (Player 2)' : `Teammates (Players 2–${teamSize})`}
+                        </h2>
+                        <p className="text-sm text-neutral-500">
+                          {allowPartialTeams
+                            ? `Register ${players.length} of up to ${teamSize} players — partial teams are welcome.`
+                            : teamSize === 2
+                              ? 'Your teammate'
+                              : `Enter all ${teamSize - 1} teammates for your foursome`}
+                        </p>
                       </div>
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Email Address (optional)</label>
-                        <input
-                          name="player2Email"
-                          type="email"
-                          value={formData.player2Email}
-                          onChange={handleInputChange}
-                          placeholder="jane@example.com"
-                          className={inputClass}
-                        />
-                        {errors.player2Email && <p className="text-red-500 text-xs mt-1">{errors.player2Email}</p>}
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Phone Number (optional) (Guam: +1671, CNMI: +1670)</label>
-                        <input
-                          name="player2Phone"
-                          type="tel"
-                          value={formData.player2Phone}
-                          onChange={handleInputChange}
-                          placeholder="+1671 xxx-xxxx"
-                          className={inputClass}
-                        />
-                      </div>
-                      <p className="text-xs text-neutral-500 -mt-2">If left blank, all team communications will go to the Team Captain.</p>
-                      <div className="pt-2">
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Team Name</label>
-                        <input
-                          name="teamName"
-                          value={formData.teamName}
-                          onChange={handleInputChange}
-                          placeholder={`Defaults to "${formData.player1Name || 'Player 1'} & ${formData.player2Name || 'Player 2'}"`}
-                          className={inputClass}
-                        />
-                        <p className="text-xs text-neutral-400 mt-1">Optional — defaults to both player names</p>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">
-                          Team Category <span className="text-red-500">*</span>
-                        </label>
-                        <select
-                          name="teamCategory"
-                          value={formData.teamCategory}
-                          onChange={handleInputChange}
-                          className={`${inputClass} bg-white ${errors.teamCategory ? 'border-red-400 ring-2 ring-red-100' : ''}`}
+
+                      {canAddPlayer(players.length, teamSize, allowPartialTeams) && (
+                        <button
+                          type="button"
+                          onClick={handleAddPlayer}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-brand-600 px-4 py-2 text-xs font-semibold text-brand-700 hover:bg-brand-50 transition-colors shrink-0"
                         >
-                          <option value="">Select…</option>
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                          <option value="Co-Ed">Co-Ed</option>
-                        </select>
-                        {errors.teamCategory && <p className="text-xs text-red-500 mt-1">{errors.teamCategory}</p>}
+                          <UserPlus className="w-4 h-4" />
+                          Add Player
+                        </button>
+                      )}
+                    </div>
+
+                    {players.length === 1 && allowPartialTeams && (
+                      <div className="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-5 text-center mb-6">
+                        <p className="text-sm text-neutral-600">
+                          Registering as a solo player for now. You can add teammates up to {teamSize} players or
+                          continue as a partial team.
+                        </p>
                       </div>
+                    )}
+
+                    <div className="space-y-6">
+                      {players.slice(1).map((player, sliceIdx) => {
+                        const playerIdx = sliceIdx + 1;
+                        const playerErrors = errors.players[playerIdx] || {};
+                        return (
+                          <div
+                            key={playerIdx}
+                            className="rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4 sm:p-5 space-y-4"
+                          >
+                            <div className="flex items-center justify-between">
+                              <h3 className="text-sm font-semibold text-neutral-900">
+                                {teamSize === 2 ? 'Playing Partner (Player 2)' : `Player ${playerIdx + 1}`}
+                              </h3>
+                              {canRemovePlayer(players.length, teamSize, allowPartialTeams) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemovePlayer(playerIdx)}
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+
+                            <div>
+                              <label htmlFor={`player-${playerIdx}-name`} className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                Full Name *
+                              </label>
+                              <input
+                                id={`player-${playerIdx}-name`}
+                                value={player.name}
+                                onChange={(e) => updatePlayer(playerIdx, 'name', e.target.value)}
+                                placeholder={`Player ${playerIdx + 1} full name`}
+                                className={`${inputClass} bg-white`}
+                              />
+                              {playerErrors.name && <p className="text-red-500 text-xs mt-1">{playerErrors.name}</p>}
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div>
+                                <label htmlFor={`player-${playerIdx}-email`} className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                  Email Address (optional)
+                                </label>
+                                <input
+                                  id={`player-${playerIdx}-email`}
+                                  type="email"
+                                  value={player.email}
+                                  onChange={(e) => updatePlayer(playerIdx, 'email', e.target.value)}
+                                  placeholder="player@example.com"
+                                  className={`${inputClass} bg-white`}
+                                />
+                                {playerErrors.email && (
+                                  <p className="text-red-500 text-xs mt-1">{playerErrors.email}</p>
+                                )}
+                              </div>
+                              <div>
+                                <label htmlFor={`player-${playerIdx}-phone`} className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                  Phone Number (optional)
+                                </label>
+                                <input
+                                  id={`player-${playerIdx}-phone`}
+                                  type="tel"
+                                  value={player.phone}
+                                  onChange={(e) => updatePlayer(playerIdx, 'phone', e.target.value)}
+                                  placeholder="+1671 xxx-xxxx"
+                                  className={`${inputClass} bg-white`}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div>
+                                <label htmlFor={`player-${playerIdx}-tshirt`} className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                  Shirt Size (optional)
+                                </label>
+                                <select
+                                  id={`player-${playerIdx}-tshirt`}
+                                  value={player.tshirt_size}
+                                  onChange={(e) => updatePlayer(playerIdx, 'tshirt_size', e.target.value)}
+                                  className={`${inputClass} bg-white`}
+                                >
+                                  <option value="">Select size…</option>
+                                  <option value="S">S</option>
+                                  <option value="M">M</option>
+                                  <option value="L">L</option>
+                                  <option value="XL">XL</option>
+                                  <option value="2XL">2XL</option>
+                                  <option value="3XL">3XL</option>
+                                </select>
+                              </div>
+                              {tournament.handicap_required && (
+                                <div>
+                                  <label htmlFor={`player-${playerIdx}-handicap`} className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                    Handicap *
+                                  </label>
+                                  <input
+                                    id={`player-${playerIdx}-handicap`}
+                                    type="number"
+                                    min={-10}
+                                    max={54}
+                                    step="0.1"
+                                    value={player.handicap}
+                                    onChange={(e) => updatePlayer(playerIdx, 'handicap', e.target.value)}
+                                    placeholder="e.g., 16.0"
+                                    className={`${inputClass} bg-white`}
+                                  />
+                                  {playerErrors.handicap && (
+                                    <p className="text-red-500 text-xs mt-1">{playerErrors.handicap}</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <p className="text-xs text-neutral-500 mt-4">
+                      If teammate contact info is left blank, all team communications will go to the Team Captain.
+                    </p>
+
+                    <div className="pt-5 mt-5 border-t border-neutral-100 space-y-4">
+                      <div>
+                        <label htmlFor="registration-team-name" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          Team Name
+                        </label>
+                        <input
+                          id="registration-team-name"
+                          value={teamName}
+                          onChange={(e) => setTeamName(e.target.value)}
+                          placeholder={`Defaults to "${getDisplayTeamName('', players)}"`}
+                          className={inputClass}
+                        />
+                        <p className="text-xs text-neutral-400 mt-1">Optional — defaults to player names</p>
+                      </div>
+
+                      {configuredCategories.length > 0 && (
+                        <div>
+                          <label htmlFor="registration-team-category" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                            Team Category <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            id="registration-team-category"
+                            value={teamCategory}
+                            onChange={(e) => {
+                              setTeamCategory(e.target.value);
+                              setErrors((prev) => ({ ...prev, teamCategory: undefined }));
+                            }}
+                            className={`${inputClass} bg-white ${errors.teamCategory ? 'border-red-400 ring-2 ring-red-100' : ''}`}
+                          >
+                            <option value="">Select…</option>
+                            {configuredCategories.map((cat) => (
+                              <option key={cat} value={cat}>
+                                {cat}
+                              </option>
+                            ))}
+                          </select>
+                          {errors.teamCategory && <p className="text-xs text-red-500 mt-1">{errors.teamCategory}</p>}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* ---- STEP 3: Waiver ---- */}
-              {currentStep === 3 && (
-                <div key="step3">
+              {/* ---- STEP 3 (or 2 for individual): Waiver ---- */}
+              {currentStep === waiverStep && (
+                <div key="step-waiver">
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
                     <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Liability Waiver</h2>
-                      <p className="text-sm text-neutral-500">Both players must agree</p>
+                      <p className="text-sm text-neutral-500">
+                        {players.length === 1
+                          ? 'Please review and agree to continue'
+                          : `All ${players.length} players must agree`}
+                      </p>
                     </div>
 
                     <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 max-h-64 overflow-y-auto">
-                      <LiabilityWaiver
-                        organizationName={organization?.name || 'the tournament organizer'}
-                      />
+                      <LiabilityWaiver organizationName={organization?.name || 'the tournament organizer'} />
                     </div>
 
                     <div className="space-y-4">
-                      <div className="p-4 bg-neutral-100 rounded-2xl">
-                        <label className="flex items-start gap-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            name="player1WaiverAccepted"
-                            checked={formData.player1WaiverAccepted}
-                            onChange={handleInputChange}
-                            className="mt-1 w-5 h-5 min-w-[20px] rounded border-neutral-300 accent-brand-600"
-                          />
-                          <span className="text-sm text-neutral-700">
-                            I, <strong>{formData.player1Name || 'Player 1'}</strong>, have read and agree to the liability waiver
-                          </span>
-                        </label>
-                        {errors.player1WaiverAccepted && (
-                          <p className="text-red-500 text-sm mt-2">{errors.player1WaiverAccepted}</p>
-                        )}
-                      </div>
-                      <div className="p-4 bg-neutral-100 rounded-2xl">
-                        <label className="flex items-start gap-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            name="player2WaiverAccepted"
-                            checked={formData.player2WaiverAccepted}
-                            onChange={handleInputChange}
-                            className="mt-1 w-5 h-5 min-w-[20px] rounded border-neutral-300 accent-brand-600"
-                          />
-                          <span className="text-sm text-neutral-700">
-                            I, <strong>{formData.player2Name || 'Player 2'}</strong>, have read and agree to the liability waiver
-                          </span>
-                        </label>
-                        {errors.player2WaiverAccepted && (
-                          <p className="text-red-500 text-sm mt-2">{errors.player2WaiverAccepted}</p>
-                        )}
-                      </div>
+                      {players.map((player, index) => (
+                        <div key={index} className="p-4 bg-neutral-100 rounded-2xl">
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={player.waiver_accepted}
+                              onChange={(e) => updatePlayer(index, 'waiver_accepted', e.target.checked)}
+                              className="mt-1 w-5 h-5 min-w-[20px] rounded border-neutral-300 accent-brand-600"
+                            />
+                            <span className="text-sm text-neutral-700">
+                              I, <strong>{player.name.trim() || `Player ${index + 1}`}</strong>, have read and agree to
+                              the liability waiver
+                            </span>
+                          </label>
+                          {errors.players[index]?.waiver_accepted && (
+                            <p className="text-red-500 text-sm mt-2">{errors.players[index].waiver_accepted}</p>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* ---- STEP 4: Review & Pay ---- */}
-              {currentStep === 4 && (
-                <div key="step4">
+              {/* ---- FINAL STEP: Review & Pay ---- */}
+              {currentStep === reviewStep && (
+                <div key="step-review">
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
                     <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Review & Pay</h2>
                       <p className="text-sm text-neutral-500">Confirm your details before payment</p>
                     </div>
 
-                    <div className="space-y-5">
-                      {/* Player 1 summary */}
-                      <div className="p-4 bg-neutral-100 rounded-2xl">
-                        <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-2">Team Captain (Player 1)</p>
-                        <p className="font-medium text-neutral-900">{formData.player1Name}</p>
-                        <p className="text-sm text-neutral-600">{formData.player1Email}</p>
-                        <p className="text-sm text-neutral-600">{formData.player1Phone}</p>
-                      </div>
+                    <div className="space-y-4">
+                      {players.map((player, index) => (
+                        <div key={index} className="p-4 bg-neutral-100 rounded-2xl">
+                          <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-1.5">
+                            {index === 0
+                              ? isIndividual
+                                ? 'Player'
+                                : 'Team Captain (Player 1)'
+                              : `Player ${index + 1}`}
+                          </p>
+                          <p className="font-medium text-neutral-900">{player.name}</p>
+                          {player.email && <p className="text-sm text-neutral-600">{player.email}</p>}
+                          {player.phone && player.phone !== '+1671' && (
+                            <p className="text-sm text-neutral-600">{player.phone}</p>
+                          )}
+                          {(player.tshirt_size || player.handicap) && (
+                            <p className="text-xs text-neutral-500 mt-1">
+                              {[
+                                player.tshirt_size ? `Shirt: ${player.tshirt_size}` : null,
+                                player.handicap ? `Handicap: ${player.handicap}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' • ')}
+                            </p>
+                          )}
+                        </div>
+                      ))}
 
-                      {/* Player 2 summary */}
-                      <div className="p-4 bg-neutral-100 rounded-2xl">
-                        <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-2">Playing Partner (Player 2)</p>
-                        <p className="font-medium text-neutral-900">{formData.player2Name}</p>
-                        {formData.player2Email && <p className="text-sm text-neutral-600">{formData.player2Email}</p>}
-                        {formData.player2Phone && formData.player2Phone !== '+1671' && <p className="text-sm text-neutral-600">{formData.player2Phone}</p>}
-                      </div>
-
-                      {/* Team & fee */}
-                      <div className="p-4 bg-neutral-100 rounded-2xl">
-                        <div className="flex justify-between items-baseline mb-2">
-                          <span className="text-sm text-neutral-500">Team Name</span>
-                          <span className="font-medium text-neutral-900">{displayTeamName}</span>
+                      <div className="p-4 bg-neutral-100 rounded-2xl space-y-2">
+                        {!isIndividual && (
+                          <div className="flex justify-between items-baseline">
+                            <span className="text-sm text-neutral-500">Team Name</span>
+                            <span className="font-medium text-neutral-900">{displayTeamName}</span>
+                          </div>
+                        )}
+                        {teamCategory && (
+                          <div className="flex justify-between items-baseline">
+                            <span className="text-sm text-neutral-500">Category</span>
+                            <span className="font-medium text-neutral-900">{teamCategory}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-baseline">
+                          <span className="text-sm text-neutral-500">Players</span>
+                          <span className="font-medium text-neutral-900">{players.length}</span>
                         </div>
                         <div className="flex justify-between items-baseline">
                           <span className="text-sm text-neutral-500">Entry Fee</span>
@@ -794,7 +1059,8 @@ export const OrgRegistrationPage: React.FC = () => {
                                 <span className="text-green-700">{formatUsdFromCents(effectiveFeeCents)}</span>
                               </span>
                             ) : (
-                              tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`
+                              tournament.entry_fee_display ||
+                              `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/${isIndividual ? 'player' : 'team'}`
                             )}
                           </span>
                         </div>
@@ -811,7 +1077,6 @@ export const OrgRegistrationPage: React.FC = () => {
                         )}
                       </div>
 
-                      {/* Order total */}
                       <div className="p-4 bg-neutral-100 rounded-2xl">
                         <div className="flex justify-between items-baseline">
                           <span className="text-sm font-medium text-neutral-700">Total</span>
@@ -819,7 +1084,6 @@ export const OrgRegistrationPage: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Payment note */}
                       <div className="bg-brand-600/5 rounded-2xl p-4">
                         <p className="text-sm text-neutral-600">
                           You will be redirected to complete payment securely online.
@@ -835,6 +1099,7 @@ export const OrgRegistrationPage: React.FC = () => {
             <div className="flex items-center justify-between mt-6">
               {currentStep > 1 ? (
                 <button
+                  type="button"
                   onClick={handleBack}
                   className="inline-flex items-center gap-1 border border-neutral-300 text-neutral-700 font-medium text-sm rounded-full px-6 py-3 hover:bg-neutral-50 transition-colors min-h-[44px] w-full sm:w-auto justify-center"
                 >
@@ -845,8 +1110,9 @@ export const OrgRegistrationPage: React.FC = () => {
                 <div />
               )}
 
-              {currentStep < 4 ? (
+              {currentStep < totalSteps ? (
                 <button
+                  type="button"
                   onClick={handleNext}
                   className="inline-flex items-center gap-1 bg-brand-600 hover:bg-brand-700 text-brand-foreground font-semibold text-sm rounded-full px-6 py-3 transition-colors min-h-[44px] w-full sm:w-auto justify-center"
                 >
@@ -855,38 +1121,40 @@ export const OrgRegistrationPage: React.FC = () => {
                 </button>
               ) : (
                 <button
+                  type="button"
                   onClick={handleSubmit}
                   disabled={submitState !== 'idle'}
-                  className={`inline-flex items-center gap-2 ${(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-brand-600 hover:bg-brand-700 text-brand-foreground'} font-semibold text-sm rounded-full px-8 py-3 transition-colors min-h-[44px] w-full sm:w-auto justify-center ${submitState !== 'idle' ? 'opacity-75 cursor-not-allowed' : ''}`}
+                  className={`inline-flex items-center gap-2 ${
+                    anyAtCapacity && tournament.waitlist_enabled
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                      : 'bg-brand-600 hover:bg-brand-700 text-brand-foreground'
+                  } font-semibold text-sm rounded-full px-8 py-3 transition-colors min-h-[44px] w-full sm:w-auto justify-center ${
+                    submitState !== 'idle' ? 'opacity-75 cursor-not-allowed' : ''
+                  }`}
                 >
                   {submitState === 'idle' && (
                     <>
-                      {(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled ? 'Join Waitlist' : 'Register & Pay'}
+                      {anyAtCapacity && tournament.waitlist_enabled
+                        ? 'Join Waitlist'
+                        : 'Register & Pay'}
                       <ChevronRight className="w-4 h-4" />
                     </>
                   )}
                   {submitState === 'submitting' && (
                     <span className="flex items-center gap-2">
-                      <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       Submitting...
                     </span>
                   )}
                   {submitState === 'redirecting' && (
                     <span className="flex items-center gap-2">
-                      <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       Redirecting to payment...
                     </span>
                   )}
                 </button>
               )}
 
-              {/* Fallback payment link if auto-redirect doesn't work */}
               {submitState === 'redirecting' && paymentUrl && (
                 <div className="mt-4 p-4 bg-brand-600/5 rounded-2xl text-center">
                   <p className="text-sm text-neutral-600 mb-2">
@@ -946,7 +1214,10 @@ export const OrgRegistrationPage: React.FC = () => {
                         </span>
                       </div>
                     ) : (
-                      <span className="text-2xl font-bold text-neutral-900">{tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}</span>
+                      <span className="text-2xl font-bold text-neutral-900">
+                        {tournament.entry_fee_display ||
+                          `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/${isIndividual ? 'player' : 'team'}`}
+                      </span>
                     )}
                   </div>
                   {isEmployeeValidated ? (
@@ -955,7 +1226,7 @@ export const OrgRegistrationPage: React.FC = () => {
                       Employee rate applied ({employeeValidation.employeeNumber})
                     </p>
                   ) : (
-                    <p className="text-xs text-neutral-400">per team (2 players)</p>
+                    <p className="text-xs text-neutral-400">{formatEntryUnitSubtitle(teamSize, allowPartialTeams)}</p>
                   )}
 
                   {capacitySummary.label && (
@@ -978,18 +1249,20 @@ export const OrgRegistrationPage: React.FC = () => {
                   {tournament.tournament_info && (
                     <div className="mt-4 space-y-1.5">
                       <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Tournament Info</p>
-                      <p className="text-sm text-neutral-600 leading-relaxed whitespace-pre-line">{tournament.tournament_info}</p>
+                      <p className="text-sm text-neutral-600 leading-relaxed whitespace-pre-line">
+                        {tournament.tournament_info}
+                      </p>
                     </div>
                   )}
                 </div>
 
-                {(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled ? (
+                {anyAtCapacity && tournament.waitlist_enabled ? (
                   <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3">
                     <p className="text-xs text-amber-800 font-medium mb-1">Waitlist Registration</p>
                     <p className="text-xs text-amber-700">
-                      {tournament.public_at_capacity && !tournament.at_capacity
-                        ? 'Public registration is currently full. Your team will be added to the waitlist and notified if sponsor-reserved or public spots open up. No payment is required until confirmed.'
-                        : 'This event is at capacity. Your team will be added to the waitlist and you\'ll be notified if a spot opens up. No payment is required until confirmed.'}
+                      {publicFull && !totalAtCapacity
+                        ? 'Public registration is currently full. Your registration will be added to the waitlist and notified if sponsor-reserved or public spots open up. No payment is required until confirmed.'
+                        : 'This event is at capacity. Your registration will be added to the waitlist and you will be notified if a spot opens up. No payment is required until confirmed.'}
                     </p>
                   </div>
                 ) : (
@@ -1008,7 +1281,9 @@ export const OrgRegistrationPage: React.FC = () => {
       {/* Footer */}
       <footer className="border-t border-neutral-200 mt-12">
         <div className="max-w-6xl mx-auto px-6 py-8 flex items-center justify-between text-sm text-neutral-400">
-          <p>Powered by <span className="font-medium text-neutral-600">Shimizu Technology</span></p>
+          <p>
+            Powered by <span className="font-medium text-neutral-600">Shimizu Technology</span>
+          </p>
           <Link to="/admin" className="text-xs text-neutral-400 hover:text-neutral-600 transition-colors">
             Admin
           </Link>

@@ -368,44 +368,79 @@ module Api
       end
 
       # POST /api/v1/checkout/swipe_simple
-      # Redirect golfer to external payment link (tournament override -> org config -> ENV fallback).
-      # Keyed on the golfer-bound cryptographic `payment_token` (never raw sequential golfer_id).
+      # Redirect golfer or registration to external payment link (tournament override -> org config).
+      # Keyed on the record-bound cryptographic `payment_token` (never raw sequential IDs).
       def swipe_simple_redirect
-        golfer = find_golfer_by_payment_token!
-        return unless golfer
-
-        if golfer.payment_status == "paid"
-          render json: { error: "Already paid" }, status: :unprocessable_entity
+        token = params[:payment_token].to_s.strip
+        if token.blank?
+          render json: { error: "Missing payment token" }, status: :bad_request
           return
         end
 
-        original_payment_type = golfer.payment_type
-        tournament = golfer.tournament
-        org_config = tournament.organization.effective_payment_config
+        record = TenantContext.with_platform_access do
+          Golfer.includes(tournament: :organization).find_by(payment_token: token) ||
+            Registration.includes(tournament: :organization).find_by(payment_token: token)
+        end
 
-        payment_url = if original_payment_type == "walk_in"
-                        tournament.walkin_swipe_simple_url.presence ||
-                          tournament.swipe_simple_url.presence ||
-                          org_config.external_walkin_url.presence ||
-                          org_config.external_checkout_url.presence
-                      else
-                        tournament.swipe_simple_url.presence ||
-                          org_config.external_checkout_url.presence
-                      end
+        unless record
+          render json: { error: "Invalid payment token" }, status: :not_found
+          return
+        end
+
+        return unless verify_tenant_match!(
+          record.tournament.organization_id,
+          status: :not_found,
+          message: "Invalid payment token"
+        )
+
+        tournament = record.tournament
+        org_config = tournament.organization.effective_payment_config
+        payment_url = nil
+        already_paid = false
+
+        TenantContext.with_organization(tournament.organization_id) do
+          ActiveRecord::Base.transaction(requires_new: true) do
+            record.lock!
+            if record.payment_status == "paid"
+              already_paid = true
+              next
+            end
+
+            original_payment_type = record.payment_type
+            payment_url = if original_payment_type == "walk_in"
+                            tournament.walkin_swipe_simple_url.presence ||
+                              tournament.swipe_simple_url.presence ||
+                              org_config.external_walkin_url.presence ||
+                              org_config.external_checkout_url.presence
+                          else
+                            tournament.swipe_simple_url.presence ||
+                              org_config.external_checkout_url.presence
+                          end
+
+            next if payment_url.blank?
+
+            record.update!(payment_type: "swipe_simple", payment_status: "pending")
+          end
+        end
+
+        if already_paid
+          render json: { error: "Already paid" }, status: :unprocessable_entity
+          return
+        end
 
         if payment_url.blank?
           render json: { error: "External checkout URL is not configured for this event." }, status: :unprocessable_entity
           return
         end
 
-        TenantContext.with_organization(tournament.organization_id) do
-          golfer.update!(payment_type: "swipe_simple", payment_status: "pending")
+        payload = { redirect_url: payment_url }
+        if record.is_a?(Registration)
+          payload[:registration_id] = record.id
+        else
+          payload[:golfer_id] = record.id
         end
 
-        render json: {
-          redirect_url: payment_url,
-          golfer_id: golfer.id
-        }
+        render json: payload
       end
 
       # GET /api/v1/checkout/session/:session_id

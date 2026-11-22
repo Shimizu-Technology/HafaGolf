@@ -24,6 +24,8 @@ module TenantRls
     tournament_payouts
     sponsor_tiers
     donations
+    registrations
+    team_members
     employee_numbers
   ].freeze
 

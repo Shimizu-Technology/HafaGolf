@@ -373,15 +373,75 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
     t.datetime "updated_at", null: false
     t.string "void_reason"
     t.datetime "voided_at"
+    t.bigint "registration_id"
+    t.bigint "team_member_id"
     t.index ["golfer_id"], name: "index_raffle_tickets_on_golfer_id"
     t.index ["raffle_prize_id"], name: "index_raffle_tickets_on_raffle_prize_id"
     t.index ["raffle_sale_batch_id"], name: "index_raffle_tickets_on_raffle_sale_batch_id"
+    t.index ["registration_id", "team_member_id"], name: "index_raffle_tickets_on_registration_and_team_member"
+    t.index ["registration_id"], name: "index_raffle_tickets_on_registration_id"
     t.index ["sold_by_user_id"], name: "index_raffle_tickets_on_sold_by_user_id"
+    t.index ["team_member_id"], name: "index_raffle_tickets_on_team_member_id"
     t.index ["tournament_id", "is_winner"], name: "index_raffle_tickets_on_tournament_id_and_is_winner"
     t.index ["tournament_id", "payment_status"], name: "index_raffle_tickets_on_tournament_id_and_payment_status"
     t.index ["tournament_id", "sequence_number"], name: "index_raffle_tickets_on_tournament_id_and_sequence_number", unique: true
     t.index ["tournament_id", "ticket_number"], name: "index_raffle_tickets_on_tournament_id_and_ticket_number", unique: true
     t.index ["tournament_id"], name: "index_raffle_tickets_on_tournament_id"
+  end
+
+  create_table "registrations", force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id", null: false
+    t.bigint "group_id"
+    t.bigint "sponsor_id"
+    t.bigint "golfer_id"
+    t.string "team_name"
+    t.string "team_category"
+    t.string "registration_source", default: "public", null: false
+    t.string "registration_status", default: "confirmed", null: false
+    t.string "contact_name"
+    t.string "contact_email"
+    t.string "contact_phone"
+    t.string "company"
+    t.text "notes"
+    t.string "payment_type"
+    t.string "payment_status", default: "unpaid"
+    t.string "payment_method"
+    t.integer "payment_amount_cents"
+    t.datetime "paid_at"
+    t.datetime "payment_verified_at"
+    t.integer "payment_verified_by_id"
+    t.string "payment_verified_by_name"
+    t.string "payment_token"
+    t.string "receipt_number"
+    t.text "payment_notes"
+    t.string "stripe_checkout_session_id"
+    t.string "stripe_payment_intent_id"
+    t.string "stripe_card_brand"
+    t.string "stripe_card_last4"
+    t.string "stripe_account_origin"
+    t.string "stripe_refund_id"
+    t.integer "refund_amount_cents"
+    t.text "refund_reason"
+    t.datetime "refunded_at"
+    t.bigint "refunded_by_id"
+    t.integer "raffle_tickets_requested", default: 0, null: false
+    t.string "raffle_bundle_label"
+    t.string "legacy_source"
+    t.string "legacy_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index "tournament_id, lower((contact_email)::text)", name: "index_registrations_on_tournament_lower_email_public_unique", unique: true, where: "((contact_email IS NOT NULL) AND ((COALESCE(registration_source, 'public'::character varying))::text <> 'admin'::text) AND ((registration_status)::text IS DISTINCT FROM 'cancelled'::text))"
+    t.index ["golfer_id"], name: "index_registrations_on_golfer_id_unique", unique: true, where: "(golfer_id IS NOT NULL)"
+    t.index ["group_id"], name: "index_registrations_on_group_id"
+    t.index ["legacy_source", "legacy_id"], name: "index_registrations_on_legacy_source_and_id_unique", unique: true, where: "(legacy_source IS NOT NULL)"
+    t.index ["organization_id"], name: "index_registrations_on_organization_id"
+    t.index ["payment_token"], name: "index_registrations_on_payment_token_unique", unique: true, where: "(payment_token IS NOT NULL)"
+    t.index ["sponsor_id"], name: "index_registrations_on_sponsor_id"
+    t.index ["stripe_checkout_session_id"], name: "index_registrations_on_stripe_checkout_session_id_unique", unique: true, where: "(stripe_checkout_session_id IS NOT NULL)"
+    t.index ["stripe_refund_id"], name: "index_registrations_on_stripe_refund_id_unique", unique: true, where: "(stripe_refund_id IS NOT NULL)"
+    t.index ["tournament_id", "registration_status"], name: "index_registrations_on_tournament_id_and_status"
+    t.index ["tournament_id"], name: "index_registrations_on_tournament_id"
   end
 
   create_table "scores", force: :cascade do |t|
@@ -399,14 +459,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
     t.datetime "updated_at", null: false
     t.boolean "verified", default: false
     t.datetime "verified_at"
+    t.bigint "registration_id"
+    t.bigint "team_member_id"
     t.index ["entered_by_id"], name: "index_scores_on_entered_by_id"
     t.index ["golfer_id"], name: "index_scores_on_golfer_id"
     t.index ["group_id"], name: "index_scores_on_group_id"
+    t.index ["registration_id"], name: "index_scores_on_registration_id"
     t.index ["score_type"], name: "index_scores_on_score_type"
+    t.index ["team_member_id"], name: "index_scores_on_team_member_id"
     t.index ["tournament_id", "golfer_id"], name: "index_scores_on_tournament_id_and_golfer_id"
     t.index ["tournament_id", "group_id", "hole"], name: "index_scores_on_tournament_id_and_group_id_and_hole"
     t.index ["tournament_id", "hole"], name: "index_scores_on_tournament_id_and_hole"
     t.index ["tournament_id"], name: "index_scores_on_tournament_id"
+    t.check_constraint "registration_id IS NULL AND team_member_id IS NULL OR score_type IS NOT NULL AND score_type::text = 'team'::text AND registration_id IS NOT NULL AND team_member_id IS NULL OR score_type IS NOT NULL AND score_type::text = 'individual'::text AND team_member_id IS NOT NULL AND registration_id IS NULL", name: "check_scores_registration_or_team_member_by_type"
   end
 
   create_table "sponsor_slots", force: :cascade do |t|
@@ -484,6 +549,43 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
     t.index ["tournament_id"], name: "index_sponsors_on_tournament_id"
     t.check_constraint "refund_amount_cents >= 0", name: "chk_sponsors_refund_non_negative"
     t.check_constraint "stripe_fee_cents IS NULL OR stripe_fee_cents >= 0", name: "chk_sponsors_stripe_fee_non_negative"
+  end
+
+  create_table "team_members", force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id", null: false
+    t.bigint "registration_id", null: false
+    t.bigint "sponsor_slot_id"
+    t.integer "position", null: false
+    t.boolean "is_captain", default: false, null: false
+    t.string "name", null: false
+    t.string "email"
+    t.string "phone"
+    t.string "mobile"
+    t.string "company"
+    t.string "address"
+    t.string "tshirt_size"
+    t.decimal "handicap", precision: 4, scale: 1
+    t.boolean "is_employee", default: false, null: false
+    t.bigint "employee_number_record_id"
+    t.datetime "waiver_accepted_at"
+    t.datetime "checked_in_at"
+    t.integer "checked_in_by_id"
+    t.string "checked_in_by_name"
+    t.string "magic_link_token"
+    t.datetime "magic_link_expires_at"
+    t.string "legacy_source"
+    t.string "legacy_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index "tournament_id, lower((email)::text)", name: "index_team_members_on_tournament_id_and_lower_email", where: "(email IS NOT NULL)"
+    t.index ["legacy_source", "legacy_id"], name: "index_team_members_on_legacy_source_and_id_unique", unique: true, where: "(legacy_source IS NOT NULL)"
+    t.index ["magic_link_token"], name: "index_team_members_on_magic_link_token_unique", unique: true, where: "(magic_link_token IS NOT NULL)"
+    t.index ["organization_id"], name: "index_team_members_on_organization_id"
+    t.index ["registration_id", "position"], name: "index_team_members_on_registration_id_and_position", unique: true
+    t.index ["sponsor_slot_id"], name: "index_team_members_on_sponsor_slot_id_unique", unique: true, where: "(sponsor_slot_id IS NOT NULL)"
+    t.index ["tournament_id"], name: "index_team_members_on_tournament_id"
+    t.check_constraint "\"position\" >= 1 AND \"position\" <= 4", name: "check_team_members_position_range"
   end
 
   create_table "tournament_assignments", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -640,6 +742,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
     t.string "tax_org_ein"
     t.integer "fmv_per_player_cents", default: 0, null: false
     t.text "tax_receipt_disclaimer"
+    t.string "capacity_unit", default: "players", null: false
     t.index ["early_bird_deadline"], name: "index_tournaments_on_early_bird_deadline"
     t.index ["event_type"], name: "index_tournaments_on_event_type"
     t.index ["organization_id", "slug"], name: "index_tournaments_on_organization_id_and_slug", unique: true
@@ -650,6 +753,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
     t.index ["status"], name: "index_tournaments_on_status"
     t.index ["tournament_format"], name: "index_tournaments_on_tournament_format"
     t.index ["year"], name: "index_tournaments_on_year"
+    t.check_constraint "capacity_unit::text = ANY (ARRAY['players'::character varying::text, 'teams'::character varying::text])", name: "check_tournaments_capacity_unit"
     t.check_constraint "fmv_per_player_cents >= 0", name: "chk_tournaments_fmv_non_negative"
   end
 
@@ -691,9 +795,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
   add_foreign_key "raffle_tickets", "golfers"
   add_foreign_key "raffle_tickets", "raffle_prizes"
   add_foreign_key "raffle_tickets", "raffle_sale_batches"
+  add_foreign_key "raffle_tickets", "registrations", on_delete: :nullify
+  add_foreign_key "raffle_tickets", "team_members", on_delete: :nullify
   add_foreign_key "raffle_tickets", "tournaments"
+  add_foreign_key "registrations", "golfers"
+  add_foreign_key "registrations", "groups"
+  add_foreign_key "registrations", "organizations"
+  add_foreign_key "registrations", "sponsors"
+  add_foreign_key "registrations", "tournaments"
+  add_foreign_key "registrations", "users", column: "refunded_by_id", on_delete: :nullify
   add_foreign_key "scores", "golfers"
   add_foreign_key "scores", "groups"
+  add_foreign_key "scores", "registrations", on_delete: :nullify
+  add_foreign_key "scores", "team_members", on_delete: :nullify
   add_foreign_key "scores", "tournaments"
   add_foreign_key "scores", "users", column: "entered_by_id"
   add_foreign_key "sponsor_slots", "sponsors"
@@ -702,6 +816,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_220000) do
   add_foreign_key "sponsor_tiers", "tournaments", on_delete: :cascade
   add_foreign_key "sponsors", "sponsor_tiers", on_delete: :nullify
   add_foreign_key "sponsors", "tournaments"
+  add_foreign_key "team_members", "organizations"
+  add_foreign_key "team_members", "registrations"
+  add_foreign_key "team_members", "sponsor_slots", on_delete: :nullify
+  add_foreign_key "team_members", "tournaments"
   add_foreign_key "tournament_assignments", "tournaments"
   add_foreign_key "tournament_assignments", "users"
   add_foreign_key "tournament_payouts", "organizations", on_delete: :cascade

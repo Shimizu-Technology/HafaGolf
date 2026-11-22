@@ -235,6 +235,7 @@ module Tournaments
         tournament_format: @source.tournament_format,
         scoring_type: @source.scoring_type,
         team_size: @source.team_size,
+        capacity_unit: @source.capacity_unit,
         allow_partial_teams: @source.allow_partial_teams,
         shotgun_start: @source.shotgun_start,
         tee_times_enabled: @source.tee_times_enabled,

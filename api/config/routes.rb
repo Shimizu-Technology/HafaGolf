@@ -140,8 +140,25 @@ Rails.application.routes.draw do
         end
       end
 
+      # Registrations & Team Members (real teams 1/2/4)
+      resources :registrations, only: [:show, :update] do
+        member do
+          post :verify_payment
+          post :assign_group
+          post :sync_raffle_tickets
+        end
+      end
+
+      resources :team_members, only: [] do
+        member do
+          post :check_in
+          post :undo_check_in
+        end
+      end
+
       # Scores & Leaderboard
       scope 'tournaments/:tournament_id' do
+        resources :registrations, only: [:index, :create]
         resources :scores, only: [:index, :create, :update, :destroy] do
           member do
             post :verify

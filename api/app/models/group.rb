@@ -1,6 +1,8 @@
 class Group < ApplicationRecord
   belongs_to :tournament
   has_many :golfers, dependent: :nullify
+  has_many :registrations, dependent: :nullify
+  has_many :team_members, through: :registrations
   has_many :scores, dependent: :destroy
 
   validates :group_number, presence: true, uniqueness: { scope: :tournament_id }
@@ -86,12 +88,33 @@ class Group < ApplicationRecord
     tournament&.starting_hole_description(starting_course_key, hole_number)
   end
 
-  def player_count
+  def golfer_player_count
     if golfers.loaded?
       golfers.sum { |g| g.partner_name.present? ? 2 : 1 }
     else
       golfers.pick(Arel.sql("COUNT(*) + COUNT(NULLIF(partner_name, ''))")).to_i
     end
+  end
+
+  def registration_player_count
+    if registrations.loaded?
+      golfer_ids_in_group = golfers.loaded? ? golfers.map(&:id) : golfers.pluck(:id)
+      registrations.reject(&:cancelled?).sum do |reg|
+        next 0 if reg.golfer_id.present? && golfer_ids_in_group.include?(reg.golfer_id)
+
+        reg.player_count
+      end
+    else
+      TeamMember.joins(:registration)
+        .where(registrations: { group_id: id })
+        .where.not(registrations: { registration_status: "cancelled" })
+        .where("registrations.golfer_id IS NULL OR registrations.golfer_id NOT IN (SELECT id FROM golfers WHERE group_id = ?)", id)
+        .count
+    end
+  end
+
+  def player_count
+    golfer_player_count + registration_player_count
   end
 
   def full?
@@ -101,6 +124,48 @@ class Group < ApplicationRecord
   def can_add?(golfer)
     incoming = golfer.partner_name.present? ? 2 : 1
     player_count + incoming <= max_golfers
+  end
+
+  def can_add_registration?(registration)
+    return false unless registration.present?
+    return false if registration.tournament_id != tournament_id
+    return true if registration.cancelled?
+
+    player_count_excluding_registration(registration) + registration.player_count <= max_golfers
+  end
+
+  def player_count_excluding_registration(registration)
+    base_golfers = golfer_player_count
+    if registration&.golfer_id.present? && golfers.exists?(id: registration.golfer_id)
+      bridged_golfer = golfers.find_by(id: registration.golfer_id)
+      base_golfers -= (bridged_golfer&.partner_name.present? ? 2 : 1)
+    end
+
+    other_reg_members = TeamMember.joins(:registration)
+      .where(registrations: { group_id: id })
+      .where.not(registrations: { registration_status: "cancelled" })
+      .where("registrations.golfer_id IS NULL OR registrations.golfer_id NOT IN (SELECT id FROM golfers WHERE group_id = ?)", id)
+    other_reg_members = other_reg_members.where.not(registration_id: registration.id) if registration&.persisted?
+
+    base_golfers + other_reg_members.count
+  end
+
+  def add_registration(registration)
+    return false unless can_add_registration?(registration)
+
+    registration.update!(group: self)
+    true
+  rescue ActiveRecord::ActiveRecordError
+    false
+  end
+
+  def remove_registration(registration)
+    return false unless registration.present? && registration.group_id == id
+
+    registration.update!(group: nil)
+    true
+  rescue ActiveRecord::ActiveRecordError
+    false
   end
 
   def starting_position_label
@@ -140,7 +205,9 @@ class Group < ApplicationRecord
   end
 
   def empty_slot?
-    golfers.loaded? ? golfers.empty? : !golfers.exists?
+    no_golfers = golfers.loaded? ? golfers.empty? : !golfers.exists?
+    no_registrations = registrations.loaded? ? registrations.empty? : !registrations.exists?
+    no_golfers && no_registrations
   end
 
   private

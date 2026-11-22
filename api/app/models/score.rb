@@ -4,6 +4,8 @@ class Score < ApplicationRecord
   # Associations
   belongs_to :tournament
   belongs_to :golfer, optional: true  # Optional for team scores
+  belongs_to :registration, optional: true
+  belongs_to :team_member, optional: true
   belongs_to :group
   belongs_to :entered_by, class_name: 'User', optional: true
 
@@ -13,12 +15,24 @@ class Score < ApplicationRecord
   validates :strokes, presence: true, 
                       numericality: { only_integer: true, greater_than: 0, less_than_or_equal_to: 20 }
   validates :score_type, inclusion: { in: %w[individual team gross net] }
+  validate :registration_or_team_member_matches_score_type
   
-  # Ensure unique score per hole per golfer/group
+  # Ensure unique score per hole per golfer/registration/team_member/group
   validates :hole, uniqueness: { 
     scope: [:tournament_id, :golfer_id, :group_id, :score_type],
+    conditions: -> { where(registration_id: nil, team_member_id: nil) },
     message: 'already has a score recorded'
-  }
+  }, if: -> { registration_id.nil? && team_member_id.nil? }
+
+  validates :hole, uniqueness: {
+    scope: [:tournament_id, :registration_id, :group_id, :score_type],
+    message: 'already has a score recorded'
+  }, if: -> { registration_id.present? }
+
+  validates :hole, uniqueness: {
+    scope: [:tournament_id, :team_member_id, :group_id, :score_type],
+    message: 'already has a score recorded'
+  }, if: -> { team_member_id.present? }
 
   # Callbacks
   before_save :calculate_relative_score
@@ -92,6 +106,21 @@ class Score < ApplicationRecord
   end
 
   private
+
+  def registration_or_team_member_matches_score_type
+    return if registration_id.nil? && team_member_id.nil?
+
+    if registration_id.present? && team_member_id.present?
+      errors.add(:base, "Score cannot belong to both a registration and a team member")
+      return
+    end
+
+    if registration_id.present? && score_type != "team"
+      errors.add(:score_type, "must be 'team' when registration is set")
+    elsif team_member_id.present? && score_type != "individual"
+      errors.add(:score_type, "must be 'individual' when team_member is set")
+    end
+  end
 
   def calculate_relative_score
     return unless strokes.present? && par.present?

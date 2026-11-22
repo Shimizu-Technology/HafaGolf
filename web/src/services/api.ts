@@ -83,6 +83,144 @@ export interface SponsorTier {
   sort_order: number;
 }
 
+export type CapacityUnit = 'players' | 'teams';
+
+export interface CapacitySummary {
+  capacity_unit: CapacityUnit;
+  team_size: number;
+  allow_partial_teams: boolean;
+  max_capacity: number | null;
+  reserved_slots: number;
+  sponsor_reserved_slots: number;
+  sponsor_reserved: number;
+  effective_reserved: number;
+  public_capacity: number | null;
+  confirmed_units: number;
+  public_confirmed_units: number;
+  sponsor_confirmed_units: number;
+  waitlist_units: number;
+  confirmed_registrations_count: number;
+  confirmed_players_count: number;
+  waitlist_registrations_count: number;
+  waitlist_players_count: number;
+  remaining: number | null;
+  public_remaining: number | null;
+  at_capacity: boolean;
+  public_at_capacity: boolean;
+}
+
+export interface TeamMember {
+  id: number;
+  organization_id: string;
+  tournament_id: number;
+  registration_id: number;
+  sponsor_slot_id: number | null;
+  position: number;
+  is_captain: boolean;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  company: string | null;
+  address: string | null;
+  tshirt_size: string | null;
+  handicap: number | null;
+  is_employee: boolean;
+  employee_number_record_id: number | null;
+  waiver_accepted_at: string | null;
+  waiver_signed: boolean;
+  checked_in_at: string | null;
+  checked_in: boolean;
+  checked_in_by_id: number | null;
+  checked_in_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Registration {
+  id: number;
+  organization_id: string;
+  tournament_id: number;
+  group_id: number | null;
+  sponsor_id: number | null;
+  golfer_id: number | null;
+  team_name: string | null;
+  display_team_name: string;
+  team_category: string | null;
+  registration_source: 'public' | 'admin' | 'sponsor' | 'walk_in';
+  registration_status: 'confirmed' | 'waitlist' | 'pending' | 'cancelled';
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  company: string | null;
+  notes: string | null;
+  payment_type: string | null;
+  payment_status: 'unpaid' | 'pending' | 'paid' | 'refunded' | null;
+  payment_method: string | null;
+  payment_amount_cents: number | null;
+  paid_at: string | null;
+  payment_verified_at: string | null;
+  payment_verified_by_id: number | null;
+  payment_verified_by_name: string | null;
+  payment_token: string | null;
+  receipt_number: string | null;
+  payment_notes: string | null;
+  stripe_card_brand: string | null;
+  stripe_card_last4: string | null;
+  stripe_account_origin: string | null;
+  refund_amount_cents: number | null;
+  refund_reason: string | null;
+  refunded_at: string | null;
+  raffle_tickets_requested: number;
+  raffle_bundle_label: string | null;
+  player_count: number;
+  checked_in_count: number;
+  all_checked_in: boolean;
+  partially_checked_in: boolean;
+  starting_position_label: string | null;
+  starting_hole_description: string | null;
+  team_members: TeamMember[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateRegistrationTeamMemberInput {
+  name: string;
+  email?: string;
+  phone?: string;
+  mobile?: string;
+  company?: string;
+  tshirt_size?: string;
+  handicap?: number | null;
+  position?: number;
+  is_captain?: boolean;
+  waiver_accepted?: boolean;
+}
+
+export interface CreateRegistrationPayload {
+  registration: {
+    team_name?: string;
+    team_category?: string;
+    contact_name?: string;
+    contact_email?: string;
+    contact_phone?: string;
+    company?: string;
+    notes?: string;
+    payment_type?: 'stripe' | 'pay_on_day' | 'swipe_simple' | 'walk_in' | 'offline';
+    raffle_tickets_requested?: number;
+    raffle_bundle_label?: string;
+    team_members: CreateRegistrationTeamMemberInput[];
+  };
+  waiver_accepted?: boolean;
+  organization_slug?: string;
+}
+
+export interface CreateRegistrationResponse {
+  registration: Registration;
+  capacity_summary: CapacitySummary;
+  message: string;
+}
+
 // Types for API responses
 export interface Tournament {
   id: number;
@@ -135,6 +273,9 @@ export interface Tournament {
   tournament_format?: 'scramble' | 'stroke' | 'stableford' | 'best_ball' | 'match' | 'captain_choice' | 'custom';
   scoring_type?: 'gross' | 'net' | 'both' | 'stableford';
   team_size?: number;
+  capacity_unit?: CapacityUnit;
+  team_categories?: string[];
+  capacity_summary?: CapacitySummary;
   teams_per_start_position?: number;
   start_positions_per_hole?: number;
   players_per_start_position?: number;
@@ -1606,6 +1747,94 @@ export class ApiClient {
     });
   }
 
+  // Real Teams: Registrations & Team Members (1/2/4 players + partial teams)
+  async getTournamentRegistrations(
+    tournamentId: number,
+    params?: {
+      registration_status?: string;
+      payment_status?: string;
+      search?: string;
+      page?: number;
+      per_page?: number;
+    }
+  ): Promise<{
+    registrations: Registration[];
+    capacity_summary: CapacitySummary;
+    meta: { current_page: number; per_page: number; total_count: number; total_pages: number };
+  }> {
+    const searchParams = new URLSearchParams();
+    if (params?.registration_status) searchParams.set('registration_status', params.registration_status);
+    if (params?.payment_status) searchParams.set('payment_status', params.payment_status);
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.page) searchParams.set('page', params.page.toString());
+    if (params?.per_page) searchParams.set('per_page', params.per_page.toString());
+
+    const query = searchParams.toString();
+    return this.request(`/api/v1/tournaments/${tournamentId}/registrations${query ? `?${query}` : ''}`);
+  }
+
+  async createRegistration(
+    tournamentId: number,
+    payload: CreateRegistrationPayload
+  ): Promise<CreateRegistrationResponse> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/registrations`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, false);
+  }
+
+  async getRegistration(id: number): Promise<{ registration: Registration }> {
+    return this.request(`/api/v1/registrations/${id}`);
+  }
+
+  async updateRegistration(
+    id: number,
+    data: Partial<Registration> & { team_members_attributes?: Record<string, unknown>[] }
+  ): Promise<{ registration: Registration }> {
+    return this.request(`/api/v1/registrations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ registration: data }),
+    });
+  }
+
+  async verifyRegistrationPayment(
+    id: number,
+    data?: { payment_method?: string; notes?: string; payment_amount_cents?: number }
+  ): Promise<{ registration: Registration }> {
+    return this.request(`/api/v1/registrations/${id}/verify_payment`, {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    });
+  }
+
+  async assignRegistrationGroup(
+    id: number,
+    groupId: number | null
+  ): Promise<{ registration: Registration; group?: { id: number; group_number: number; player_count: number; max_golfers: number; starting_position_label: string } }> {
+    return this.request(`/api/v1/registrations/${id}/assign_group`, {
+      method: 'POST',
+      body: JSON.stringify({ group_id: groupId }),
+    });
+  }
+
+  async syncRegistrationRaffleTickets(id: number): Promise<{ registration: Registration; raffle_tickets: unknown[] }> {
+    return this.request(`/api/v1/registrations/${id}/sync_raffle_tickets`, {
+      method: 'POST',
+    });
+  }
+
+  async checkInTeamMember(id: number): Promise<{ team_member: TeamMember; registration: Registration }> {
+    return this.request(`/api/v1/team_members/${id}/check_in`, {
+      method: 'POST',
+    });
+  }
+
+  async undoCheckInTeamMember(id: number): Promise<{ team_member: TeamMember; registration: Registration }> {
+    return this.request(`/api/v1/team_members/${id}/undo_check_in`, {
+      method: 'POST',
+    });
+  }
+
   // Payout Settlements & Disbursements
   async getTournamentSettlement(tournamentId?: number): Promise<TournamentSettlementResponse> {
     const id = tournamentId || this.currentTournamentId;
@@ -1776,7 +2005,6 @@ export class ApiClient {
       body: JSON.stringify({ donation: payload }),
     });
   }
-
 }
 
 export interface TaxReceiptPayload {

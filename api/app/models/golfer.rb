@@ -6,6 +6,7 @@ class Golfer < ApplicationRecord
   belongs_to :refunded_by, class_name: "User", optional: true
   belongs_to :payment_verified_by, class_name: "User", foreign_key: :payment_verified_by_id, optional: true
   belongs_to :checked_in_by, class_name: "User", foreign_key: :checked_in_by_id, optional: true
+  has_one :registration, dependent: :nullify
   has_many :scores, dependent: :destroy
   has_many :raffle_tickets, dependent: :nullify
 
@@ -541,12 +542,13 @@ class Golfer < ApplicationRecord
     return if registration_status.present?
     return unless tournament
 
-    # Use public capacity for automatic status assignment
+    # Use unified capacity_summary (covering both legacy golfers and new registrations/team_members)
     # Admin-added golfers using reserved slots can have status manually set
-    if tournament.public_at_capacity?
-      self.registration_status = "waitlist"
-    else
+    incoming_players = partner_name.present? ? 2 : 1
+    if tournament.public_capacity_available_for?(player_count: incoming_players)
       self.registration_status = "confirmed"
+    else
+      self.registration_status = "waitlist"
     end
   end
 

@@ -3,6 +3,8 @@
 class Organization < ApplicationRecord
   # Associations
   has_many :tournaments, dependent: :restrict_with_error
+  has_many :registrations, dependent: :restrict_with_error
+  has_many :team_members, dependent: :restrict_with_error
   has_many :organization_memberships, dependent: :destroy
   has_many :organization_domains, dependent: :destroy
   has_many :users, through: :organization_memberships
