@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useAuth, useUser } from '@clerk/clerk-react';
 import posthog from 'posthog-js';
 import { PostHogProvider as PHProvider, usePostHog } from 'posthog-js/react';
 import { useLocation } from 'react-router-dom';
@@ -14,7 +13,7 @@ let disabledLogged = false;
 
 const PostHogReadyContext = createContext(false);
 
-function usePostHogReady() {
+export function usePostHogReady() {
   return useContext(PostHogReadyContext);
 }
 
@@ -47,34 +46,6 @@ export function PostHogPageView() {
 
     lastCapturedPathRef.current = currentPath;
   }, [location.pathname, location.search, location.hash, posthogClient, isReady]);
-
-  return null;
-}
-
-function PostHogIdentitySync() {
-  const posthogClient = usePostHog();
-  const isReady = usePostHogReady();
-  const { isLoaded, isSignedIn } = useAuth();
-  const { user } = useUser();
-  const previouslySignedInRef = useRef(false);
-
-  useEffect(() => {
-    if (!posthogClient || !isPostHogEnabled || !isReady || !isLoaded) return;
-
-    if (isSignedIn && user) {
-      posthogClient.identify(`clerk:${user.id}`, {
-        email: user.primaryEmailAddress?.emailAddress,
-        name: user.fullName,
-      });
-      previouslySignedInRef.current = true;
-      return;
-    }
-
-    if (previouslySignedInRef.current) {
-      posthogClient.reset();
-      previouslySignedInRef.current = false;
-    }
-  }, [posthogClient, isReady, isLoaded, isSignedIn, user]);
 
   return null;
 }
@@ -138,7 +109,6 @@ export function PostHogProvider({ children }: { children: ReactNode }) {
   return (
     <PHProvider client={posthog}>
       <PostHogReadyContext.Provider value={isReady}>
-        <PostHogIdentitySync />
         {children}
       </PostHogReadyContext.Provider>
     </PHProvider>

@@ -1,21 +1,22 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth, useUser, UserButton } from '@clerk/clerk-react';
 import { LayoutDashboard } from 'lucide-react';
+import { useClerkAuthBridge } from '../contexts/ClerkAuthBridge';
 import { resolveBestDashboardPath } from '../utils/dashboardRouting';
 
 interface SignedInAdminBarProps {
   dashboardPath?: string;
 }
 
+/**
+ * Displays a quick jump bar back to the admin console when an admin is signed in.
+ * Uses ClerkAuthBridgeContext so public client domain bundles never load or execute Clerk JS.
+ */
 export const SignedInAdminBar: React.FC<SignedInAdminBarProps> = ({ dashboardPath }) => {
   const navigate = useNavigate();
-  const { isSignedIn, isLoaded, getToken } = useAuth();
-  const { user } = useUser();
+  const { isClerkAvailable, isSignedIn, isLoaded, getToken } = useClerkAuthBridge();
 
-  if (!isLoaded || !isSignedIn) return null;
-
-  const displayName = user?.firstName || user?.emailAddresses[0]?.emailAddress || 'User';
+  if (!isClerkAvailable || !isLoaded || !isSignedIn) return null;
 
   const goToBestDashboard = async () => {
     const path = await resolveBestDashboardPath(getToken, dashboardPath);
@@ -28,7 +29,7 @@ export const SignedInAdminBar: React.FC<SignedInAdminBarProps> = ({ dashboardPat
         <div className="flex items-center gap-2 min-w-0">
           <LayoutDashboard size={16} className="flex-shrink-0" />
           <span className="text-xs md:text-sm truncate">
-            Signed in as <strong className="font-semibold">{displayName}</strong>
+            Signed in as <strong className="font-semibold">Admin</strong>
           </span>
         </div>
         <div className="flex items-center gap-2 md:gap-4 flex-shrink-0">
@@ -36,9 +37,8 @@ export const SignedInAdminBar: React.FC<SignedInAdminBarProps> = ({ dashboardPat
             onClick={goToBestDashboard}
             className="text-xs md:text-sm hover:underline whitespace-nowrap"
           >
-            Go to Dashboard →
+            Go to Dashboard
           </button>
-          <UserButton afterSignOutUrl="/" />
         </div>
       </div>
     </div>
