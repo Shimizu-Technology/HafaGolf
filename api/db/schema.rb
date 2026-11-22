@@ -390,7 +390,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
     t.index ["tournament_id", "group_id", "hole"], name: "index_scores_on_tournament_id_and_group_id_and_hole"
     t.index ["tournament_id", "hole"], name: "index_scores_on_tournament_id_and_hole"
     t.index ["tournament_id"], name: "index_scores_on_tournament_id"
-    t.check_constraint "registration_id IS NULL AND team_member_id IS NULL OR score_type::text = 'team'::text AND registration_id IS NOT NULL AND team_member_id IS NULL OR score_type::text = 'individual'::text AND team_member_id IS NOT NULL AND registration_id IS NULL", name: "check_scores_registration_or_team_member_by_type"
+    t.check_constraint "registration_id IS NULL AND team_member_id IS NULL OR score_type IS NOT NULL AND score_type::text = 'team'::text AND registration_id IS NOT NULL AND team_member_id IS NULL OR score_type IS NOT NULL AND score_type::text = 'individual'::text AND team_member_id IS NOT NULL AND registration_id IS NULL", name: "check_scores_registration_or_team_member_by_type"
   end
 
   create_table "settings", force: :cascade do |t|
@@ -491,7 +491,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_180000) do
     t.index ["magic_link_token"], name: "index_team_members_on_magic_link_token_unique", unique: true, where: "(magic_link_token IS NOT NULL)"
     t.index ["organization_id"], name: "index_team_members_on_organization_id"
     t.index ["registration_id", "position"], name: "index_team_members_on_registration_id_and_position", unique: true
-    t.index ["registration_id"], name: "index_team_members_on_registration_id"
     t.index ["sponsor_slot_id"], name: "index_team_members_on_sponsor_slot_id_unique", unique: true, where: "(sponsor_slot_id IS NOT NULL)"
     t.index ["tournament_id"], name: "index_team_members_on_tournament_id"
     t.check_constraint "\"position\" >= 1 AND \"position\" <= 4", name: "check_team_members_position_range"

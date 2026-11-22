@@ -13,36 +13,44 @@ class SponsorSlotSyncer
   end
 
   def sync_all
-    slots = @sponsor.sponsor_slots.order(:slot_number).to_a
+    ActiveRecord::Base.transaction(requires_new: true) do
+      @sponsor.lock!
+      slots = @sponsor.sponsor_slots.reload.order(:slot_number).to_a
 
-    # Legacy Golfer sync (pairs)
-    slots.each_slice(2).with_index do |(captain_slot, partner_slot), team_idx|
-      sync_team(captain_slot, partner_slot, team_idx + 1)
-    end
+      # Legacy Golfer sync (pairs)
+      slots.each_slice(2).with_index do |(captain_slot, partner_slot), team_idx|
+        sync_team(captain_slot, partner_slot, team_idx + 1)
+      end
 
-    # Real teams Registration + TeamMember sync (1, 2, or 4 per team_size)
-    team_size = effective_team_size
-    slots.each_slice(team_size).with_index do |team_slots, team_idx|
-      sync_registration_team(team_slots, team_idx + 1)
+      # Real teams Registration + TeamMember sync (1, 2, or 4 per team_size)
+      team_size = effective_team_size
+      slots.each_slice(team_size).with_index do |team_slots, team_idx|
+        sync_registration_team(team_slots, team_idx + 1)
+      end
     end
   end
 
   # Returns true on success, raises on failure so callers can surface the error.
   def sync_slot(slot)
-    # 1. Legacy Golfer pair sync
-    legacy_team_number = ((slot.slot_number - 1) / 2) + 1
-    pair_start = (legacy_team_number - 1) * 2 + 1
-    captain_slot = @sponsor.sponsor_slots.find_by(slot_number: pair_start)
-    partner_slot = @sponsor.sponsor_slots.find_by(slot_number: pair_start + 1)
-    sync_team(captain_slot, partner_slot, legacy_team_number)
+    ActiveRecord::Base.transaction(requires_new: true) do
+      @sponsor.lock!
+      fresh_slot = @sponsor.sponsor_slots.find(slot.id)
 
-    # 2. Real teams Registration + TeamMember sync
-    team_size = effective_team_size
-    reg_team_number = ((slot.slot_number - 1) / team_size) + 1
-    range_start = (reg_team_number - 1) * team_size + 1
-    range_end = range_start + team_size - 1
-    team_slots = @sponsor.sponsor_slots.where(slot_number: range_start..range_end).order(:slot_number).to_a
-    sync_registration_team(team_slots, reg_team_number)
+      # 1. Legacy Golfer pair sync
+      legacy_team_number = ((fresh_slot.slot_number - 1) / 2) + 1
+      pair_start = (legacy_team_number - 1) * 2 + 1
+      captain_slot = @sponsor.sponsor_slots.find_by(slot_number: pair_start)
+      partner_slot = @sponsor.sponsor_slots.find_by(slot_number: pair_start + 1)
+      sync_team(captain_slot, partner_slot, legacy_team_number)
+
+      # 2. Real teams Registration + TeamMember sync
+      team_size = effective_team_size
+      reg_team_number = ((fresh_slot.slot_number - 1) / team_size) + 1
+      range_start = (reg_team_number - 1) * team_size + 1
+      range_end = range_start + team_size - 1
+      team_slots = @sponsor.sponsor_slots.where(slot_number: range_start..range_end).order(:slot_number).to_a
+      sync_registration_team(team_slots, reg_team_number)
+    end
 
     true
   end

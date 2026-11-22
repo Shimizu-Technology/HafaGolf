@@ -34,6 +34,7 @@ class TeamMember < ApplicationRecord
   validates :handicap, numericality: { greater_than_or_equal_to: -10, less_than_or_equal_to: 54 }, allow_nil: true
 
   validate :tenant_matches_registration
+  validate :group_capacity_not_exceeded, on: :create
 
   def checked_in?
     checked_in_at.present?
@@ -109,6 +110,22 @@ class TeamMember < ApplicationRecord
 
     if registration.tournament_id.present? && tournament_id.present? && tournament_id != registration.tournament_id
       errors.add(:tournament_id, "must match registration tournament")
+    end
+  end
+
+  def group_capacity_not_exceeded
+    return unless registration&.persisted? && registration.group.present? && !registration.cancelled?
+
+    group = registration.group
+    projected_reg_players = if registration.team_members.loaded?
+      active = registration.active_team_members
+      active.include?(self) ? active.size : active.size + 1
+    else
+      registration.team_members.count + 1
+    end
+
+    if group.player_count_excluding_registration(registration) + projected_reg_players > group.max_golfers
+      errors.add(:base, "Adding this player would exceed starting position capacity of #{group.max_golfers} players")
     end
   end
 end

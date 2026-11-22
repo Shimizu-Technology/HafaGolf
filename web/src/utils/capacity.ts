@@ -16,22 +16,37 @@ type CapacityRecord = {
 };
 
 export function getTotalConfirmed(record: CapacityRecord) {
+  if (record.capacity_unit === 'players' && record.capacity_summary) {
+    return record.capacity_summary.confirmed_players_count ?? record.capacity_summary.confirmed_units ?? 0;
+  }
   return record.confirmed_count ?? 0;
 }
 
 export function getPublicConfirmed(record: CapacityRecord) {
+  if (record.capacity_unit === 'players' && record.capacity_summary) {
+    return record.capacity_summary.public_confirmed_units ?? getTotalConfirmed(record);
+  }
   return record.public_confirmed_count ?? getTotalConfirmed(record);
 }
 
 export function getSponsorConfirmed(record: CapacityRecord) {
+  if (record.capacity_unit === 'players' && record.capacity_summary) {
+    return record.capacity_summary.sponsor_confirmed_units ?? 0;
+  }
   return record.sponsor_confirmed_count ?? 0;
 }
 
 export function getSponsorReservedTeams(record: CapacityRecord) {
+  if (record.capacity_unit === 'players' && record.capacity_summary) {
+    return record.capacity_summary.sponsor_reserved_slots ?? record.capacity_summary.sponsor_reserved ?? 0;
+  }
   return record.sponsor_reserved_teams ?? 0;
 }
 
 export function getPublicCapacity(record: CapacityRecord) {
+  if (record.capacity_unit === 'players' && record.capacity_summary) {
+    return record.capacity_summary.public_capacity ?? record.capacity_summary.max_capacity ?? record.max_capacity ?? null;
+  }
   return record.public_capacity ?? record.max_capacity ?? null;
 }
 

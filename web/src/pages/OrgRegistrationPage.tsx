@@ -432,8 +432,11 @@ export const OrgRegistrationPage: React.FC = () => {
                     </div>
                     <div className="space-y-4">
                       <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Full Name *</label>
+                        <label htmlFor="captain-name" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          Full Name *
+                        </label>
                         <input
+                          id="captain-name"
                           value={captain.name}
                           onChange={(e) => updatePlayer(0, 'name', e.target.value)}
                           placeholder="John Smith"
@@ -444,8 +447,11 @@ export const OrgRegistrationPage: React.FC = () => {
                         )}
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Email Address *</label>
+                        <label htmlFor="captain-email" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          Email Address *
+                        </label>
                         <input
+                          id="captain-email"
                           type="email"
                           value={captain.email}
                           onChange={(e) => updatePlayer(0, 'email', e.target.value)}
@@ -457,10 +463,11 @@ export const OrgRegistrationPage: React.FC = () => {
                         )}
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                        <label htmlFor="captain-phone" className="block text-sm font-medium text-neutral-700 mb-1.5">
                           Phone Number * (Guam: +1671, CNMI: +1670)
                         </label>
                         <input
+                          id="captain-phone"
                           type="tel"
                           value={captain.phone}
                           onChange={(e) => updatePlayer(0, 'phone', e.target.value)}
@@ -474,10 +481,11 @@ export const OrgRegistrationPage: React.FC = () => {
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          <label htmlFor="captain-tshirt" className="block text-sm font-medium text-neutral-700 mb-1.5">
                             Shirt Size (optional)
                           </label>
                           <select
+                            id="captain-tshirt"
                             value={captain.tshirt_size}
                             onChange={(e) => updatePlayer(0, 'tshirt_size', e.target.value)}
                             className={`${inputClass} bg-white`}
@@ -493,9 +501,14 @@ export const OrgRegistrationPage: React.FC = () => {
                         </div>
                         {tournament.handicap_required && (
                           <div>
-                            <label className="block text-sm font-medium text-neutral-700 mb-1.5">Handicap *</label>
+                            <label htmlFor="captain-handicap" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                              Handicap *
+                            </label>
                             <input
+                              id="captain-handicap"
                               type="number"
+                              min={-10}
+                              max={54}
                               step="0.1"
                               value={captain.handicap}
                               onChange={(e) => updatePlayer(0, 'handicap', e.target.value)}
@@ -511,10 +524,11 @@ export const OrgRegistrationPage: React.FC = () => {
 
                       {isIndividual && configuredCategories.length > 0 && (
                         <div>
-                          <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          <label htmlFor="individual-category" className="block text-sm font-medium text-neutral-700 mb-1.5">
                             Division / Category <span className="text-red-500">*</span>
                           </label>
                           <select
+                            id="individual-category"
                             value={teamCategory}
                             onChange={(e) => {
                               setTeamCategory(e.target.value);
@@ -602,8 +616,11 @@ export const OrgRegistrationPage: React.FC = () => {
                             </div>
 
                             <div>
-                              <label className="block text-sm font-medium text-neutral-700 mb-1.5">Full Name *</label>
+                              <label htmlFor={`player-${playerIdx}-name`} className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                Full Name *
+                              </label>
                               <input
+                                id={`player-${playerIdx}-name`}
                                 value={player.name}
                                 onChange={(e) => updatePlayer(playerIdx, 'name', e.target.value)}
                                 placeholder={`Player ${playerIdx + 1} full name`}
@@ -614,10 +631,11 @@ export const OrgRegistrationPage: React.FC = () => {
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div>
-                                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                <label htmlFor={`player-${playerIdx}-email`} className="block text-sm font-medium text-neutral-700 mb-1.5">
                                   Email Address (optional)
                                 </label>
                                 <input
+                                  id={`player-${playerIdx}-email`}
                                   type="email"
                                   value={player.email}
                                   onChange={(e) => updatePlayer(playerIdx, 'email', e.target.value)}
@@ -629,10 +647,11 @@ export const OrgRegistrationPage: React.FC = () => {
                                 )}
                               </div>
                               <div>
-                                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                <label htmlFor={`player-${playerIdx}-phone`} className="block text-sm font-medium text-neutral-700 mb-1.5">
                                   Phone Number (optional)
                                 </label>
                                 <input
+                                  id={`player-${playerIdx}-phone`}
                                   type="tel"
                                   value={player.phone}
                                   onChange={(e) => updatePlayer(playerIdx, 'phone', e.target.value)}
@@ -644,10 +663,11 @@ export const OrgRegistrationPage: React.FC = () => {
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div>
-                                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                <label htmlFor={`player-${playerIdx}-tshirt`} className="block text-sm font-medium text-neutral-700 mb-1.5">
                                   Shirt Size (optional)
                                 </label>
                                 <select
+                                  id={`player-${playerIdx}-tshirt`}
                                   value={player.tshirt_size}
                                   onChange={(e) => updatePlayer(playerIdx, 'tshirt_size', e.target.value)}
                                   className={`${inputClass} bg-white`}
@@ -663,11 +683,14 @@ export const OrgRegistrationPage: React.FC = () => {
                               </div>
                               {tournament.handicap_required && (
                                 <div>
-                                  <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                                  <label htmlFor={`player-${playerIdx}-handicap`} className="block text-sm font-medium text-neutral-700 mb-1.5">
                                     Handicap *
                                   </label>
                                   <input
+                                    id={`player-${playerIdx}-handicap`}
                                     type="number"
+                                    min={-10}
+                                    max={54}
                                     step="0.1"
                                     value={player.handicap}
                                     onChange={(e) => updatePlayer(playerIdx, 'handicap', e.target.value)}
@@ -691,8 +714,11 @@ export const OrgRegistrationPage: React.FC = () => {
 
                     <div className="pt-5 mt-5 border-t border-neutral-100 space-y-4">
                       <div>
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Team Name</label>
+                        <label htmlFor="registration-team-name" className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          Team Name
+                        </label>
                         <input
+                          id="registration-team-name"
                           value={teamName}
                           onChange={(e) => setTeamName(e.target.value)}
                           placeholder={`Defaults to "${getDisplayTeamName('', players)}"`}
@@ -703,10 +729,11 @@ export const OrgRegistrationPage: React.FC = () => {
 
                       {configuredCategories.length > 0 && (
                         <div>
-                          <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                          <label htmlFor="registration-team-category" className="block text-sm font-medium text-neutral-700 mb-1.5">
                             Team Category <span className="text-red-500">*</span>
                           </label>
                           <select
+                            id="registration-team-category"
                             value={teamCategory}
                             onChange={(e) => {
                               setTeamCategory(e.target.value);

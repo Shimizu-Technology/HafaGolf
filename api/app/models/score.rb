@@ -20,6 +20,7 @@ class Score < ApplicationRecord
   # Ensure unique score per hole per golfer/registration/team_member/group
   validates :hole, uniqueness: { 
     scope: [:tournament_id, :golfer_id, :group_id, :score_type],
+    conditions: -> { where(registration_id: nil, team_member_id: nil) },
     message: 'already has a score recorded'
   }, if: -> { registration_id.nil? && team_member_id.nil? }
 

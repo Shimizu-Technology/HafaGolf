@@ -129,9 +129,25 @@ class Group < ApplicationRecord
   def can_add_registration?(registration)
     return false unless registration.present?
     return false if registration.tournament_id != tournament_id
-    return true if registration.group_id == id
+    return true if registration.cancelled?
 
-    player_count + registration.player_count <= max_golfers
+    player_count_excluding_registration(registration) + registration.player_count <= max_golfers
+  end
+
+  def player_count_excluding_registration(registration)
+    base_golfers = golfer_player_count
+    if registration&.golfer_id.present? && golfers.exists?(id: registration.golfer_id)
+      bridged_golfer = golfers.find_by(id: registration.golfer_id)
+      base_golfers -= (bridged_golfer&.partner_name.present? ? 2 : 1)
+    end
+
+    other_reg_members = TeamMember.joins(:registration)
+      .where(registrations: { group_id: id })
+      .where.not(registrations: { registration_status: "cancelled" })
+      .where("registrations.golfer_id IS NULL OR registrations.golfer_id NOT IN (SELECT id FROM golfers WHERE group_id = ?)", id)
+    other_reg_members = other_reg_members.where.not(registration_id: registration.id) if registration&.persisted?
+
+    base_golfers + other_reg_members.count
   end
 
   def add_registration(registration)

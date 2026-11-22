@@ -9,10 +9,26 @@ module Api
       # POST /api/v1/team_members/:id/check_in
       def check_in
         checked_in_now = false
+        blocked_status = nil
 
-        @team_member.with_lock do
+        ActiveRecord::Base.transaction(requires_new: true) do
+          @team_member.registration.lock!
+          @team_member.lock!
+
+          status = @team_member.registration.registration_status
+          unless status == "confirmed"
+            blocked_status = status
+            raise ActiveRecord::Rollback
+          end
+
           checked_in_now = !@team_member.checked_in?
           @team_member.check_in!(admin: current_user) if checked_in_now
+        end
+
+        if blocked_status.present?
+          render json: { error: "Cannot check in a player whose registration is #{blocked_status}" },
+                 status: :unprocessable_entity
+          return
         end
 
         if checked_in_now

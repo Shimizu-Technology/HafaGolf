@@ -518,4 +518,120 @@ class RegistrationTest < ActiveSupport::TestCase
     assert_equal "Renamed Foursome Player",
                  t.raffle_tickets.find_by!(registration_id: reg.id, team_member_id: member2.id).purchaser_name
   end
+
+  # =========================================================================
+  # CodeRabbit regression tests
+  # =========================================================================
+
+  test "rejects creating registration directly into full group and rejects adding team members that overfill an already-grouped registration" do
+    t = create_tournament(team_size: 4, allow_partial_teams: true)
+    group = t.groups.create!(group_number: 1, hole_number: 1)
+
+    trio = t.registrations.create!(
+      group: group,
+      payment_type: "stripe",
+      team_members_attributes: member_hashes(3, prefix: "ov1")
+    )
+    assert_equal 3, group.player_count
+
+    # Creating a 2-player registration directly with group: group (group_id == group.id) must be rejected!
+    overflow_new = t.registrations.build(
+      group: group,
+      payment_type: "stripe",
+      team_members_attributes: member_hashes(2, prefix: "ov2")
+    )
+    assert_not overflow_new.valid?
+    assert_includes overflow_new.errors[:group].join, "exceed starting position capacity"
+
+    # Adding a 1-player registration succeeds (3 + 1 = 4)
+    solo = t.registrations.create!(
+      group: group,
+      payment_type: "stripe",
+      team_members_attributes: member_hashes(1, prefix: "ov3")
+    )
+    assert_equal 4, group.player_count
+
+    # Adding a 2nd member to `solo` via nested attributes must fail (3 + 2 = 5 > 4)
+    assert_not solo.update(team_members_attributes: [{ name: "Extra Teammate", email: "extra@example.com" }])
+    assert_includes solo.errors[:group].join, "exceed starting position capacity"
+
+    # Adding a member directly via solo.team_members.create must also fail (3 + 2 = 5 > 4)
+    extra_direct = solo.team_members.build(name: "Direct Extra", position: 2)
+    assert_not extra_direct.valid?
+    assert_includes extra_direct.errors[:base].join, "exceed starting position capacity"
+  end
+
+  test "unified capacity counts unlinked legacy golfers, rounds sponsor teams with CEIL per sponsor, bounds public_remaining, and checks incoming waitlist units" do
+    t = create_tournament(
+      team_size: 4,
+      capacity_unit: "teams",
+      max_capacity: 5,
+      allow_partial_teams: true,
+      waitlist_enabled: true,
+      waitlist_max: 2
+    )
+
+    # Two sponsors with 2 slots each in a 4-player event -> CEIL(2/4) + CEIL(2/4) = 2 teams reserved
+    t.sponsors.create!(name: "Sponsor A", tier: "silver", slot_count: 2, active: true)
+    t.sponsors.create!(name: "Sponsor B", tier: "silver", slot_count: 2, active: true)
+    assert_equal 2, t.sponsor_reserved_teams
+    assert_equal 3, t.capacity_summary[:public_capacity]
+
+    # Unlinked legacy golfer counts toward confirmed capacity
+    t.golfers.create!(
+      name: "Legacy Captain",
+      email: "legacy-cap@example.com",
+      phone: "+16715551234",
+      team_category: "Co-Ed",
+      payment_type: "pay_on_day",
+      registration_status: "confirmed",
+      waiver_accepted_at: Time.current
+    )
+    assert_equal 1, t.capacity_summary[:confirmed_units]
+    assert_equal 2, t.capacity_summary[:public_remaining]
+
+    # Players-mode waitlist cap checks incoming units_needed
+    pt = create_tournament(
+      team_size: 4,
+      capacity_unit: "players",
+      max_capacity: 4,
+      allow_partial_teams: true,
+      waitlist_enabled: true,
+      waitlist_max: 3
+    )
+    pt.registrations.create!(payment_type: "stripe", team_members_attributes: member_hashes(4, prefix: "wl0"))
+    assert pt.can_accept_public_registration?(player_count: 2)
+    assert_not pt.can_accept_public_registration?(player_count: 4), "4 incoming players should not fit into waitlist_max 3"
+  end
+
+  test "tournament validates team_size in [1,2,4], blocks shrinking below existing registrations, and rejects non-integer players_per_start_position" do
+    t = create_tournament(team_size: 4)
+    t.team_size = 3
+    assert_not t.valid?
+    assert t.errors[:team_size].any?
+
+    t.team_size = 4
+    t.registrations.create!(payment_type: "stripe", team_members_attributes: member_hashes(4, prefix: "sh"))
+
+    t.team_size = 2
+    assert_not t.valid?
+    assert_includes t.errors[:team_size].join, "cannot be reduced below 4"
+
+    t.team_size = 4
+    t.config = { "players_per_start_position" => true }
+    assert_not t.valid?
+    assert_includes t.errors[:config].join, "Players per start position must be an integer"
+  end
+
+  test "legacy team score and registration team score on same hole do not falsely collide" do
+    t = create_tournament(team_size: 4)
+    group = t.groups.create!(group_number: 1, hole_number: 1)
+    reg = t.registrations.create!(group: group, payment_type: "stripe", team_members_attributes: member_hashes(4, prefix: "ls"))
+
+    reg_score = Score.create!(tournament: t, group: group, registration: reg, score_type: "team", hole: 1, strokes: 4)
+    assert reg_score.persisted?
+
+    legacy_score = Score.create!(tournament: t, group: group, golfer: nil, score_type: "team", hole: 1, strokes: 5)
+    assert legacy_score.persisted?
+  end
 end

@@ -94,6 +94,24 @@ export function formatCapacityUnitName(unit: CapacityUnit | undefined, count: nu
   return count === 1 ? resolved : `${resolved}s`;
 }
 
+const MIN_HANDICAP = -10;
+const MAX_HANDICAP = 54;
+
+function validateHandicapValue(raw: string, required: boolean): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return required ? 'Handicap is required' : undefined;
+  }
+  const parsed = Number(trimmed);
+  if (Number.isNaN(parsed)) {
+    return 'Handicap must be a valid number';
+  }
+  if (parsed < MIN_HANDICAP || parsed > MAX_HANDICAP) {
+    return `Handicap must be between ${MIN_HANDICAP} and ${MAX_HANDICAP}`;
+  }
+  return undefined;
+}
+
 export function validateCaptainStep(
   players: TeamPlayerDraft[],
   options?: { handicapRequired?: boolean; teamCategories?: string[]; teamCategory?: string; teamSize?: number }
@@ -118,8 +136,9 @@ export function validateCaptainStep(
   ) {
     captainErrors.phone = 'Phone number must start with + and have at least 10 digits';
   }
-  if (options?.handicapRequired && (!captain || !captain.handicap.trim() || Number.isNaN(Number(captain.handicap)))) {
-    captainErrors.handicap = 'Handicap is required';
+  const captainHandicapError = validateHandicapValue(captain?.handicap ?? '', Boolean(options?.handicapRequired));
+  if (captainHandicapError) {
+    captainErrors.handicap = captainHandicapError;
   }
 
   if (Object.keys(captainErrors).length > 0) {
@@ -171,8 +190,9 @@ export function validateTeammatesStep(
       }
     }
 
-    if (options?.handicapRequired && (!player.handicap.trim() || Number.isNaN(Number(player.handicap)))) {
-      playerErrors.handicap = 'Handicap is required';
+    const handicapError = validateHandicapValue(player.handicap, Boolean(options?.handicapRequired));
+    if (handicapError) {
+      playerErrors.handicap = handicapError;
     }
 
     if (Object.keys(playerErrors).length > 0) {

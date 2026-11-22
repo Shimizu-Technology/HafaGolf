@@ -549,8 +549,11 @@ export const CreateTournamentPage: React.FC = () => {
                 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Team Size</label>
+                    <label htmlFor="create-team-size" className="block text-sm font-medium text-gray-700 mb-1">
+                      Team Size
+                    </label>
                     <select
+                      id="create-team-size"
                       name="team_size"
                       value={formData.team_size}
                       onChange={(e) => {
@@ -590,6 +593,7 @@ export const CreateTournamentPage: React.FC = () => {
                 {formData.team_size > 1 && (
                   <div className="flex items-center gap-3 pt-1">
                     <input
+                      id="create-allow-partial-teams"
                       type="checkbox"
                       name="allow_partial_teams"
                       checked={formData.allow_partial_teams}
@@ -597,7 +601,9 @@ export const CreateTournamentPage: React.FC = () => {
                       className="w-5 h-5 text-brand-600 rounded focus:ring-brand-500"
                     />
                     <div>
-                      <label className="text-sm font-medium text-gray-700">Allow Partial Teams</label>
+                      <label htmlFor="create-allow-partial-teams" className="text-sm font-medium text-gray-700">
+                        Allow Partial Teams
+                      </label>
                       <p className="text-xs text-gray-500">
                         Allow public registrations with fewer than {formData.team_size} players (e.g., solo or pairs in a foursome event).
                       </p>
@@ -639,8 +645,11 @@ export const CreateTournamentPage: React.FC = () => {
             {expandedSections.capacity && (
               <div className="p-6 space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Capacity Unit</label>
+                  <label htmlFor="create-capacity-unit" className="block text-sm font-medium text-gray-700 mb-1">
+                    Capacity Unit
+                  </label>
                   <select
+                    id="create-capacity-unit"
                     name="capacity_unit"
                     value={formData.capacity_unit}
                     onChange={handleChange}

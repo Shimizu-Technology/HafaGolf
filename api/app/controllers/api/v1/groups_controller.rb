@@ -135,9 +135,9 @@ module Api
           if !placement_mode_new_pairing? &&
              attributes[:starting_course_key].present? &&
              attributes[:hole_number].present? &&
-             group.golfers.any?
+             !group.empty_slot?
             groups_at_target_start = Group.lock
-                                          .includes(:golfers)
+                                          .includes(:golfers, :registrations)
                                           .for_start_position(
                                             tournament: tournament,
                                             course_key: attributes[:starting_course_key],
@@ -263,14 +263,14 @@ module Api
         removed_group_id = nil
 
         ActiveRecord::Base.transaction do
-          locked_groups = Group.lock.includes(:golfers).where(id: [params[:id], params[:target_group_id]]).order(:id).to_a
+          locked_groups = Group.lock.includes(:golfers, :registrations).where(id: [params[:id], params[:target_group_id]]).order(:id).to_a
           source_group = locked_groups.find { |group| group.id == params[:id].to_i }
           target_group = locked_groups.find { |group| group.id == params[:target_group_id].to_i }
 
           raise ActiveRecord::RecordNotFound unless source_group && target_group
           raise PlacementError, "Source and target pairings must be different" if source_group.id == target_group.id
           raise PlacementError, "Groups must belong to the same tournament" if source_group.tournament_id != target_group.tournament_id
-          raise PlacementError, "Source pairing has no teams to merge" if source_group.golfers.empty?
+          raise PlacementError, "Source pairing has no teams to merge" if source_group.empty_slot?
 
           incoming_players = source_group.player_count
           unless target_group.player_count + incoming_players <= target_group.max_golfers
@@ -678,6 +678,10 @@ module Api
         source_group.golfers.order(:position).each do |golfer|
           next_position += 1
           raise ActiveRecord::RecordInvalid, golfer unless golfer.assign_to_group(group: target_group, position: next_position)
+        end
+
+        source_group.registrations.order(:id).each do |registration|
+          registration.update!(group: target_group)
         end
 
         source_group.scores.destroy_all

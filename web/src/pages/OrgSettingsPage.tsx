@@ -397,6 +397,7 @@ export const OrgSettingsPage: React.FC = () => {
   const [addingMember, setAddingMember] = useState(false);
   const [tournamentSettings, setTournamentSettings] = useState<TournamentSettings | null>(null);
   const [sponsorReservedTeams, setSponsorReservedTeams] = useState(0);
+  const [sponsorReservedSlots, setSponsorReservedSlots] = useState(0);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
 
   useEffect(() => {
@@ -440,9 +441,10 @@ export const OrgSettingsPage: React.FC = () => {
   const fetchTournamentSettings = async (): Promise<{
     settings: TournamentSettings | null;
     sponsorReservedTeams: number;
+    sponsorReservedSlots: number;
   }> => {
     if (!organization?.slug) {
-      return { settings: null, sponsorReservedTeams: 0 };
+      return { settings: null, sponsorReservedTeams: 0, sponsorReservedSlots: 0 };
     }
     try {
       const token = await getToken();
@@ -464,6 +466,7 @@ export const OrgSettingsPage: React.FC = () => {
             const t = detail.tournament || detail;
             return {
               sponsorReservedTeams: t.sponsor_reserved_teams || 0,
+              sponsorReservedSlots: t.capacity_summary?.sponsor_reserved_slots ?? ((t.sponsor_reserved_teams || 0) * (t.team_size || 2)),
               settings: {
                 id: t.id?.toString() || '',
                 name: t.name || '',
@@ -522,7 +525,7 @@ export const OrgSettingsPage: React.FC = () => {
     } catch (err) {
       console.error('Failed to fetch tournament settings:', err);
     }
-    return { settings: null, sponsorReservedTeams: 0 };
+    return { settings: null, sponsorReservedTeams: 0, sponsorReservedSlots: 0 };
   };
 
   useEffect(() => {
@@ -543,6 +546,7 @@ export const OrgSettingsPage: React.FC = () => {
       setMembers(membersResult);
       setTournamentSettings(tournamentResult.settings);
       setSponsorReservedTeams(tournamentResult.sponsorReservedTeams);
+      setSponsorReservedSlots(tournamentResult.sponsorReservedSlots);
       setIsInitialLoading(false);
     }
 
@@ -1179,10 +1183,11 @@ export const OrgSettingsPage: React.FC = () => {
                     <p className="mt-1 text-xs text-gray-400">Contact support to change format type</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label htmlFor="settings-team-size" className="block text-sm font-medium text-gray-700 mb-1">
                       Team Size
                     </label>
                     <select
+                      id="settings-team-size"
                       value={tournamentSettings.team_size || '2'}
                       onChange={(e) => {
                         const nextSize = e.target.value;
@@ -1202,13 +1207,16 @@ export const OrgSettingsPage: React.FC = () => {
                 {parseInt(tournamentSettings.team_size || '2', 10) > 1 && (
                   <div className="flex items-center gap-3">
                     <input
+                      id="settings-allow-partial-teams"
                       type="checkbox"
                       checked={tournamentSettings.allow_partial_teams}
                       onChange={(e) => handleTournamentChange('allow_partial_teams', e.target.checked)}
                       className="w-5 h-5 text-brand-600 rounded focus:ring-brand-500"
                     />
                     <div>
-                      <label className="text-sm font-medium text-gray-700">Allow partial teams</label>
+                      <label htmlFor="settings-allow-partial-teams" className="text-sm font-medium text-gray-700">
+                        Allow partial teams
+                      </label>
                       <p className="text-xs text-gray-400">
                         Permit public registrations with fewer than {tournamentSettings.team_size} players.
                       </p>
@@ -1493,10 +1501,11 @@ export const OrgSettingsPage: React.FC = () => {
 
               <div className="mt-4 pt-4 border-t border-gray-200 space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="settings-capacity-unit" className="block text-sm font-medium text-gray-700 mb-1">
                     Capacity Unit
                   </label>
                   <select
+                    id="settings-capacity-unit"
                     value={tournamentSettings.capacity_unit}
                     onChange={(e) => handleTournamentChange('capacity_unit', e.target.value as 'players' | 'teams')}
                     className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -1507,22 +1516,31 @@ export const OrgSettingsPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="settings-max-capacity" className="block text-sm font-medium text-gray-700 mb-1">
                     Max Capacity ({tournamentSettings.capacity_unit})
                   </label>
                   <input
+                    id="settings-max-capacity"
                     type="number"
                     value={tournamentSettings.max_capacity}
                     onChange={(e) => handleTournamentChange('max_capacity', e.target.value)}
                     className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
-                  {sponsorReservedTeams > 0 && tournamentSettings.max_capacity && (
-                    <p className="mt-1 text-xs text-gray-500">
-                      {sponsorReservedTeams} {tournamentSettings.capacity_unit === 'players' ? 'slot' : 'team'}{sponsorReservedTeams !== 1 ? 's' : ''} reserved for sponsors
-                      {' \u2022 '}
-                      {Math.max(0, parseInt(tournamentSettings.max_capacity) - sponsorReservedTeams)} available for public registration
-                    </p>
-                  )}
+                  {(() => {
+                    const reservedCount =
+                      tournamentSettings.capacity_unit === 'players'
+                        ? sponsorReservedSlots
+                        : sponsorReservedTeams;
+                    if (reservedCount <= 0 || !tournamentSettings.max_capacity) return null;
+                    const unitWord = tournamentSettings.capacity_unit === 'players' ? 'player slot' : 'team';
+                    return (
+                      <p className="mt-1 text-xs text-gray-500">
+                        {reservedCount} {unitWord}{reservedCount !== 1 ? 's' : ''} reserved for sponsors
+                        {' \u2022 '}
+                        {Math.max(0, parseInt(tournamentSettings.max_capacity, 10) - reservedCount)} available for public registration
+                      </p>
+                    );
+                  })()}
                 </div>
 
                 {tournamentSettings.registration_mode !== 'closed' && (

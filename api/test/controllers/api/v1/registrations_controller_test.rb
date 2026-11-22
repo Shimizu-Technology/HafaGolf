@@ -299,4 +299,103 @@ class Api::V1::RegistrationsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "Beta Pair", @reg_b.reload.team_name
     assert_nil member_b.reload.checked_in_at
   end
+
+  test "verify_payment rejects invalid amount, preserves existing amount on blank string, and swipe_simple refuses paid registration" do
+    reg = @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Amount Guard Team",
+      payment_type: "swipe_simple",
+      payment_status: "pending",
+      payment_amount_cents: 35000,
+      team_members_attributes: team_payload(2, prefix: "ag").map { |m| m.except(:waiver_accepted) }
+    )
+    reg.generate_payment_token!
+
+    authenticate_as(@admin_a)
+
+    # Invalid payment_amount_cents -> 422 and state untouched
+    post "/api/v1/registrations/#{reg.id}/verify_payment",
+         params: { payment_amount_cents: "not-a-number" },
+         headers: auth_headers,
+         as: :json
+    assert_response :unprocessable_entity
+    assert_equal "pending", reg.reload.payment_status
+    assert_equal 35000, reg.payment_amount_cents
+
+    # Blank payment_amount_cents ("") treated as omitted -> preserves 35000
+    post "/api/v1/registrations/#{reg.id}/verify_payment",
+         params: { payment_amount_cents: "" },
+         headers: auth_headers,
+         as: :json
+    assert_response :success
+    assert_equal "paid", reg.reload.payment_status
+    assert_equal 35000, reg.payment_amount_cents
+
+    # swipe_simple must not downgrade a paid registration back to pending
+    post "/api/v1/checkout/swipe_simple",
+         params: { payment_token: reg.payment_token },
+         headers: { "X-Tenant-Host" => "alpha.golf.test" },
+         as: :json
+    assert_response :unprocessable_entity
+    assert_equal "paid", reg.reload.payment_status
+  end
+
+  test "check_in rejects members on cancelled or pending registrations with 422" do
+    pending_reg = @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Pending Team",
+      registration_status: "pending",
+      payment_type: "swipe_simple",
+      team_members_attributes: team_payload(2, prefix: "pnd").map { |m| m.except(:waiver_accepted) }
+    )
+    cancelled_reg = @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Cancelled Team",
+      registration_status: "cancelled",
+      payment_type: "swipe_simple",
+      team_members_attributes: team_payload(2, prefix: "cnc").map { |m| m.except(:waiver_accepted) }
+    )
+
+    authenticate_as(@volunteer_a)
+
+    post "/api/v1/team_members/#{pending_reg.team_members.first.id}/check_in", headers: auth_headers
+    assert_response :unprocessable_entity
+    assert_nil pending_reg.team_members.first.reload.checked_in_at
+
+    post "/api/v1/team_members/#{cancelled_reg.team_members.first.id}/check_in", headers: auth_headers
+    assert_response :unprocessable_entity
+    assert_nil cancelled_reg.team_members.first.reload.checked_in_at
+  end
+
+  test "GroupsController#merge_into moves registrations from source group to target group before destroying source" do
+    source_group = @tournament_a.groups.create!(group_number: 1, hole_number: 1)
+    target_group = @tournament_a.groups.create!(group_number: 2, hole_number: 2)
+
+    reg_source = @tournament_a.registrations.create!(
+      organization: @org_a,
+      group: source_group,
+      team_name: "Source Pair",
+      payment_type: "stripe",
+      team_members_attributes: team_payload(2, prefix: "ms").map { |m| m.except(:waiver_accepted) }
+    )
+    reg_target = @tournament_a.registrations.create!(
+      organization: @org_a,
+      group: target_group,
+      team_name: "Target Pair",
+      payment_type: "stripe",
+      team_members_attributes: team_payload(2, prefix: "mt").map { |m| m.except(:waiver_accepted) }
+    )
+
+    authenticate_as(@admin_a)
+    post "/api/v1/groups/#{source_group.id}/merge_into",
+         params: { target_group_id: target_group.id },
+         headers: auth_headers,
+         as: :json
+
+    assert_response :success
+    assert_not Group.exists?(source_group.id)
+    assert_equal target_group.id, reg_source.reload.group_id
+    assert_equal target_group.id, reg_target.reload.group_id
+    assert_equal 4, target_group.reload.player_count
+  end
 end

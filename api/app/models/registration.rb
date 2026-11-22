@@ -287,7 +287,6 @@ class Registration < ApplicationRecord
 
   def group_capacity_not_exceeded
     return unless group.present? && !cancelled?
-    return unless new_record? || will_save_change_to_group_id?
 
     return if group.can_add_registration?(self)
 
@@ -388,7 +387,7 @@ class Registration < ApplicationRecord
         errors.add(:base, "Tournament is at capacity and waitlist is closed")
       end
     elsif registration_status == "waitlist"
-      if tournament.waitlist_max.to_i.positive? && tournament.registration_waitlist_full?
+      if tournament.waitlist_max.to_i.positive? && tournament.registration_waitlist_full?(player_count: incoming_players)
         errors.add(:base, "Waitlist is currently full")
       end
     end

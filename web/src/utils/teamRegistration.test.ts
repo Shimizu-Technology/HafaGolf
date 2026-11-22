@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getPublicFacingCapacitySummary } from './capacity';
 import {
   buildInitialPlayers,
   buildRegistrationPayload,
@@ -170,5 +171,54 @@ describe('teamRegistration helpers (1/2/4 players + partial teams)', () => {
     expect(formatCapacityUnitName('players', 1)).toBe('player');
     expect(formatCapacityUnitName('players', 10)).toBe('players');
     expect(formatCapacityUnitName('teams', 2)).toBe('teams');
+  });
+
+  it('rejects out-of-range handicap values outside -10..54 on captain and teammates', () => {
+    const outOfRange: TeamPlayerDraft[] = [
+      { name: 'Captain One', email: 'c@example.com', phone: '+16715550001', tshirt_size: '', handicap: '60', waiver_accepted: true },
+      { name: 'Player Two', email: 'p2@example.com', phone: '', tshirt_size: '', handicap: '-12', waiver_accepted: true },
+    ];
+
+    const capErrors = validateCaptainStep(outOfRange, { handicapRequired: false });
+    expect(capErrors.players[0]?.handicap).toContain('between -10 and 54');
+
+    const teamErrors = validateTeammatesStep(outOfRange, { teamSize: 2, handicapRequired: false });
+    expect(teamErrors.players[1]?.handicap).toContain('between -10 and 54');
+  });
+
+  it('reads player-unit counts from capacity_summary when capacity_unit is players', () => {
+    const summary = getPublicFacingCapacitySummary({
+      capacity_unit: 'players',
+      max_capacity: 20,
+      confirmed_count: 1,
+      public_confirmed_count: 1,
+      sponsor_reserved_teams: 1,
+      capacity_summary: {
+        capacity_unit: 'players',
+        team_size: 4,
+        allow_partial_teams: true,
+        max_capacity: 20,
+        reserved_slots: 0,
+        sponsor_reserved_slots: 4,
+        sponsor_reserved: 4,
+        effective_reserved: 4,
+        public_capacity: 16,
+        confirmed_units: 6,
+        public_confirmed_units: 6,
+        sponsor_confirmed_units: 0,
+        waitlist_units: 0,
+        confirmed_registrations_count: 2,
+        confirmed_players_count: 6,
+        waitlist_registrations_count: 0,
+        waitlist_players_count: 0,
+        remaining: 14,
+        public_remaining: 10,
+        at_capacity: false,
+        public_at_capacity: false,
+      },
+    });
+
+    expect(summary.label).toBe('6 / 16 public spots claimed');
+    expect(summary.secondaryLabel).toBe('0 / 4 sponsor-reserved spots used');
   });
 });

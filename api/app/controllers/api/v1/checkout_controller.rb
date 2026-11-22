@@ -355,16 +355,26 @@ module Api
           message: "Invalid payment token"
         )
 
-        if record.payment_status == "paid"
-          render json: { error: "Already paid" }, status: :unprocessable_entity
-          return
-        end
-
-        original_payment_type = record.payment_type
         tournament = record.tournament
+        original_payment_type = nil
+        already_paid = false
 
         TenantContext.with_organization(tournament.organization_id) do
-          record.update!(payment_type: "swipe_simple", payment_status: "pending")
+          ActiveRecord::Base.transaction(requires_new: true) do
+            record.lock!
+            if record.payment_status == "paid"
+              already_paid = true
+              next
+            end
+
+            original_payment_type = record.payment_type
+            record.update!(payment_type: "swipe_simple", payment_status: "pending")
+          end
+        end
+
+        if already_paid
+          render json: { error: "Already paid" }, status: :unprocessable_entity
+          return
         end
 
         payment_url = if original_payment_type == 'walk_in'

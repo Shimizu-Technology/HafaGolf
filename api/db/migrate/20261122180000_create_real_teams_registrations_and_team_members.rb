@@ -5,13 +5,15 @@ class CreateRealTeamsRegistrationsAndTeamMembers < ActiveRecord::Migration[8.1]
     # 1. Add capacity_unit to tournaments with backfill & CHECK constraint
     add_column :tournaments, :capacity_unit, :string, default: "players", null: false
 
-    execute <<~SQL.squish
-      UPDATE tournaments
-      SET capacity_unit = CASE
-        WHEN COALESCE(team_size, 1) > 1 THEN 'teams'
-        ELSE 'players'
-      END
-    SQL
+    TenantContext.with_platform_access(connection: connection) do
+      execute <<~SQL.squish
+        UPDATE tournaments
+        SET capacity_unit = CASE
+          WHEN COALESCE(team_size, 1) > 1 THEN 'teams'
+          ELSE 'players'
+        END
+      SQL
+    end
 
     add_check_constraint :tournaments,
                          "capacity_unit IN ('players', 'teams')",
@@ -107,7 +109,7 @@ class CreateRealTeamsRegistrationsAndTeamMembers < ActiveRecord::Migration[8.1]
     create_table :team_members do |t|
       t.uuid :organization_id, null: false
       t.references :tournament, null: false, foreign_key: true
-      t.references :registration, null: false, foreign_key: true
+      t.references :registration, null: false, foreign_key: true, index: false
       t.references :sponsor_slot, null: true, foreign_key: { on_delete: :nullify }, index: false
 
       t.integer :position, null: false
@@ -170,8 +172,8 @@ class CreateRealTeamsRegistrationsAndTeamMembers < ActiveRecord::Migration[8.1]
 
     add_check_constraint :scores,
                          "(registration_id IS NULL AND team_member_id IS NULL) " \
-                         "OR (score_type = 'team' AND registration_id IS NOT NULL AND team_member_id IS NULL) " \
-                         "OR (score_type = 'individual' AND team_member_id IS NOT NULL AND registration_id IS NULL)",
+                         "OR (score_type IS NOT NULL AND score_type = 'team' AND registration_id IS NOT NULL AND team_member_id IS NULL) " \
+                         "OR (score_type IS NOT NULL AND score_type = 'individual' AND team_member_id IS NOT NULL AND registration_id IS NULL)",
                          name: "check_scores_registration_or_team_member_by_type"
 
     # 5. Update raffle_tickets table with registration_id & team_member_id

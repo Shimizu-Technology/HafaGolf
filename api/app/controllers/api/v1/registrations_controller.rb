@@ -132,12 +132,27 @@ module Api
       # PATCH /api/v1/registrations/:id
       def update
         permitted = admin_update_params
-        if permitted[:group_id].present? && !@registration.tournament.groups.exists?(id: permitted[:group_id])
-          render json: { errors: ["Group must belong to the same tournament"] }, status: :unprocessable_entity
-          return
+        target_group = nil
+
+        if permitted[:group_id].present?
+          target_group = @registration.tournament.groups.find_by(id: permitted[:group_id])
+          unless target_group
+            render json: { errors: ["Group must belong to the same tournament"] }, status: :unprocessable_entity
+            return
+          end
+        elsif @registration.group_id.present? && permitted[:team_members_attributes].present?
+          target_group = @registration.group
         end
 
-        if @registration.update(permitted)
+        updated = false
+        ActiveRecord::Base.transaction(requires_new: true) do
+          target_group.lock! if target_group
+          @registration.lock!
+          updated = @registration.update(permitted)
+          raise ActiveRecord::Rollback unless updated
+        end
+
+        if updated
           ActivityLog.log(
             admin: current_user,
             action: "registration_updated",
@@ -155,14 +170,38 @@ module Api
 
       # POST /api/v1/registrations/:id/verify_payment
       def verify_payment
-        unless @registration.payment_status == "paid"
+        amount_cents = nil
+        if params.key?(:payment_amount_cents) && params[:payment_amount_cents].present?
+          raw_amount = params[:payment_amount_cents]
+          parsed = begin
+            Integer(raw_amount.to_s.strip, 10)
+          rescue ArgumentError, TypeError
+            nil
+          end
+
+          if parsed.nil? || parsed.negative?
+            render json: { errors: ["payment_amount_cents must be a non-negative integer"] }, status: :unprocessable_entity
+            return
+          end
+          amount_cents = parsed
+        end
+
+        verified_now = false
+
+        ActiveRecord::Base.transaction(requires_new: true) do
+          @registration.lock!
+          next if @registration.payment_status == "paid"
+
           @registration.verify_payment!(
             admin: current_user,
             method: params[:payment_method].presence || "swipe_simple_confirmed",
             notes: params[:notes],
-            amount_cents: params[:payment_amount_cents]
+            amount_cents: amount_cents
           )
+          verified_now = true
+        end
 
+        if verified_now
           ActivityLog.log(
             admin: current_user,
             action: "payment_verified",
