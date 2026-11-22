@@ -94,7 +94,7 @@ class UserInviteEmailService
       return nil if url.blank?
 
       parsed = URI.parse(url.to_s.strip)
-      %w[http https].include?(parsed.scheme) && parsed.host.present? ? parsed.to_s : nil
+      parsed.scheme == "https" && parsed.host.present? ? parsed.to_s : nil
     rescue URI::InvalidURIError
       nil
     end

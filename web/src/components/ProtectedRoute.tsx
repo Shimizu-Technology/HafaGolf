@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useAuth, useClerk, useUser } from '@clerk/clerk-react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAdmin } from '../contexts';
 import { ShieldX, Home, LogOut } from 'lucide-react';
@@ -16,6 +16,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const { signOut } = useClerk();
   const { user } = useUser();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { setCurrentAdmin } = useAdmin();
   const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
   const authSetupRef = useRef(false);
@@ -87,7 +88,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   }
 
   if (authStatus === 'not-signed-in') {
-    return <Navigate to="/admin/login" replace />;
+    const requestedOrg = searchParams.get('org');
+    const loginPath = requestedOrg
+      ? `/admin/login?org=${encodeURIComponent(requestedOrg)}`
+      : '/admin/login';
+    return <Navigate to={loginPath} replace />;
   }
 
   if (authStatus === 'unauthorized') {

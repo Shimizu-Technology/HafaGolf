@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { ExternalLink } from 'lucide-react';
@@ -6,6 +6,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { OrganizationProvider } from './components/OrganizationProvider';
 import { GolferAuthProvider } from './contexts/GolferAuthContext';
 import { PostHogPageView } from './providers/PostHogProvider';
+import { api } from './services/api';
 import { useOrganizationStore } from './stores/organizationStore';
 import {
   buildAdminRedirectUrl,
@@ -41,18 +42,52 @@ function TenantPublicWrapper({ children }: { children: React.ReactNode }) {
 
 function AdminOriginRedirect() {
   const location = useLocation();
-  const orgSlug = useOrganizationStore((state) => state.organization?.slug);
+  const storedOrgSlug = useOrganizationStore((state) => state.organization?.slug);
+  const existingOrgParam = new URLSearchParams(location.search).get('org');
+  const [resolvedSlug, setResolvedSlug] = useState<string | undefined>(storedOrgSlug);
+  const [readyToRedirect, setReadyToRedirect] = useState<boolean>(Boolean(storedOrgSlug || existingOrgParam));
+
+  useEffect(() => {
+    if (storedOrgSlug || existingOrgParam) {
+      setResolvedSlug(storedOrgSlug);
+      setReadyToRedirect(true);
+      return;
+    }
+
+    let cancelled = false;
+    api
+      .resolveTenant()
+      .then((res) => {
+        if (!cancelled && res.organization?.slug) {
+          setResolvedSlug(res.organization.slug);
+        }
+      })
+      .catch(() => {
+        // Proceed with redirect even if host lookup fails
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setReadyToRedirect(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storedOrgSlug, existingOrgParam]);
+
   const targetUrl = buildAdminRedirectUrl(
     location.pathname,
     location.search,
     location.hash,
     undefined,
-    orgSlug
+    resolvedSlug
   );
 
   useEffect(() => {
+    if (!readyToRedirect) return;
     window.location.replace(targetUrl);
-  }, [targetUrl]);
+  }, [readyToRedirect, targetUrl]);
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-neutral-50 px-6">
