@@ -12,6 +12,8 @@ class Tournament < ApplicationRecord
   has_many :raffle_sale_batches, dependent: :destroy
   has_many :raffle_tickets, dependent: :destroy
   has_many :sponsors, dependent: :destroy
+  has_many :sponsor_tiers, dependent: :destroy
+  has_many :donations, dependent: :destroy
   has_many :activity_logs, dependent: :nullify
   has_many :message_deliveries, dependent: :nullify
   has_many :tournament_assignments, dependent: :destroy
@@ -25,6 +27,7 @@ class Tournament < ApplicationRecord
   validates :status, presence: true, inclusion: { in: %w[draft open closed in_progress completed archived] }
   validates :max_capacity, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
   validates :entry_fee, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
+  validates :fmv_per_player_cents, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
   validates :slug, uniqueness: { scope: :organization_id, case_sensitive: false }, allow_blank: true
   validates :event_type, presence: true, inclusion: { in: %w[golf_tournament gala] }
   validate :course_configs_are_valid
@@ -68,8 +71,30 @@ class Tournament < ApplicationRecord
 
   def sponsor_tier_list
     custom = config&.dig('sponsor_tiers')
-    return DEFAULT_SPONSOR_TIERS if custom.blank?
-    custom.sort_by { |t| t['sort_order'].to_i }
+    base = custom.blank? ? DEFAULT_SPONSOR_TIERS.map(&:dup) : custom.map { |t| t.stringify_keys }
+
+    db_tiers = if sponsor_tiers.loaded?
+                 sponsor_tiers.sort_by { |t| [t.sort_order.to_i, t.id.to_i] }
+               elsif persisted?
+                 sponsor_tiers.ordered.to_a
+               else
+                 []
+               end
+
+    if db_tiers.any?
+      merged = {}
+      base.each { |t| merged[t['key'].to_s.downcase] = t }
+      db_tiers.each do |tier|
+        merged[tier.key.to_s.downcase] = {
+          'key' => tier.key,
+          'label' => tier.label,
+          'sort_order' => tier.sort_order
+        }
+      end
+      merged.values.sort_by { |t| t['sort_order'].to_i }
+    else
+      base.sort_by { |t| t['sort_order'].to_i }
+    end
   end
 
   def sponsor_tier_keys

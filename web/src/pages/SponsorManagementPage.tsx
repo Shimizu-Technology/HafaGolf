@@ -5,10 +5,12 @@ import { useOrganization } from '../components/OrganizationProvider';
 import {
   Building2, Plus, Trash2, Edit, ArrowLeft, RefreshCw, Loader2,
   ExternalLink, Flag, Star, Award, Medal, X, Mail, Upload, Users,
-  ChevronDown, ChevronUp, Save,
+  ChevronDown, ChevronUp, Save, Tag, Heart,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { adminEventPath } from '../utils/adminRoutes';
+import { SponsorTiersAdminPanel } from '../components/SponsorTiersAdminPanel';
+import { DonationsAdminPanel } from '../components/DonationsAdminPanel';
 
 interface SponsorSlot {
   id: number;
@@ -117,6 +119,7 @@ export const SponsorManagementPage: React.FC = () => {
   const [showModal, setShowModal] = useState(false);
   const [editingSponsor, setEditingSponsor] = useState<Sponsor | null>(null);
   const [expandedSponsor, setExpandedSponsor] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<'sponsors' | 'tiers' | 'donations'>('sponsors');
 
   const fetchData = useCallback(async () => {
     if (!organization || !tournamentSlug) return;
@@ -217,6 +220,66 @@ export const SponsorManagementPage: React.FC = () => {
         </div>
       </section>
 
+      {/* Tabs */}
+      <div className="max-w-6xl mx-auto px-4">
+        <div className="flex items-center gap-2 border-b border-gray-200">
+          <button
+            type="button"
+            onClick={() => setActiveTab('sponsors')}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'sponsors'
+                ? 'border-brand-600 text-brand-700'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
+            }`}
+          >
+            <Building2 className="w-4 h-4" />
+            Sponsors ({sponsors.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('tiers')}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'tiers'
+                ? 'border-brand-600 text-brand-700'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
+            }`}
+          >
+            <Tag className="w-4 h-4" />
+            Priced Tiers
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('donations')}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'donations'
+                ? 'border-brand-600 text-brand-700'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
+            }`}
+          >
+            <Heart className="w-4 h-4" />
+            Donations
+          </button>
+        </div>
+      </div>
+
+      {activeTab === 'tiers' && tournament?.id ? (
+        <main className="max-w-6xl mx-auto px-4 pb-8">
+          <SponsorTiersAdminPanel
+            tournamentId={Number(tournament.id)}
+            orgSlug={organization?.slug}
+            tournamentSlug={tournamentSlug}
+          />
+        </main>
+      ) : activeTab === 'donations' && tournament?.id ? (
+        <main className="max-w-6xl mx-auto px-4 pb-8">
+          <DonationsAdminPanel
+            tournamentId={Number(tournament.id)}
+            orgSlug={organization?.slug}
+            tournamentSlug={tournamentSlug}
+          />
+        </main>
+      ) : (
+      <>
       {/* Stats */}
       <div className="max-w-6xl mx-auto px-4 py-3 sm:py-4">
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -283,6 +346,8 @@ export const SponsorManagementPage: React.FC = () => {
           </div>
         )}
       </main>
+      </>
+      )}
 
       {showModal && (
         <SponsorModal

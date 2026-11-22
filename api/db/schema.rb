@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_22_200000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -60,6 +60,36 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
     t.index ["organization_id"], name: "index_activity_logs_on_organization_id"
     t.index ["target_type", "target_id"], name: "index_activity_logs_on_target_type_and_target_id"
     t.index ["tournament_id"], name: "index_activity_logs_on_tournament_id"
+  end
+
+  create_table "donations", force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id"
+    t.string "donor_name", null: false
+    t.string "donor_email"
+    t.string "donor_phone"
+    t.integer "amount_cents", null: false
+    t.string "payment_type", default: "stripe", null: false
+    t.string "payment_status", default: "pending", null: false
+    t.string "payment_method"
+    t.string "stripe_checkout_session_id"
+    t.string "stripe_payment_intent_id"
+    t.string "stripe_account_origin"
+    t.integer "stripe_fee_cents"
+    t.integer "refund_amount_cents", default: 0, null: false
+    t.datetime "refunded_at"
+    t.boolean "anonymous", default: false, null: false
+    t.text "message"
+    t.datetime "paid_at"
+    t.datetime "tax_receipt_sent_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["organization_id"], name: "index_donations_on_organization_id"
+    t.index ["stripe_checkout_session_id"], name: "index_donations_on_stripe_checkout_session_id", unique: true, where: "(stripe_checkout_session_id IS NOT NULL)"
+    t.index ["tournament_id"], name: "index_donations_on_tournament_id"
+    t.check_constraint "amount_cents > 0", name: "chk_donations_amount_positive"
+    t.check_constraint "refund_amount_cents >= 0", name: "chk_donations_refund_non_negative"
+    t.check_constraint "stripe_fee_cents IS NULL OR stripe_fee_cents >= 0", name: "chk_donations_stripe_fee_non_negative"
   end
 
   create_table "golfers", force: :cascade do |t|
@@ -372,6 +402,28 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
     t.index ["tournament_id"], name: "index_sponsor_slots_on_tournament_id"
   end
 
+  create_table "sponsor_tiers", force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id", null: false
+    t.string "key", null: false
+    t.string "label", null: false
+    t.text "description"
+    t.integer "price_cents", default: 0, null: false
+    t.integer "included_player_slots", default: 0, null: false
+    t.integer "max_quantity"
+    t.jsonb "benefits", default: [], null: false
+    t.boolean "online_checkout_enabled", default: true, null: false
+    t.integer "sort_order", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index "tournament_id, lower((key)::text)", name: "index_sponsor_tiers_on_tournament_id_and_lower_key", unique: true
+    t.index ["organization_id"], name: "index_sponsor_tiers_on_organization_id"
+    t.index ["tournament_id"], name: "index_sponsor_tiers_on_tournament_id"
+    t.check_constraint "included_player_slots >= 0", name: "chk_sponsor_tiers_slots_non_negative"
+    t.check_constraint "max_quantity IS NULL OR max_quantity > 0", name: "chk_sponsor_tiers_max_quantity_positive"
+    t.check_constraint "price_cents >= 0", name: "chk_sponsor_tiers_price_non_negative"
+  end
+
   create_table "sponsors", force: :cascade do |t|
     t.string "access_token"
     t.datetime "access_token_expires_at"
@@ -389,12 +441,28 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
     t.bigint "tournament_id", null: false
     t.datetime "updated_at", null: false
     t.string "website_url"
+    t.bigint "sponsor_tier_id"
+    t.string "payment_type"
+    t.string "payment_status", default: "unpaid", null: false
+    t.string "payment_method"
+    t.integer "payment_amount_cents"
+    t.datetime "paid_at"
+    t.string "stripe_checkout_session_id"
+    t.string "stripe_payment_intent_id"
+    t.string "stripe_account_origin"
+    t.integer "stripe_fee_cents"
+    t.integer "refund_amount_cents", default: 0, null: false
+    t.datetime "refunded_at"
     t.index ["access_token"], name: "index_sponsors_on_access_token", unique: true, where: "(access_token IS NOT NULL)"
+    t.index ["sponsor_tier_id"], name: "index_sponsors_on_sponsor_tier_id"
+    t.index ["stripe_checkout_session_id"], name: "index_sponsors_on_stripe_checkout_session_id", unique: true, where: "(stripe_checkout_session_id IS NOT NULL)"
     t.index ["tournament_id", "course_key", "hole_number"], name: "index_sponsors_on_tournament_id_and_course_key_and_hole_number"
     t.index ["tournament_id", "hole_number"], name: "index_sponsors_on_tournament_id_and_hole_number"
     t.index ["tournament_id", "position"], name: "index_sponsors_on_tournament_id_and_position"
     t.index ["tournament_id", "tier"], name: "index_sponsors_on_tournament_id_and_tier"
     t.index ["tournament_id"], name: "index_sponsors_on_tournament_id"
+    t.check_constraint "refund_amount_cents >= 0", name: "chk_sponsors_refund_non_negative"
+    t.check_constraint "stripe_fee_cents IS NULL OR stripe_fee_cents >= 0", name: "chk_sponsors_stripe_fee_non_negative"
   end
 
   create_table "tournament_assignments", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -431,8 +499,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
     t.index ["tournament_id", "idempotency_key"], name: "index_tournament_payouts_on_tournament_and_idempotency_key", unique: true, where: "(idempotency_key IS NOT NULL)"
     t.index ["tournament_id"], name: "index_tournament_payouts_on_tournament_id"
     t.check_constraint "amount_cents > 0", name: "chk_tournament_payouts_amount_positive"
-    t.check_constraint "provider::text = ANY (ARRAY['check'::character varying, 'manual'::character varying, 'ach'::character varying]::text[])", name: "chk_tournament_payouts_provider"
-    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying, 'paid'::character varying, 'voided'::character varying]::text[])", name: "chk_tournament_payouts_status"
+    t.check_constraint "provider::text = ANY (ARRAY['check'::character varying::text, 'manual'::character varying::text, 'ach'::character varying::text])", name: "chk_tournament_payouts_provider"
+    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying::text, 'paid'::character varying::text, 'voided'::character varying::text])", name: "chk_tournament_payouts_status"
   end
 
   create_table "tournament_settlements", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -462,7 +530,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
     t.index ["tournament_id", "version"], name: "index_tournament_settlements_on_tournament_id_and_version", unique: true
     t.index ["tournament_id"], name: "index_tournament_settlements_on_tournament_id"
     t.check_constraint "gross_cents >= 0 AND refund_cents >= 0 AND processing_fee_cents >= 0 AND platform_fee_cents >= 0 AND paid_cents >= 0", name: "chk_tournament_settlements_non_negative_totals"
-    t.check_constraint "status::text = ANY (ARRAY['draft'::character varying, 'finalized'::character varying]::text[])", name: "chk_tournament_settlements_status"
+    t.check_constraint "status::text = ANY (ARRAY['draft'::character varying::text, 'finalized'::character varying::text])", name: "chk_tournament_settlements_status"
     t.check_constraint "version >= 1", name: "chk_tournament_settlements_version_positive"
   end
 
@@ -546,6 +614,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
     t.boolean "walkin_registration_open", default: false
     t.string "walkin_swipe_simple_url"
     t.integer "year", null: false
+    t.boolean "tax_receipt_enabled", default: false, null: false
+    t.string "tax_org_name"
+    t.string "tax_org_ein"
+    t.integer "fmv_per_player_cents", default: 0, null: false
+    t.text "tax_receipt_disclaimer"
     t.index ["early_bird_deadline"], name: "index_tournaments_on_early_bird_deadline"
     t.index ["event_type"], name: "index_tournaments_on_event_type"
     t.index ["organization_id", "slug"], name: "index_tournaments_on_organization_id_and_slug", unique: true
@@ -556,6 +629,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
     t.index ["status"], name: "index_tournaments_on_status"
     t.index ["tournament_format"], name: "index_tournaments_on_tournament_format"
     t.index ["year"], name: "index_tournaments_on_year"
+    t.check_constraint "fmv_per_player_cents >= 0", name: "chk_tournaments_fmv_non_negative"
   end
 
   create_table "users", force: :cascade do |t|
@@ -572,6 +646,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "activity_logs", "tournaments"
   add_foreign_key "activity_logs", "users", column: "admin_id"
+  add_foreign_key "donations", "organizations", on_delete: :cascade
+  add_foreign_key "donations", "tournaments", on_delete: :cascade
   add_foreign_key "golfers", "groups"
   add_foreign_key "golfers", "sponsors"
   add_foreign_key "golfers", "tournaments"
@@ -597,6 +673,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_190000) do
   add_foreign_key "scores", "users", column: "entered_by_id"
   add_foreign_key "sponsor_slots", "sponsors"
   add_foreign_key "sponsor_slots", "tournaments"
+  add_foreign_key "sponsor_tiers", "organizations", on_delete: :cascade
+  add_foreign_key "sponsor_tiers", "tournaments", on_delete: :cascade
+  add_foreign_key "sponsors", "sponsor_tiers", on_delete: :nullify
   add_foreign_key "sponsors", "tournaments"
   add_foreign_key "tournament_assignments", "tournaments"
   add_foreign_key "tournament_assignments", "users"

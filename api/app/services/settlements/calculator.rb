@@ -43,6 +43,8 @@ module Settlements
     def call
       golfers = @tournament.golfers.order(:id).to_a
       raffle_tickets = @tournament.raffle_tickets.order(:id).to_a
+      sponsors = @tournament.sponsors.includes(:sponsor_tier).order(:id).to_a
+      donations = @tournament.donations.order(:id).to_a
 
       platform_reg_charges = []
       direct_reg_totals = { count: 0, gross_cents: 0, refund_cents: 0 }
@@ -148,16 +150,122 @@ module Settlements
         end
       end
 
+      platform_sponsor_charges = []
+      direct_sponsor_totals = { count: 0, gross_cents: 0, refund_cents: 0 }
+
+      sponsors.each do |sponsor|
+        amount = sponsor.payment_amount_cents.to_i
+        refund = clamped_refund_cents(sponsor, amount)
+        next if amount <= 0 && refund <= 0
+
+        if platform_collected_record?(sponsor)
+          fee_cents, fee_source = resolve_processing_fee(amount, sponsor.stripe_fee_cents)
+          platform_sponsor_charges << {
+            id: sponsor.id,
+            amount_cents: amount,
+            refund_cents: refund,
+            fee_cents: fee_cents,
+            fee_source: fee_source
+          }
+          line_items << {
+            source_type: "sponsorship",
+            source_id: sponsor.id,
+            label: "#{sponsor.name} (#{sponsor.tier_display})",
+            email: sponsor.login_email,
+            payment_status: sponsor.payment_status,
+            payment_method: sponsor.payment_method || "stripe",
+            stripe_account_origin: sponsor.stripe_account_origin,
+            gross_cents: amount,
+            refund_cents: refund,
+            processing_fee_cents: fee_cents,
+            fee_source: fee_source,
+            paid_at: sponsor.paid_at&.iso8601,
+            refunded_at: sponsor.refunded_at&.iso8601
+          }
+          digest_rows << [
+            "sponsor",
+            sponsor.id,
+            sponsor.payment_status,
+            amount,
+            refund,
+            sponsor.stripe_fee_cents,
+            sponsor.payment_method,
+            sponsor.stripe_account_origin,
+            sponsor.stripe_payment_intent_id
+          ]
+        elsif sponsor.payment_status.in?(%w[paid refunded])
+          direct_sponsor_totals[:count] += 1
+          direct_sponsor_totals[:gross_cents] += amount
+          direct_sponsor_totals[:refund_cents] += refund
+        end
+      end
+
+      platform_donation_charges = []
+      direct_donation_totals = { count: 0, gross_cents: 0, refund_cents: 0 }
+
+      donations.each do |donation|
+        amount = donation.amount_cents.to_i
+        refund = clamped_refund_cents(donation, amount)
+        next if amount <= 0 && refund <= 0
+
+        if platform_collected_record?(donation)
+          fee_cents, fee_source = resolve_processing_fee(amount, donation.stripe_fee_cents)
+          platform_donation_charges << {
+            id: donation.id,
+            amount_cents: amount,
+            refund_cents: refund,
+            fee_cents: fee_cents,
+            fee_source: fee_source
+          }
+          line_items << {
+            source_type: "donation",
+            source_id: donation.id,
+            label: "Donation — #{donation.donor_name}",
+            email: donation.donor_email,
+            payment_status: donation.payment_status,
+            payment_method: donation.payment_method || "stripe",
+            stripe_account_origin: donation.stripe_account_origin,
+            gross_cents: amount,
+            refund_cents: refund,
+            processing_fee_cents: fee_cents,
+            fee_source: fee_source,
+            paid_at: donation.paid_at&.iso8601,
+            refunded_at: donation.refunded_at&.iso8601
+          }
+          digest_rows << [
+            "donation",
+            donation.id,
+            donation.payment_status,
+            amount,
+            refund,
+            donation.stripe_fee_cents,
+            donation.payment_method,
+            donation.stripe_account_origin,
+            donation.stripe_payment_intent_id
+          ]
+        elsif donation.payment_status.in?(%w[paid refunded])
+          direct_donation_totals[:count] += 1
+          direct_donation_totals[:gross_cents] += amount
+          direct_donation_totals[:refund_cents] += refund
+        end
+      end
+
       reg_gross = platform_reg_charges.sum { |c| c[:amount_cents] }
       reg_refunds = platform_reg_charges.sum { |c| c[:refund_cents] }
       reg_fees = platform_reg_charges.sum { |c| c[:fee_cents] }
       raffle_gross = platform_raffle_charges.sum { |c| c[:amount_cents] }
       raffle_refunds = platform_raffle_charges.sum { |c| c[:refund_cents] }
       raffle_fees = platform_raffle_charges.sum { |c| c[:fee_cents] }
+      sponsor_gross = platform_sponsor_charges.sum { |c| c[:amount_cents] }
+      sponsor_refunds = platform_sponsor_charges.sum { |c| c[:refund_cents] }
+      sponsor_fees = platform_sponsor_charges.sum { |c| c[:fee_cents] }
+      donation_gross = platform_donation_charges.sum { |c| c[:amount_cents] }
+      donation_refunds = platform_donation_charges.sum { |c| c[:refund_cents] }
+      donation_fees = platform_donation_charges.sum { |c| c[:fee_cents] }
 
-      gross_cents = reg_gross + raffle_gross
-      refund_cents = reg_refunds + raffle_refunds
-      processing_fee_cents = reg_fees + raffle_fees
+      gross_cents = reg_gross + raffle_gross + sponsor_gross + donation_gross
+      refund_cents = reg_refunds + raffle_refunds + sponsor_refunds + donation_refunds
+      processing_fee_cents = reg_fees + raffle_fees + sponsor_fees + donation_fees
 
       billable_registrant_count = platform_reg_charges.count { |c| c[:active_paid] }
       platform_fee_cents = calculate_platform_fee_cents(
@@ -168,8 +276,9 @@ module Settlements
       net_cents = gross_cents - refund_cents
       organizer_proceeds_cents = net_cents - processing_fee_cents - platform_fee_cents + @adjustment_cents
 
-      actual_fee_count = platform_reg_charges.count { |c| c[:fee_source] == "actual" }
-      estimated_fee_count = platform_reg_charges.count { |c| c[:fee_source] == "estimated" } + platform_raffle_charges.size
+      all_fee_tracked = platform_reg_charges + platform_sponsor_charges + platform_donation_charges
+      actual_fee_count = all_fee_tracked.count { |c| c[:fee_source] == "actual" }
+      estimated_fee_count = all_fee_tracked.count { |c| c[:fee_source] == "estimated" } + platform_raffle_charges.size
 
       breakdown = {
         "payment_mode" => @payment_config.payment_mode,
@@ -186,16 +295,16 @@ module Settlements
           "processing_fee_cents" => raffle_fees
         },
         "sponsorships" => {
-          "charge_count" => 0,
-          "gross_cents" => 0,
-          "refund_cents" => 0,
-          "processing_fee_cents" => 0
+          "charge_count" => platform_sponsor_charges.size,
+          "gross_cents" => sponsor_gross,
+          "refund_cents" => sponsor_refunds,
+          "processing_fee_cents" => sponsor_fees
         },
         "donations" => {
-          "charge_count" => 0,
-          "gross_cents" => 0,
-          "refund_cents" => 0,
-          "processing_fee_cents" => 0
+          "charge_count" => platform_donation_charges.size,
+          "gross_cents" => donation_gross,
+          "refund_cents" => donation_refunds,
+          "processing_fee_cents" => donation_fees
         },
         "processing_fees" => {
           "actual_fee_count" => actual_fee_count,
@@ -211,7 +320,9 @@ module Settlements
         },
         "direct_collected" => {
           "registrations" => direct_reg_totals.transform_keys(&:to_s),
-          "raffle" => direct_raffle_totals.transform_keys(&:to_s)
+          "raffle" => direct_raffle_totals.transform_keys(&:to_s),
+          "sponsorships" => direct_sponsor_totals.transform_keys(&:to_s),
+          "donations" => direct_donation_totals.transform_keys(&:to_s)
         }
       }
 
@@ -245,15 +356,19 @@ module Settlements
     private
 
     def platform_collected_golfer?(golfer)
-      return false unless golfer.payment_status.in?(%w[paid refunded])
+      platform_collected_record?(golfer)
+    end
 
-      origin = golfer.stripe_account_origin.to_s
+    def platform_collected_record?(record)
+      return false unless record.payment_status.in?(%w[paid refunded])
+
+      origin = record.stripe_account_origin.to_s
       return false if origin.start_with?("client_processor:") || origin.start_with?("legacy_")
       return true if origin.start_with?("platform_")
 
       # Never count admin-entered payment_method == "stripe" without proof of a Stripe charge.
       # Require a verified Stripe payment_intent_id when origin tag is absent on a platform_collect org.
-      @payment_config.platform_collect? && golfer.stripe_payment_intent_id.present?
+      @payment_config.platform_collect? && record.stripe_payment_intent_id.present?
     end
 
     def platform_collected_raffle_ticket?(ticket)

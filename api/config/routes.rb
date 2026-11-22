@@ -189,6 +189,18 @@ Rails.application.routes.draw do
             patch 'slots/:slot_id', action: :update_slot, as: :update_slot
           end
         end
+
+        # Priced Sponsor Tiers & Online Sponsor Checkout
+        resources :sponsor_tiers, only: [:index, :create, :update, :destroy] do
+          member do
+            post :checkout
+          end
+        end
+
+        # Standalone Donations
+        get 'donations/summary' => 'donations#summary'
+        post 'donations/checkout' => 'donations#checkout'
+        resources :donations, only: [:index, :create]
       end
 
       # Groups
