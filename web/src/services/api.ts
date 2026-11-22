@@ -1,3 +1,5 @@
+import type { FeatureKey, FeatureMap, OrganizationFeaturesResponse } from '../utils/features';
+
 // API configuration
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -38,6 +40,8 @@ export interface Organization {
   offseason_message?: string | null;
   offseason_cta_label?: string | null;
   offseason_cta_url?: string | null;
+  features?: FeatureMap;
+  feature_overrides?: FeatureMap;
   subscription_status?: string;
   tournament_count?: number;
   admin_count?: number;
@@ -167,7 +171,7 @@ export interface Tournament {
   primary_color_override?: string | null;
   accent_color_override?: string | null;
   signature_image_url_override?: string | null;
-  theme_preset?: 'classic' | 'premium' | 'minimal' | 'event';
+  theme_preset?: 'default-clean' | 'charity-bright' | 'memorial-formal' | 'crest-classic' | 'classic' | 'premium' | 'minimal' | 'event';
   use_org_branding?: boolean;
   
   // Schedule
@@ -198,6 +202,8 @@ export interface Tournament {
   raffle_bundles?: { quantity: number; price_cents: number; label: string }[];
   course_configs?: CourseConfig[];
   sponsor_tiers?: SponsorTier[];
+  features?: FeatureMap;
+  feature_overrides?: FeatureMap;
 
   // Legacy compatibility fields (optional)
   employee_entry_fee?: number;
@@ -1346,6 +1352,26 @@ export class ApiClient {
       `/api/v1/admin/organizations/${encodeURIComponent(slug)}/domains/${encodeURIComponent(domainId)}`,
       { method: 'DELETE' }
     );
+  }
+
+  // Organization & Tournament Features Catalog / Flags
+  async getOrganizationFeatures(slug: string): Promise<OrganizationFeaturesResponse> {
+    return this.request(`/api/v1/admin/organizations/${encodeURIComponent(slug)}/features`);
+  }
+
+  async updateOrganizationFeatures(
+    slug: string,
+    payload: {
+      organization_features?: Partial<Record<FeatureKey, boolean | null>>;
+      tournament_id?: number;
+      tournament_features?: Partial<Record<FeatureKey, boolean | null>>;
+      features?: Partial<Record<FeatureKey, boolean | null>>;
+    }
+  ): Promise<OrganizationFeaturesResponse> {
+    return this.request(`/api/v1/admin/organizations/${encodeURIComponent(slug)}/features`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
   }
 
 }

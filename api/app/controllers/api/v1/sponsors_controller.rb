@@ -6,8 +6,9 @@ module Api
       skip_before_action :authenticate_user!, only: [:index, :show, :by_hole]
       before_action :set_tournament
       before_action :authorize_public_tournament_access!, only: [:index, :show, :by_hole]
-      before_action :set_sponsor, only: [:show, :update, :destroy, :slots, :update_slot]
       before_action :authorize_tournament_admin!, only: [:create, :update, :destroy, :reorder, :slots, :update_slot]
+      before_action -> { require_feature!(:sponsors) }
+      before_action :set_sponsor, only: [:show, :update, :destroy, :slots, :update_slot]
 
       # GET /api/v1/tournaments/:tournament_id/sponsors
       # Public - get all sponsors grouped by tier

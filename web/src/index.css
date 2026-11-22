@@ -58,6 +58,15 @@
     --accent-DEFAULT-rgb: 180 83 9;
     --accent-foreground: #ffffff;
     --accent-foreground-rgb: 255 255 255;
+
+    /* Theme Pack defaults (overridden at runtime via applyBrandingToDocument / data-theme-pack) */
+    --theme-pack-heading-font: 'Lora', Georgia, 'Times New Roman', serif;
+    --theme-pack-body-font: 'DM Sans', system-ui, -apple-system, sans-serif;
+    --theme-pack-heading-tracking: -0.02em;
+    --theme-pack-surface: #ffffff;
+    --theme-pack-surface-muted: #f8fafc;
+    --theme-pack-card-radius: 1rem;
+    --theme-pack-border-width: 1px;
   }
 
   /* Apply fonts globally */
@@ -110,6 +119,12 @@
 }
 
 @layer components {
+  /* Theme pack display typography helper (used on public landing surfaces) */
+  .font-theme-heading {
+    font-family: var(--theme-pack-heading-font, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif);
+    letter-spacing: var(--theme-pack-heading-tracking, -0.02em);
+  }
+
   /* Page entrance animation class */
   .page-enter {
     animation: pageEnter 0.4s ease-out forwards;
@@ -124,5 +139,18 @@
       opacity: 1;
       transform: translateY(0);
     }
+  }
+}
+
+/* Honor reduced-motion preferences across CSS transitions and keyframes */
+@media (prefers-reduced-motion: reduce) {
+  .page-enter {
+    animation: none;
+  }
+
+  [data-reveal-state] {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
   }
 }

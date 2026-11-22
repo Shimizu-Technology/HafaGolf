@@ -1,11 +1,19 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import {
+  buildThemePackCssVariables,
+  isThemePackId,
+  resolveThemePack,
+  type ThemePackDefinition,
+  type ThemePackId,
+} from './themePacks';
 
 export const DEFAULT_PRIMARY_COLOR = '#0f766e';
 export const DEFAULT_ACCENT_COLOR = '#b45309';
 export const LIGHT_FOREGROUND = '#ffffff';
 export const DARK_FOREGROUND = '#020617';
 
-export type ThemePreset = 'classic' | 'premium' | 'minimal' | 'event';
+export type LegacyThemePreset = 'classic' | 'premium' | 'minimal' | 'event';
+export type ThemePreset = ThemePackId | LegacyThemePreset;
 
 export const SHADE_STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950] as const;
 export type ShadeStep = (typeof SHADE_STEPS)[number];
@@ -23,6 +31,7 @@ export interface BrandKitConfig {
   accent_color?: string | null;
   logo_url?: string | null;
   banner_url?: string | null;
+  theme_pack?: string | null;
 }
 
 export interface BrandingOrganizationInput {
@@ -37,6 +46,7 @@ export interface BrandingOrganizationInput {
     primary_color?: string | null;
     secondary_color?: string | null;
     accent_color?: string | null;
+    theme_preset?: string | null;
   } | null;
 }
 
@@ -54,6 +64,8 @@ export interface BrandingTournamentInput {
 
 export interface ResolvedTournamentBranding {
   themePreset: ThemePreset;
+  themePackId: ThemePackId;
+  themePack: ThemePackDefinition;
   primaryColor: string;
   accentColor: string;
   logoUrl: string | null;
@@ -184,7 +196,10 @@ export function getContrastingForeground(backgroundHex: string): string {
 }
 
 function normalizePreset(value: string | undefined | null): ThemePreset {
-  if (value === 'premium' || value === 'minimal' || value === 'event') return value;
+  if (!value) return 'classic';
+  const normalized = value.trim().toLowerCase();
+  if (isThemePackId(normalized)) return normalized;
+  if (normalized === 'premium' || normalized === 'minimal' || normalized === 'event') return normalized;
   return 'classic';
 }
 
@@ -248,8 +263,17 @@ export function resolveTournamentBranding(
   const primaryScale = generateColorScale(primaryColor, DEFAULT_PRIMARY_COLOR);
   const accentScale = generateColorScale(accentColor, DEFAULT_ACCENT_COLOR);
 
+  const rawThemeSelection =
+    tournament?.theme_preset ??
+    organization?.brand_kit?.theme_pack ??
+    organization?.settings?.theme_preset;
+  const themePreset = normalizePreset(rawThemeSelection);
+  const themePack = resolveThemePack(rawThemeSelection);
+
   return {
-    themePreset: normalizePreset(tournament?.theme_preset),
+    themePreset,
+    themePackId: themePack.id,
+    themePack,
     primaryColor,
     accentColor,
     logoUrl,
@@ -286,6 +310,8 @@ export function buildBrandingCssVariables(branding: ResolvedTournamentBranding):
   vars['--accent-foreground'] = branding.accentForeground;
   vars['--accent-foreground-rgb'] = hexToRgbChannels(branding.accentForeground);
 
+  Object.assign(vars, buildThemePackCssVariables(branding.themePack));
+
   return vars;
 }
 
@@ -302,6 +328,7 @@ export function applyBrandingToDocument(
   }
 
   root.dataset.themePreset = branding.themePreset;
+  root.dataset.themePack = branding.themePackId;
 
   const themeColorMeta = doc.querySelector('meta[name="theme-color"]');
   if (themeColorMeta) {
@@ -334,9 +361,11 @@ export function useApplyBranding(
       organization?.brand_kit?.accent_color,
       organization?.brand_kit?.logo_url,
       organization?.brand_kit?.banner_url,
+      organization?.brand_kit?.theme_pack,
       organization?.settings?.primary_color,
       organization?.settings?.secondary_color,
       organization?.settings?.accent_color,
+      organization?.settings?.theme_preset,
       tournament?.theme_preset,
       tournament?.use_org_branding,
       tournament?.brand_primary_color,
@@ -349,16 +378,20 @@ export function useApplyBranding(
     ]
   );
 
+  const latestOrganizationRef = useRef(organization);
+  latestOrganizationRef.current = organization;
+  const hasTournament = Boolean(tournament);
+
   useEffect(() => {
     applyBrandingToDocument(branding);
   }, [branding]);
 
   useEffect(() => {
-    if (!tournament) return;
+    if (!hasTournament) return;
     return () => {
-      applyBrandingToDocument(resolveTournamentBranding(organization, null));
+      applyBrandingToDocument(resolveTournamentBranding(latestOrganizationRef.current, null));
     };
-  }, [organization, tournament]);
+  }, [hasTournament]);
 
   return branding;
 }

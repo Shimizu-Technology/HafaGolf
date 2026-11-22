@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthToken } from '../hooks/useAuthToken';
 import { useOrganization } from '../components/OrganizationProvider';
+import { ThemePackPicker } from '../components/ThemePackPicker';
 import { adminEventPath, adminOrgRoutes } from '../utils/adminRoutes';
+import { DEFAULT_THEME_PACK_ID, type ThemePackId } from '../utils/themePacks';
 import {
   ArrowLeft,
   Calendar,
@@ -15,6 +17,7 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  Palette,
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 
@@ -68,6 +71,9 @@ interface TournamentFormData {
   contact_name: string;
   contact_phone: string;
   fee_includes: string;
+
+  // Appearance
+  theme_preset: ThemePackId;
 }
 
 const defaultFormData: TournamentFormData = {
@@ -112,6 +118,8 @@ const defaultFormData: TournamentFormData = {
   contact_name: '',
   contact_phone: '',
   fee_includes: '',
+
+  theme_preset: DEFAULT_THEME_PACK_ID,
 };
 
 export const CreateTournamentPage: React.FC = () => {
@@ -126,6 +134,7 @@ export const CreateTournamentPage: React.FC = () => {
   // Collapsible sections
   const [expandedSections, setExpandedSections] = useState({
     basic: true,
+    appearance: true,
     datetime: true,
     format: false,
     capacity: false,
@@ -419,6 +428,27 @@ export const CreateTournamentPage: React.FC = () => {
             )}
           </div>
           
+          {/* Theme Pack */}
+          <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+            <SectionHeader title="Public Theme Pack" icon={<Palette className="w-5 h-5" />} section="appearance" />
+            {expandedSections.appearance && (
+              <div className="p-6">
+                <p className="mb-4 text-sm text-gray-500">
+                  Pick the visual layout and typography pairing for this event&apos;s public landing page.
+                </p>
+                <ThemePackPicker
+                  value={formData.theme_preset}
+                  onChange={(packId) => setFormData((prev) => ({ ...prev, theme_preset: packId }))}
+                  eventName={formData.name}
+                  organizationName={organization?.name}
+                  eventDateLabel={formData.event_date}
+                  locationName={formData.location_name}
+                  entryFeeLabel={formData.entry_fee ? `$${formData.entry_fee}/team` : undefined}
+                />
+              </div>
+            )}
+          </div>
+
           {/* Date & Location */}
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">
             <SectionHeader title="Date & Location" icon={<Calendar className="w-5 h-5" />} section="datetime" />

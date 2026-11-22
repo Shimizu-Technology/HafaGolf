@@ -6,7 +6,7 @@ class RaffleChannel < ApplicationCable::Channel
       tournament = Tournament.find_by(id: params[:tournament_id])
       return reject unless tournament&.public_listed?
       return reject if tournament.draft? || tournament.archived?
-      return reject unless tournament.raffle_enabled?
+      return reject unless Features.for(tournament.organization, tournament).enabled?(:raffle)
 
       if current_organization.present? && tournament.organization_id != current_organization.id
         return reject

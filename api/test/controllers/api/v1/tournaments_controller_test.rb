@@ -139,4 +139,94 @@ class Api::V1::TournamentsControllerTest < ActionDispatch::IntegrationTest
     tournament.reload
     assert_equal 2, tournament.config["start_positions_per_hole"]
   end
+
+  test "create and update persist valid theme_preset values" do
+    post "/api/v1/admin/tournaments", params: {
+      tournament: {
+        organization_id: organizations(:org_one).id,
+        name: "Memorial Classic 2027",
+        year: 2027,
+        status: "draft",
+        theme_preset: "memorial-formal"
+      }
+    }, headers: auth_headers
+
+    assert_response :created
+    created_json = JSON.parse(response.body)
+    assert_equal "memorial-formal", created_json["theme_preset"]
+
+    created_id = created_json["id"]
+    assert_equal "memorial-formal", Tournament.find(created_id).theme_preset
+
+    patch "/api/v1/tournaments/#{created_id}", params: {
+      tournament: {
+        theme_preset: "crest-classic"
+      }
+    }, headers: auth_headers
+
+    assert_response :success
+    updated_json = JSON.parse(response.body)
+    assert_equal "crest-classic", updated_json["theme_preset"]
+    assert_equal "crest-classic", Tournament.find(created_id).theme_preset
+  end
+
+  test "create and update reject invalid theme_preset values" do
+    assert_no_difference "Tournament.count" do
+      post "/api/v1/admin/tournaments", params: {
+        tournament: {
+          organization_id: organizations(:org_one).id,
+          name: "Bad Theme Tournament",
+          year: 2027,
+          status: "draft",
+          theme_preset: "unknown-pack"
+        }
+      }, headers: auth_headers
+    end
+
+    assert_response :unprocessable_entity
+    json = JSON.parse(response.body)
+    assert json["errors"].any? { |msg| msg.include?("Theme preset") }
+
+    tournament = tournaments(:tournament_one)
+    patch "/api/v1/tournaments/#{tournament.id}", params: {
+      tournament: {
+        theme_preset: "invalid-pack"
+      }
+    }, headers: auth_headers
+
+    assert_response :unprocessable_entity
+    json = JSON.parse(response.body)
+    assert json["errors"].any? { |msg| msg.include?("Theme preset") }
+    assert_not_equal "invalid-pack", tournament.reload.theme_preset
+  end
+
+  test "org-scoped create_tournament persists valid theme_preset and rejects invalid" do
+    org = organizations(:org_one)
+
+    post "/api/v1/admin/organizations/#{org.slug}/tournaments", params: {
+      tournament: {
+        name: "Charity Open 2027",
+        year: 2027,
+        status: "draft",
+        theme_preset: "charity-bright"
+      }
+    }, headers: auth_headers
+
+    assert_response :created
+    json = JSON.parse(response.body)
+    assert_equal "charity-bright", json.dig("tournament", "theme_preset")
+
+    assert_no_difference "Tournament.count" do
+      post "/api/v1/admin/organizations/#{org.slug}/tournaments", params: {
+        tournament: {
+          name: "Invalid Org Theme 2027",
+          year: 2027,
+          status: "draft",
+          theme_preset: "not-a-pack"
+        }
+      }, headers: auth_headers
+    end
+
+    assert_response :unprocessable_entity
+  end
 end

@@ -5,6 +5,7 @@ module Api
       skip_around_action :with_tenant_rls_context
       before_action :authenticate_sponsor!
       around_action :with_tenant_rls_context
+      before_action -> { require_feature!(:sponsors, tournament: @sponsor.tournament) }
 
       # GET /api/v1/sponsor_slots
       def index

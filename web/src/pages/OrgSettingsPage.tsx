@@ -1,11 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useOrganization } from '../components/OrganizationProvider';
+import { OrgFeaturesPanel } from '../components/OrgFeaturesPanel';
 import { ImageUpload } from '../components/ImageUpload';
+import { ThemePackPicker } from '../components/ThemePackPicker';
 import { Skeleton } from '../components/LoadingStates';
+import { useTournament } from '../contexts';
 import { useOrganizationStore } from '../stores/organizationStore';
 import type { OrganizationSettings as OrganizationContentSettings } from '../stores/organizationStore';
 import { useAuthToken } from '../hooks/useAuthToken';
+import { resolveThemePackId } from '../utils/themePacks';
 import {
   ArrowLeft,
   Loader2,
@@ -30,6 +34,7 @@ import {
   X,
   GripVertical,
   Building2,
+  Palette,
 } from 'lucide-react';
 import {
   DndContext,
@@ -158,6 +163,7 @@ interface TournamentSettings {
   waitlist_enabled: boolean;
   waitlist_max: string;
   banner_url_override: string;
+  theme_preset: string;
   raffle_enabled: boolean;
   raffle_description: string;
   raffle_draw_time: string;
@@ -378,6 +384,7 @@ function SettingsPageSkeleton({ organizationName }: { organizationName?: string 
 
 export const OrgSettingsPage: React.FC = () => {
   const { organization } = useOrganization();
+  const { refreshTournaments } = useTournament();
   const { getToken } = useAuthToken();
   const [formData, setFormData] = useState<FormData | null>(null);
   const [saving, setSaving] = useState(false);
@@ -475,6 +482,7 @@ export const OrgSettingsPage: React.FC = () => {
                 waitlist_enabled: t.waitlist_enabled ?? false,
                 waitlist_max: t.waitlist_max?.toString() || '',
                 banner_url_override: t.banner_url_override || '',
+                theme_preset: t.theme_preset || 'default-clean',
                 swipe_simple_url: t.swipe_simple_url || '',
                 walkin_swipe_simple_url: t.walkin_swipe_simple_url || '',
                 contact_name: t.contact_name || '',
@@ -616,6 +624,7 @@ export const OrgSettingsPage: React.FC = () => {
       waitlist_enabled: tournamentSettings.waitlist_enabled,
       waitlist_max: tournamentSettings.waitlist_max ? parseInt(tournamentSettings.waitlist_max) : null,
       banner_url_override: tournamentSettings.banner_url_override || null,
+      theme_preset: resolveThemePackId(tournamentSettings.theme_preset),
       swipe_simple_url: tournamentSettings.swipe_simple_url || null,
       walkin_swipe_simple_url: tournamentSettings.walkin_swipe_simple_url || null,
       contact_name: tournamentSettings.contact_name || null,
@@ -775,6 +784,9 @@ export const OrgSettingsPage: React.FC = () => {
       const token = await getToken();
       if (!token) throw new Error('Not authenticated');
 
+      const restOrgSettings = { ...(organization.settings || {}) };
+      delete restOrgSettings.features;
+
       const orgRes = await fetch(
         `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}`,
         {
@@ -788,6 +800,7 @@ export const OrgSettingsPage: React.FC = () => {
               contact_phone: formData.contact_phone,
               website_url: formData.website_url,
               settings: {
+                ...restOrgSettings,
                 homepage_tagline: formData.homepage_tagline,
                 homepage_mission: formData.homepage_mission,
                 homepage_stats: formData.homepage_stats.filter(s => s.value || s.label),
@@ -805,6 +818,7 @@ export const OrgSettingsPage: React.FC = () => {
       useOrganizationStore.getState().setOrganization(updatedOrg);
 
       await saveTournamentSettings(token);
+      await refreshTournaments();
 
       toast.success('All settings saved!');
     } catch (err) {
@@ -1046,6 +1060,24 @@ export const OrgSettingsPage: React.FC = () => {
             </div>
           </div>
 
+          {/* Platform Features */}
+          <OrgFeaturesPanel
+            organizationSlug={organization.slug}
+            onFeaturesUpdated={(updated) => {
+              refreshTournaments();
+              if (tournamentSettings?.id) {
+                const matched = updated.tournaments.find(
+                  (t) => t.id.toString() === tournamentSettings.id
+                );
+                if (matched) {
+                  setTournamentSettings((prev) =>
+                    prev ? { ...prev, raffle_enabled: matched.raffle_enabled } : null
+                  );
+                }
+              }
+            }}
+          />
+
           {/* ─── EVENT SETTINGS DIVIDER ─── */}
           {tournamentSettings && (
             <>
@@ -1210,9 +1242,31 @@ export const OrgSettingsPage: React.FC = () => {
                   onChange={(url) => handleTournamentChange('banner_url_override', url)}
                   getToken={getToken}
                   previewAspectClassName="aspect-[16/9]"
-                  helpText="Optional artwork for this event's detail and registration pages. Replace it to change the event graphic, or clear it to return to the plain blue hero with no image."
+                  helpText="Optional artwork for this event's detail and registration pages. Replace it to change the event graphic, or clear it to return to the solid brand gradient hero."
                 />
               </div>
+            </div>
+
+            {/* Theme Pack & Public Styling */}
+            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
+              <div className="mb-4">
+                <h3 className="text-sm sm:text-md font-semibold text-gray-900 flex items-center gap-2">
+                  <Palette className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                  Public Theme Pack
+                </h3>
+                <p className="mt-1 text-xs sm:text-sm text-gray-500">
+                  Choose the typography, hero framing, card surface contrast, and subtle landing-page motion for this event. Operational and admin screens always stay quiet.
+                </p>
+              </div>
+              <ThemePackPicker
+                value={tournamentSettings.theme_preset}
+                onChange={(packId) => handleTournamentChange('theme_preset', packId)}
+                eventName={tournamentSettings.name}
+                organizationName={organization.name}
+                eventDateLabel={tournamentSettings.event_date}
+                locationName={tournamentSettings.location_name}
+                entryFeeLabel={tournamentSettings.entry_fee_display}
+              />
             </div>
 
             <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">

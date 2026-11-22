@@ -20,6 +20,7 @@ module Api
       before_action :authorize_admin_for_tournament!, only: [:create, :update, :destroy, :verify, :batch, :scorecard]
       before_action :verify_group_access_for_golfer!, only: [:batch, :scorecard]
       before_action :verify_golfer_owns_score!, only: [:update, :destroy, :verify]
+      before_action -> { require_feature!(:live_scoring) }
 
       # GET /api/v1/tournaments/:tournament_id/scores
       # Public - get all scores for a tournament

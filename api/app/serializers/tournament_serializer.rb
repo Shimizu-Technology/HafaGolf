@@ -43,6 +43,8 @@ class TournamentSerializer < ActiveModel::Serializer
              :event_schedule,
              # Course configuration
              :total_holes, :course_configs,
+             # Resolved platform features
+             :features, :feature_overrides,
              :created_at, :updated_at
 
   def organization_slug
@@ -147,6 +149,14 @@ class TournamentSerializer < ActiveModel::Serializer
 
   def course_configs
     object.course_configs
+  end
+
+  def features
+    Features.for(object.organization, object).to_h
+  end
+
+  def feature_overrides
+    Features.for(object.organization, object).tournament_overrides
   end
 
   def created_at

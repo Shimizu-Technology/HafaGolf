@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useOrganization } from '../components/OrganizationProvider';
 import { PublicHero } from '../components/PublicHero';
+import { RevealOnScroll } from '../components/RevealOnScroll';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { api, Tournament } from '../services/api';
-import { motion, MotionConfig, useInView } from 'framer-motion';
 import {
   Calendar,
   MapPin,
@@ -19,68 +19,9 @@ import {
 } from 'lucide-react';
 import { getPublicFacingCapacitySummary, getRegistrationStatusLabel } from '../utils/capacity';
 import { useApplyBranding } from '../utils/branding';
+import type { ThemePackDefinition } from '../utils/themePacks';
 import { getDefaultOrgSlug } from '../utils/tenant';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 import { formatEventDate } from '../utils/dates';
-
-// ---------------------------------------------------------------------------
-// Animation variants
-// ---------------------------------------------------------------------------
-
-const ease = [0.22, 1, 0.36, 1] as const;
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 24 },
-  visible: (delay: number = 0) => ({
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.6, delay, ease },
-  }),
-};
-
-const staggerContainer = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.1 } },
-};
-
-const staggerItem = {
-  hidden: { opacity: 0, y: 20 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease } },
-};
-
-// ---------------------------------------------------------------------------
-// Scroll-triggered wrapper
-// ---------------------------------------------------------------------------
-
-function ScrollReveal({
-  children,
-  className,
-  delay = 0,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  delay?: number;
-}) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: '0px' });
-
-  return (
-    <motion.div
-      ref={ref}
-      className={className}
-      initial="hidden"
-      animate={isInView ? 'visible' : 'hidden'}
-      custom={delay}
-      variants={fadeUp}
-    >
-      {children}
-    </motion.div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Main page
@@ -89,10 +30,22 @@ function ScrollReveal({
 export function OrganizationLandingPage() {
   const { organization, isLoading: orgLoading } = useOrganization();
   const orgSlug = organization?.slug || getDefaultOrgSlug();
-  const branding = useApplyBranding(organization);
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const featuredThemePreset = useMemo(() => {
+    const featured = tournaments.find((t) => t.status === 'open') || tournaments[0];
+    return featured?.theme_preset;
+  }, [tournaments]);
+
+  const featuredTournamentBranding = useMemo(
+    () => (featuredThemePreset ? { theme_preset: featuredThemePreset, use_org_branding: true } : null),
+    [featuredThemePreset]
+  );
+
+  const branding = useApplyBranding(organization, featuredTournamentBranding);
+  const pack = branding.themePack;
 
   useEffect(() => {
     document.title = organization?.name ? `${organization.name} — Events` : 'HafaGolf — Events';
@@ -146,101 +99,84 @@ export function OrganizationLandingPage() {
   }
 
   return (
-    <MotionConfig reducedMotion="user">
-    <div className="min-h-screen bg-white text-neutral-900">
+    <div className={`min-h-screen ${pack.surfaces.pageClass}`} data-theme-pack={pack.id}>
       <SignedInAdminBar dashboardPath="/admin" />
 
       {/* ================================================================= */}
-      {/* HERO — Organization branded header                                */}
+      {/* HERO — Organization branded header (single signature moment)       */}
       {/* ================================================================= */}
       <PublicHero
         imageUrl={branding.bannerUrl}
         imageAlt={`${organization.name} header artwork`}
         containerClassName="min-h-[280px] lg:min-h-[360px]"
-        contentClassName="max-w-3xl"
+        contentClassName={pack.hero.contentWrapperClass}
+        themePack={pack}
       >
-        <motion.div
-          initial={{ opacity: 0, scale: 0.92 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5, ease }}
-          className="mb-8"
+        <RevealOnScroll
+          variant={pack.signatureMotion.variant}
+          distancePx={pack.signatureMotion.distancePx}
+          durationMs={pack.signatureMotion.durationMs}
         >
-          {branding.logoUrl ? (
-            <img
-              src={branding.logoUrl}
-              alt={organization.name}
-              className="h-12 w-auto rounded-lg object-contain"
-            />
-          ) : (
-            <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-white/15">
-              <Flag className="h-6 w-6 text-brand-foreground" />
+          <div className="mb-6">
+            {branding.logoUrl ? (
+              <div className={`inline-flex items-center justify-center p-1.5 ${pack.hero.variant === 'crest' ? 'rounded-xl border-2 border-accent-400/75 bg-white/10' : ''}`}>
+                <img
+                  src={branding.logoUrl}
+                  alt={organization.name}
+                  className="h-12 w-auto rounded-lg object-contain"
+                />
+              </div>
+            ) : (
+              <div className={pack.hero.logoFrameClass}>
+                <Flag className="h-6 w-6 text-brand-foreground" />
+              </div>
+            )}
+          </div>
+
+          <div className={`mb-4 ${pack.hero.accentRuleClass}`} />
+
+          <h1 className={pack.typography.heroTitleClass}>
+            {organization.name}
+          </h1>
+
+          {(organization.settings?.homepage_tagline || organization.description) && (
+            <p className={pack.typography.heroSubtitleClass}>
+              {organization.settings?.homepage_tagline || organization.description}
+            </p>
+          )}
+
+          {organization.settings?.homepage_mission && (
+            <p className="mt-4 max-w-2xl text-base leading-relaxed text-white/75 sm:text-lg">
+              {organization.settings.homepage_mission}
+            </p>
+          )}
+
+          {organization.settings?.homepage_stats && organization.settings.homepage_stats.length > 0 && (
+            <div className={`mt-8 flex flex-wrap gap-x-8 gap-y-5 pt-8 ${pack.hero.statsDividerClass}`}>
+              {organization.settings.homepage_stats.map((stat: { value: string; label: string }, i: number) => (
+                <div key={i}>
+                  <div className="text-2xl font-bold text-white">{stat.value}</div>
+                  <div className="text-sm text-white/70">{stat.label}</div>
+                </div>
+              ))}
             </div>
           )}
-        </motion.div>
-
-        <motion.h1
-          className="text-3xl font-bold tracking-tight text-white lg:text-5xl"
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.15, ease }}
-        >
-          {organization.name}
-        </motion.h1>
-
-        {(organization.settings?.homepage_tagline || organization.description) && (
-          <motion.p
-            className="mt-3 text-base text-white/90 sm:text-lg"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.25, ease }}
-          >
-            {organization.settings?.homepage_tagline || organization.description}
-          </motion.p>
-        )}
-
-        {organization.settings?.homepage_mission && (
-          <motion.p
-            className="mt-4 max-w-2xl text-base leading-relaxed text-white/75 sm:text-lg"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.35, ease }}
-          >
-            {organization.settings.homepage_mission}
-          </motion.p>
-        )}
-
-        {organization.settings?.homepage_stats && organization.settings.homepage_stats.length > 0 && (
-          <motion.div
-            className="mt-8 flex flex-wrap gap-x-8 gap-y-5 border-t border-white/20 pt-8"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.45, ease }}
-          >
-            {organization.settings.homepage_stats.map((stat: { value: string; label: string }, i: number) => (
-              <div key={i}>
-                <div className="text-2xl font-bold text-white">{stat.value}</div>
-                <div className="text-sm text-white/70">{stat.label}</div>
-              </div>
-            ))}
-          </motion.div>
-        )}
+        </RevealOnScroll>
       </PublicHero>
 
       {/* ================================================================= */}
       {/* UPCOMING EVENTS                                                    */}
       {/* ================================================================= */}
       <main className="max-w-5xl mx-auto px-6 lg:px-8 py-16 lg:py-24">
-        <ScrollReveal>
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-full bg-brand-600/10 flex items-center justify-center">
-              <Trophy className="w-5 h-5 text-brand-600" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-neutral-900 tracking-tight">Upcoming Events</h2>
-              <p className="text-sm text-neutral-500">Register for {organization.name} events</p>
-            </div>
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-10 h-10 rounded-full bg-brand-600/10 flex items-center justify-center">
+            <Trophy className="w-5 h-5 text-brand-600" />
           </div>
-        </ScrollReveal>
+          <div>
+            <h2 className={pack.typography.sectionTitleClass}>Upcoming Events</h2>
+            <p className="text-sm text-neutral-500">Register for {organization.name} events</p>
+          </div>
+        </div>
 
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-5 py-4 rounded-2xl mb-8 text-sm">
@@ -249,17 +185,21 @@ export function OrganizationLandingPage() {
         )}
 
         {tournaments.length === 0 ? (
-          <ScrollReveal>
-            <div className="text-center py-20 bg-neutral-100 rounded-2xl border border-neutral-200">
-              <Flag className="w-10 h-10 text-brand-600 mx-auto mb-5" strokeWidth={1.5} />
-              <p className="text-neutral-600 font-medium">No tournaments available at this time.</p>
-              <p className="text-sm text-neutral-400 mt-2">Check back soon for upcoming events.</p>
-            </div>
-          </ScrollReveal>
+          <div className={`text-center py-20 ${pack.surfaces.cardClass}`}>
+            <Flag className="w-10 h-10 text-brand-600 mx-auto mb-5" strokeWidth={1.5} />
+            <p className="text-neutral-600 font-medium">No tournaments available at this time.</p>
+            <p className="text-sm text-neutral-400 mt-2">Check back soon for upcoming events.</p>
+          </div>
         ) : (
-          <TournamentList
-            tournaments={tournaments}
-          />
+          <div className="space-y-5">
+            {tournaments.map((tournament) => (
+              <TournamentCard
+                key={tournament.id}
+                tournament={tournament}
+                pack={pack}
+              />
+            ))}
+          </div>
         )}
       </main>
 
@@ -267,74 +207,66 @@ export function OrganizationLandingPage() {
       {/* CONTACT                                                            */}
       {/* ================================================================= */}
       {(organization.contact_email || organization.contact_phone || organization.website_url) && (
-        <section className="bg-neutral-100">
+        <section className={pack.surfaces.mutedSectionClass}>
           <div className="max-w-5xl mx-auto px-6 lg:px-8 py-16 lg:py-24">
-            <ScrollReveal>
-              <h3 className="text-xl font-semibold tracking-tight mb-8">Get in Touch</h3>
-            </ScrollReveal>
+            <h3 className={`${pack.typography.cardTitleClass} mb-8`}>Get in Touch</h3>
 
             <div className="grid sm:grid-cols-3 gap-4">
               {organization.contact_email && (
-                <ScrollReveal delay={0}>
-                  <a
-                    href={`mailto:${organization.contact_email}`}
-                    className="group flex items-start gap-4 p-5 bg-white rounded-2xl border border-neutral-200 hover:shadow-md transition-shadow duration-200"
-                  >
-                    <div className="shrink-0 w-10 h-10 rounded-full bg-brand-600/10 flex items-center justify-center">
-                      <Mail className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-1">
-                        Email
-                      </p>
-                      <p className="text-sm text-neutral-700 group-hover:text-neutral-900 truncate transition-colors">
-                        {organization.contact_email}
-                      </p>
-                    </div>
-                  </a>
-                </ScrollReveal>
+                <a
+                  href={`mailto:${organization.contact_email}`}
+                  className={`group flex items-start gap-4 p-5 ${pack.surfaces.cardClass}`}
+                >
+                  <div className="shrink-0 w-10 h-10 rounded-full bg-brand-600/10 flex items-center justify-center">
+                    <Mail className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-1">
+                      Email
+                    </p>
+                    <p className="text-sm text-neutral-700 group-hover:text-neutral-900 truncate transition-colors">
+                      {organization.contact_email}
+                    </p>
+                  </div>
+                </a>
               )}
               {organization.contact_phone && (
-                <ScrollReveal delay={0.08}>
-                  <a
-                    href={`tel:${organization.contact_phone}`}
-                    className="group flex items-start gap-4 p-5 bg-white rounded-2xl border border-neutral-200 hover:shadow-md transition-shadow duration-200"
-                  >
-                    <div className="shrink-0 w-10 h-10 rounded-full bg-brand-600/10 flex items-center justify-center">
-                      <Phone className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-1">
-                        Phone
-                      </p>
-                      <p className="text-sm text-neutral-700 group-hover:text-neutral-900 transition-colors">
-                        {organization.contact_phone}
-                      </p>
-                    </div>
-                  </a>
-                </ScrollReveal>
+                <a
+                  href={`tel:${organization.contact_phone}`}
+                  className={`group flex items-start gap-4 p-5 ${pack.surfaces.cardClass}`}
+                >
+                  <div className="shrink-0 w-10 h-10 rounded-full bg-brand-600/10 flex items-center justify-center">
+                    <Phone className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-1">
+                      Phone
+                    </p>
+                    <p className="text-sm text-neutral-700 group-hover:text-neutral-900 transition-colors">
+                      {organization.contact_phone}
+                    </p>
+                  </div>
+                </a>
               )}
               {organization.website_url && (
-                <ScrollReveal delay={0.16}>
-                  <a
-                    href={organization.website_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group flex items-start gap-4 p-5 bg-white rounded-2xl border border-neutral-200 hover:shadow-md transition-shadow duration-200"
-                  >
-                    <div className="shrink-0 w-10 h-10 rounded-full bg-brand-600/10 flex items-center justify-center">
-                      <Globe className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-1">
-                        Website
-                      </p>
-                      <p className="text-sm text-neutral-700 group-hover:text-neutral-900 truncate transition-colors">
-                        {organization.website_url.replace(/^https?:\/\//, '')}
-                      </p>
-                    </div>
-                  </a>
-                </ScrollReveal>
+                <a
+                  href={organization.website_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`group flex items-start gap-4 p-5 ${pack.surfaces.cardClass}`}
+                >
+                  <div className="shrink-0 w-10 h-10 rounded-full bg-brand-600/10 flex items-center justify-center">
+                    <Globe className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-neutral-400 uppercase tracking-wider mb-1">
+                      Website
+                    </p>
+                    <p className="text-sm text-neutral-700 group-hover:text-neutral-900 truncate transition-colors">
+                      {organization.website_url.replace(/^https?:\/\//, '')}
+                    </p>
+                  </div>
+                </a>
               )}
             </div>
           </div>
@@ -361,38 +293,6 @@ export function OrganizationLandingPage() {
         </div>
       </footer>
     </div>
-    </MotionConfig>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tournament list with staggered entrance
-// ---------------------------------------------------------------------------
-
-function TournamentList({
-  tournaments,
-}: {
-  tournaments: Tournament[];
-}) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: '0px' });
-
-  return (
-    <motion.div
-      ref={ref}
-      className="space-y-5"
-      initial="hidden"
-      animate={isInView ? 'visible' : 'hidden'}
-      variants={staggerContainer}
-    >
-      {tournaments.map((tournament) => (
-        <motion.div key={tournament.id} variants={staggerItem}>
-          <TournamentCard
-            tournament={tournament}
-          />
-        </motion.div>
-      ))}
-    </motion.div>
   );
 }
 
@@ -402,6 +302,7 @@ function TournamentList({
 
 interface TournamentCardProps {
   tournament: Tournament;
+  pack: ThemePackDefinition;
 }
 
 function getSmartStatus(tournament: TournamentCardProps['tournament']) {
@@ -417,21 +318,21 @@ function getSmartStatus(tournament: TournamentCardProps['tournament']) {
   return { label: 'Registration Open', bg: 'bg-brand-600', text: 'text-brand-foreground' };
 }
 
-function TournamentCard({ tournament }: TournamentCardProps) {
+function TournamentCard({ tournament, pack }: TournamentCardProps) {
   const status = getSmartStatus(tournament);
   const capacitySummary = getPublicFacingCapacitySummary(tournament);
 
   return (
-    <div className="rounded-2xl border border-neutral-200 shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden">
-      <div className="h-1 bg-gradient-to-r from-accent-500 to-brand-600" />
-      <div className="p-6 sm:p-7">
+    <div className={`${pack.surfaces.cardClass} overflow-hidden`}>
+      <div className={pack.surfaces.cardAccentBarClass} />
+      <div className={pack.surfaces.cardHeaderSpacingClass}>
         {/* Top row: status badge + name */}
         <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
           <div>
-            <span className={`inline-flex items-center text-xs font-semibold rounded-full px-3 py-1 mb-3 ${status.bg} ${status.text}`}>
+            <span className={`${pack.surfaces.badgeClass} mb-3 ${status.bg} ${status.text}`}>
               {status.label}
             </span>
-            <h3 className="text-xl font-bold tracking-tight text-neutral-900">
+            <h3 className={pack.typography.cardTitleClass}>
               {tournament.name}
             </h3>
           </div>
@@ -449,10 +350,10 @@ function TournamentCard({ tournament }: TournamentCardProps) {
             <Detail icon={Flag} label="Format" value={tournament.format_name} />
           )}
           <Detail
-              icon={DollarSign}
-              label="Entry Fee"
-              value={tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}
-            />
+            icon={DollarSign}
+            label="Entry Fee"
+            value={tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}
+          />
         </div>
 
         {/* Capacity bar */}
@@ -467,7 +368,7 @@ function TournamentCard({ tournament }: TournamentCardProps) {
             </div>
             <div className="h-1.5 rounded-full bg-neutral-100 overflow-hidden">
               <div
-                className="h-full rounded-full bg-brand-600 transition-all duration-700 ease-out"
+                className="h-full rounded-full bg-brand-600"
                 style={{ width: `${capacitySummary.percent}%` }}
               />
             </div>
@@ -492,7 +393,7 @@ function TournamentCard({ tournament }: TournamentCardProps) {
               ) : (
                 <Link
                   to={`/${tournament.slug}/register`}
-                  className="inline-flex items-center justify-center gap-2 bg-brand-600 hover:bg-brand-700 text-brand-foreground font-semibold text-sm rounded-full px-6 py-2.5 transition-colors duration-200 w-full sm:w-auto min-h-[44px]"
+                  className={`${pack.surfaces.ctaPrimaryClass} w-full sm:w-auto min-h-[44px]`}
                 >
                   Register Now
                   <ChevronRight className="w-4 h-4" strokeWidth={2} />
@@ -500,7 +401,7 @@ function TournamentCard({ tournament }: TournamentCardProps) {
               )}
               <Link
                 to={`/${tournament.slug}`}
-                className="inline-flex items-center justify-center gap-2 border border-brand-600 text-brand-600 font-medium text-sm rounded-full px-6 py-2.5 hover:bg-brand-600/5 transition-colors duration-200 w-full sm:w-auto min-h-[44px]"
+                className={`${pack.surfaces.ctaSecondaryClass} w-full sm:w-auto min-h-[44px]`}
               >
                 View Details
               </Link>
@@ -508,7 +409,7 @@ function TournamentCard({ tournament }: TournamentCardProps) {
           ) : (
             <Link
               to={`/${tournament.slug}`}
-              className="inline-flex items-center justify-center gap-2 border border-brand-600 text-brand-600 font-medium text-sm rounded-full px-6 py-2.5 hover:bg-brand-600/5 transition-colors duration-200 w-full sm:w-auto min-h-[44px]"
+              className={`${pack.surfaces.ctaSecondaryClass} w-full sm:w-auto min-h-[44px]`}
             >
               View Details
               <ChevronRight className="w-4 h-4" strokeWidth={2} />

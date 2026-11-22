@@ -38,16 +38,21 @@ export function TournamentProvider({ children, orgSlug }: TournamentProviderProp
       setError(null);
       const data = await fetchTournaments();
       setTournaments(data);
-      
-      // If no current tournament is set, try to find the open one
-      if (!currentTournament) {
+
+      if (currentTournament) {
+        const refreshedCurrent = data.find((t) => t.id === currentTournament.id);
+        if (refreshedCurrent) {
+          setCurrentTournamentState(refreshedCurrent);
+        }
+      } else {
+        // If no current tournament is set, try to find the open one
         const openTournament = data.find(t => t.status === 'open');
         if (openTournament) {
           setCurrentTournamentState(openTournament);
           api.setCurrentTournament(openTournament.id);
         } else if (data.length > 0) {
           // Fall back to the most recent tournament
-          const mostRecent = data.sort((a, b) => b.year - a.year || b.id - a.id)[0];
+          const mostRecent = [...data].sort((a, b) => b.year - a.year || b.id - a.id)[0];
           setCurrentTournamentState(mostRecent);
           api.setCurrentTournament(mostRecent.id);
         }

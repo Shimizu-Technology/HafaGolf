@@ -130,6 +130,12 @@ module Api
           end
         end
 
+        if params[:tournament]&.key?(:raffle_enabled) && merged_config.dig('features').is_a?(Hash) && merged_config['features'].key?('raffle')
+          merged_config['features'] = merged_config['features'].merge(
+            'raffle' => ActiveModel::Type::Boolean.new.cast(params[:tournament][:raffle_enabled])
+          )
+        end
+
         attrs[:config] = merged_config if merged_config != @tournament.config
 
         if @tournament.update(attrs)

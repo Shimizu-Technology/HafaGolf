@@ -5,7 +5,9 @@ export default {
     extend: {
       fontFamily: {
         sans: ['DM Sans', 'system-ui', '-apple-system', 'sans-serif'],
-        display: ['Space Grotesk', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['Plus Jakarta Sans', 'system-ui', '-apple-system', 'sans-serif'],
+        serif: ['Lora', 'Georgia', 'Times New Roman', 'serif'],
+        formal: ['Playfair Display', 'Georgia', 'Times New Roman', 'serif'],
       },
       colors: {
         // Runtime-themed organization/tournament primary palette (set via CSS variables)

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
-import { Button, Card, PageTransition } from '../components/ui';
+import { Button, Card } from '../components/ui';
 import { LiabilityWaiver } from '../components/LiabilityWaiver';
 import { PublicHero } from '../components/PublicHero';
 import { Trophy, AlertCircle, Loader2, Calendar, MapPin, ChevronLeft, Check, DollarSign, ChevronRight } from 'lucide-react';
@@ -12,12 +11,6 @@ import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { getPublicFacingCapacitySummary } from '../utils/capacity';
 import { useApplyBranding } from '../utils/branding';
 import { getDefaultOrgSlug } from '../utils/tenant';
-
-// ---------------------------------------------------------------------------
-// Animation helpers
-// ---------------------------------------------------------------------------
-
-const ease = [0.22, 1, 0.36, 1] as const;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -309,12 +302,10 @@ export const OrgRegistrationPage: React.FC = () => {
   const heroBannerUrl = branding.bannerUrl;
 
   return (
-    <MotionConfig reducedMotion="user">
-    <PageTransition>
-    <div className="min-h-screen bg-neutral-100">
+    <div className="min-h-screen bg-neutral-100" data-theme-pack={branding.themePackId}>
       <SignedInAdminBar />
       {/* ================================================================= */}
-      {/* HERO HEADER                                                        */}
+      {/* HERO HEADER (quiet operational screen — zero entrance animations)  */}
       {/* ================================================================= */}
       <PublicHero
         imageUrl={heroBannerUrl}
@@ -323,6 +314,7 @@ export const OrgRegistrationPage: React.FC = () => {
         maxWidthClassName="max-w-6xl"
         containerClassName="min-h-[280px] lg:min-h-[320px]"
         contentClassName="max-w-3xl"
+        themePack={branding.themePack}
       >
         <button
           onClick={() => navigate(`/${tournamentSlug}`)}
@@ -332,21 +324,11 @@ export const OrgRegistrationPage: React.FC = () => {
           Back to Tournament
         </button>
 
-        <motion.h1
-          className="mt-4 text-2xl font-bold tracking-tight text-white sm:text-3xl lg:text-4xl"
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.1, ease }}
-        >
+        <h1 className="mt-4 font-theme-heading text-2xl font-bold tracking-tight text-white sm:text-3xl lg:text-4xl">
           Register for {tournament.name}
-        </motion.h1>
+        </h1>
 
-        <motion.div
-          className="mt-4 flex flex-wrap items-center gap-4 text-sm text-white/82"
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.25, ease }}
-        >
+        <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-white/82">
           {tournament.event_date && (
             <span className="inline-flex items-center gap-1.5">
               <Calendar className="w-4 h-4" strokeWidth={1.5} />
@@ -359,7 +341,7 @@ export const OrgRegistrationPage: React.FC = () => {
               {tournament.location_name}
             </span>
           )}
-        </motion.div>
+        </div>
       </PublicHero>
 
       {(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled && (
@@ -383,31 +365,17 @@ export const OrgRegistrationPage: React.FC = () => {
             <StepIndicator currentStep={currentStep} />
 
             {/* Error Display */}
-            <AnimatePresence>
-              {submitError && (
-                <motion.div
-                  className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 text-sm mb-6"
-                  initial={{ opacity: 0, y: -8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.25 }}
-                >
-                  {submitError}
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {submitError && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 text-sm mb-6">
+                {submitError}
+              </div>
+            )}
 
             {/* Step Content */}
-            <AnimatePresence mode="wait">
+            <div>
               {/* ---- STEP 1: Team Captain ---- */}
               {currentStep === 1 && (
-                <motion.div
-                  key="step1"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.3, ease }}
-                >
+                <div key="step1">
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
                     <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Team Captain (Player 1)</h2>
@@ -451,18 +419,12 @@ export const OrgRegistrationPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                </motion.div>
+                </div>
               )}
 
               {/* ---- STEP 2: Partner ---- */}
               {currentStep === 2 && (
-                <motion.div
-                  key="step2"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.3, ease }}
-                >
+                <div key="step2">
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
                     <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Playing Partner (Player 2)</h2>
@@ -534,18 +496,12 @@ export const OrgRegistrationPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                </motion.div>
+                </div>
               )}
 
               {/* ---- STEP 3: Waiver ---- */}
               {currentStep === 3 && (
-                <motion.div
-                  key="step3"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.3, ease }}
-                >
+                <div key="step3">
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
                     <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Liability Waiver</h2>
@@ -595,18 +551,12 @@ export const OrgRegistrationPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                </motion.div>
+                </div>
               )}
 
               {/* ---- STEP 4: Review & Pay ---- */}
               {currentStep === 4 && (
-                <motion.div
-                  key="step4"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.3, ease }}
-                >
+                <div key="step4">
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
                     <div className="border-l-4 border-brand-600 pl-3 mb-6">
                       <h2 className="text-lg font-semibold text-neutral-900">Review & Pay</h2>
@@ -658,9 +608,9 @@ export const OrgRegistrationPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                </motion.div>
+                </div>
               )}
-            </AnimatePresence>
+            </div>
 
             {/* Navigation Buttons */}
             <div className="flex items-center justify-between mt-6">
@@ -685,12 +635,10 @@ export const OrgRegistrationPage: React.FC = () => {
                   <ChevronRight className="w-4 h-4" />
                 </button>
               ) : (
-                <motion.button
+                <button
                   onClick={handleSubmit}
                   disabled={submitState !== 'idle'}
                   className={`inline-flex items-center gap-2 ${(tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-brand-600 hover:bg-brand-700 text-brand-foreground'} font-semibold text-sm rounded-full px-8 py-3 transition-colors min-h-[44px] w-full sm:w-auto justify-center ${submitState !== 'idle' ? 'opacity-75 cursor-not-allowed' : ''}`}
-                  whileHover={submitState === 'idle' ? { scale: 1.01 } : {}}
-                  whileTap={submitState === 'idle' ? { scale: 0.98 } : {}}
                 >
                   {submitState === 'idle' && (
                     <>
@@ -716,7 +664,7 @@ export const OrgRegistrationPage: React.FC = () => {
                       Redirecting to payment...
                     </span>
                   )}
-                </motion.button>
+                </button>
               )}
 
               {/* Fallback payment link if auto-redirect doesn't work */}
@@ -740,12 +688,7 @@ export const OrgRegistrationPage: React.FC = () => {
           {/* RIGHT — Sticky Summary Card */}
           <div className="order-first lg:order-last">
             <div className="sticky top-8">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.3, ease }}
-                className="bg-white rounded-2xl shadow-lg border border-neutral-200 p-6"
-              >
+              <div className="bg-white rounded-2xl shadow-lg border border-neutral-200 p-6">
                 <h3 className="font-bold text-lg text-neutral-900 mb-4">Registration Summary</h3>
 
                 <div className="space-y-3 mb-6">
@@ -817,7 +760,7 @@ export const OrgRegistrationPage: React.FC = () => {
                     </p>
                   </div>
                 )}
-              </motion.div>
+              </div>
             </div>
           </div>
         </div>
@@ -833,7 +776,5 @@ export const OrgRegistrationPage: React.FC = () => {
         </div>
       </footer>
     </div>
-    </PageTransition>
-    </MotionConfig>
   );
 };
