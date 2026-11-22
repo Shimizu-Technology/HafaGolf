@@ -147,6 +147,22 @@ module Api
         scope
       end
 
+      def scoped_sponsor_relation(scope_organization_id)
+        scope = Sponsor.includes(:sponsor_tier, tournament: :organization)
+        if scope_organization_id.present?
+          scope = scope.joins(:tournament).where(tournaments: { organization_id: scope_organization_id })
+        end
+        scope
+      end
+
+      def scoped_donation_relation(scope_organization_id)
+        scope = Donation.includes(:organization, :tournament)
+        if scope_organization_id.present?
+          scope = scope.where(organization_id: scope_organization_id)
+        end
+        scope
+      end
+
       def metadata_value(metadata, key)
         return nil unless metadata
 
@@ -163,6 +179,24 @@ module Api
         unless session.respond_to?(:payment_status) && session.payment_status == "paid"
           Rails.logger.info("Ignoring checkout.session.completed #{session.id} with payment_status=#{session.respond_to?(:payment_status) ? session.payment_status.inspect : 'missing'}")
           return
+        end
+
+        item_type = metadata_value(session.metadata, :item_type).to_s
+        case item_type
+        when "sponsorship"
+          return handle_sponsorship_checkout_completed(
+            session,
+            scope_organization_id: scope_organization_id,
+            expected_mode: expected_mode,
+            account_origin: account_origin
+          )
+        when "donation"
+          return handle_donation_checkout_completed(
+            session,
+            scope_organization_id: scope_organization_id,
+            expected_mode: expected_mode,
+            account_origin: account_origin
+          )
         end
 
         scope = scoped_golfer_relation(scope_organization_id)
@@ -229,14 +263,148 @@ module Api
         end
       end
 
+      def handle_sponsorship_checkout_completed(session, scope_organization_id:, expected_mode:, account_origin:)
+        scope = scoped_sponsor_relation(scope_organization_id)
+        sponsor = scope.find_by(stripe_checkout_session_id: session.id)
+
+        if sponsor.nil?
+          sponsor_id = metadata_value(session.metadata, :sponsor_id)
+          sponsor = scope.find_by(id: sponsor_id) if sponsor_id.present?
+        end
+
+        unless sponsor
+          Rails.logger.error("Sponsor not found for session: #{session.id}")
+          return
+        end
+
+        org = sponsor.tournament.organization
+        metadata_org_id = metadata_value(session.metadata, :organization_id)
+        if metadata_org_id.present? && metadata_org_id.to_s != org.id.to_s
+          Rails.logger.warn("Stripe webhook org metadata mismatch for sponsor #{sponsor.id}; ignoring")
+          return
+        end
+
+        payment_config = org.effective_payment_config
+        if expected_mode.present? && payment_config.payment_mode != expected_mode
+          Rails.logger.warn("Stripe webhook mode mismatch for sponsor #{sponsor.id} org #{org.id}; ignoring")
+          return
+        end
+
+        origin_tag = account_origin || payment_config.expected_stripe_account_origin || "platform_live"
+        updated = false
+        portal_token = nil
+
+        ActiveRecord::Base.transaction(requires_new: true) do
+          sponsor.lock!
+          next if sponsor.payment_status == "paid"
+
+          attrs = {
+            payment_status: "paid",
+            payment_type: "stripe",
+            payment_method: "stripe",
+            stripe_payment_intent_id: session.payment_intent,
+            stripe_account_origin: origin_tag,
+            paid_at: Time.current,
+            active: true
+          }
+          if session.respond_to?(:amount_total) && session.amount_total.present?
+            attrs[:payment_amount_cents] = session.amount_total.to_i
+          end
+
+          sponsor.update!(attrs)
+          sponsor.provision_sponsor_slots!
+          portal_token = sponsor.access_token_valid? ? sponsor.access_token : sponsor.generate_access_token!
+          updated = true
+        end
+
+        return unless updated
+
+        Rails.logger.info("Sponsor #{sponsor.id} marked as paid via webhook (#{origin_tag}) with #{sponsor.slot_count} slots provisioned")
+
+        if sponsor.login_email.present? && portal_token.present?
+          begin
+            SponsorAccessEmailService.send_access_link(sponsor: sponsor, token: portal_token)
+          rescue StandardError => e
+            Rails.logger.warn("Failed to send sponsor portal invite for sponsor #{sponsor.id}: #{e.message}")
+          end
+        end
+      end
+
+      def handle_donation_checkout_completed(session, scope_organization_id:, expected_mode:, account_origin:)
+        scope = scoped_donation_relation(scope_organization_id)
+        donation = scope.find_by(stripe_checkout_session_id: session.id)
+
+        if donation.nil?
+          donation_id = metadata_value(session.metadata, :donation_id)
+          donation = scope.find_by(id: donation_id) if donation_id.present?
+        end
+
+        unless donation
+          Rails.logger.error("Donation not found for session: #{session.id}")
+          return
+        end
+
+        org = donation.organization
+        metadata_org_id = metadata_value(session.metadata, :organization_id)
+        if metadata_org_id.present? && metadata_org_id.to_s != org.id.to_s
+          Rails.logger.warn("Stripe webhook org metadata mismatch for donation #{donation.id}; ignoring")
+          return
+        end
+
+        payment_config = org.effective_payment_config
+        if expected_mode.present? && payment_config.payment_mode != expected_mode
+          Rails.logger.warn("Stripe webhook mode mismatch for donation #{donation.id} org #{org.id}; ignoring")
+          return
+        end
+
+        origin_tag = account_origin || payment_config.expected_stripe_account_origin || "platform_live"
+        updated = false
+
+        ActiveRecord::Base.transaction(requires_new: true) do
+          donation.lock!
+          next if donation.payment_status == "paid"
+
+          attrs = {
+            payment_status: "paid",
+            payment_type: "stripe",
+            payment_method: "stripe",
+            stripe_payment_intent_id: session.payment_intent,
+            stripe_account_origin: origin_tag,
+            paid_at: Time.current
+          }
+          if session.respond_to?(:amount_total) && session.amount_total.to_i.positive?
+            attrs[:amount_cents] = session.amount_total.to_i
+          end
+
+          donation.update!(attrs)
+          updated = true
+        end
+
+        Rails.logger.info("Donation #{donation.id} marked as paid via webhook (#{origin_tag})") if updated
+      end
+
       def handle_checkout_session_expired(session, scope_organization_id:)
         Rails.logger.info("Checkout session expired: #{session.id}")
 
         golfer = scoped_golfer_relation(scope_organization_id).find_by(stripe_checkout_session_id: session.id)
-        return unless golfer
+        if golfer
+          golfer.update(stripe_checkout_session_id: nil)
+          Rails.logger.info("Cleared expired checkout session for golfer #{golfer.id}")
+          return
+        end
 
-        golfer.update(stripe_checkout_session_id: nil)
-        Rails.logger.info("Cleared expired checkout session for golfer #{golfer.id}")
+        sponsor = scoped_sponsor_relation(scope_organization_id).find_by(stripe_checkout_session_id: session.id)
+        if sponsor && sponsor.payment_status == "pending"
+          sponsor.update(payment_status: "expired", stripe_checkout_session_id: nil)
+          Rails.logger.info("Expired pending sponsor checkout #{sponsor.id}")
+          return
+        end
+
+        donation = scoped_donation_relation(scope_organization_id).find_by(stripe_checkout_session_id: session.id)
+        if donation && donation.payment_status == "pending"
+          donation.update(payment_status: "expired", stripe_checkout_session_id: nil)
+          Rails.logger.info("Expired pending donation checkout #{donation.id}")
+        end
       end
 
       def handle_payment_intent_failed(payment_intent, scope_organization_id:)

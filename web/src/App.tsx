@@ -29,6 +29,8 @@ import { OrgRegistrationPage } from './pages/OrgRegistrationPage';
 import { OrgRegistrationSuccessPage } from './pages/OrgRegistrationSuccessPage';
 import { LeaderboardPage } from './pages/LeaderboardPage';
 import { RaffleBoardPage } from './pages/RaffleBoardPage';
+import { SponsorCheckoutPage } from './pages/SponsorCheckoutPage';
+import { DonationsPage } from './pages/DonationsPage';
 
 const LazyAdminRoutesApp = lazy(() => import('./admin/AdminRoutesApp'));
 
@@ -164,6 +166,11 @@ function App() {
             <Route path="/score/verify" element={<GolferAuthProvider><GolferVerifyPage /></GolferAuthProvider>} />
             <Route path="/golfer/dashboard" element={<GolferAuthProvider><GolferDashboardPage /></GolferAuthProvider>} />
             <Route path="/golfer/scorecard" element={<GolferAuthProvider><ScorecardPage /></GolferAuthProvider>} />
+
+            <Route path="/:orgSlug/tournaments/:tournamentSlug/sponsor" element={<TenantPublicWrapper><SponsorCheckoutPage /></TenantPublicWrapper>} />
+            <Route path="/:orgSlug/sponsor" element={<TenantPublicWrapper><SponsorCheckoutPage /></TenantPublicWrapper>} />
+            <Route path="/:orgSlug/tournaments/:tournamentSlug/donate" element={<TenantPublicWrapper><DonationsPage /></TenantPublicWrapper>} />
+            <Route path="/:orgSlug/donate" element={<TenantPublicWrapper><DonationsPage /></TenantPublicWrapper>} />
 
             <Route path="/:tournamentSlug" element={<TenantPublicWrapper><OrgTournamentPage /></TenantPublicWrapper>} />
             <Route path="/:tournamentSlug/register" element={<TenantPublicWrapper><OrgRegistrationPage /></TenantPublicWrapper>} />

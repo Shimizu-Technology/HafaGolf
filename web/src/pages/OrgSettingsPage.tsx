@@ -180,6 +180,11 @@ interface TournamentSettings {
   start_time: string;
   fee_includes: string;
   tournament_info: string;
+  tax_receipt_enabled: boolean;
+  tax_org_name: string;
+  tax_org_ein: string;
+  fmv_per_player_dollars: string;
+  tax_receipt_disclaimer: string;
 }
 
 function deriveRegistrationMode(registration_open: boolean, walkin_registration_open: boolean): RegistrationMode {
@@ -511,6 +516,12 @@ export const OrgSettingsPage: React.FC = () => {
                 check_in_time: t.check_in_time || '',
                 start_time: t.start_time || '',
                 fee_includes: t.fee_includes || '',
+                tax_receipt_enabled: t.tax_receipt_enabled ?? false,
+                tax_org_name: t.tax_org_name || '',
+                tax_org_ein: t.tax_org_ein || '',
+                fmv_per_player_dollars:
+                  t.fmv_per_player_cents != null ? (t.fmv_per_player_cents / 100).toFixed(2) : '0.00',
+                tax_receipt_disclaimer: t.tax_receipt_disclaimer || '',
               },
             };
           }
@@ -649,6 +660,13 @@ export const OrgSettingsPage: React.FC = () => {
       check_in_time: tournamentSettings.check_in_time || null,
       start_time: tournamentSettings.start_time || null,
       fee_includes: tournamentSettings.fee_includes || null,
+      tax_receipt_enabled: tournamentSettings.tax_receipt_enabled,
+      tax_org_name: tournamentSettings.tax_org_name || null,
+      tax_org_ein: tournamentSettings.tax_org_ein || null,
+      fmv_per_player_cents: tournamentSettings.fmv_per_player_dollars
+        ? Math.max(0, Math.round(parseFloat(tournamentSettings.fmv_per_player_dollars) * 100) || 0)
+        : 0,
+      tax_receipt_disclaimer: tournamentSettings.tax_receipt_disclaimer || null,
     };
     const res = await fetch(
       `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournamentSettings.id}`,
@@ -1842,6 +1860,94 @@ export const OrgSettingsPage: React.FC = () => {
                   onChange={(updated) => setTournamentSettings(prev => prev ? { ...prev, sponsor_tiers: updated } : null)}
                 />
               </div>
+            </div>
+
+            {/* IRS >$75 Quid-Pro-Quo Tax Receipts (default OFF) */}
+            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
+              <div className="flex items-start justify-between gap-4 mb-3 sm:mb-4">
+                <div>
+                  <h3 className="text-sm sm:text-md font-semibold text-gray-900 flex items-center gap-2">
+                    <Shield className="w-5 h-5 text-brand-500 flex-shrink-0" />
+                    IRS Quid-Pro-Quo Tax Receipts (&gt;$75 FMV)
+                  </h3>
+                  <p className="text-xs sm:text-sm text-gray-500 mt-1">
+                    Disabled by default. Enable only after your treasurer or CPA confirms your EIN, Fair Market Value (FMV), and receipt wording.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={tournamentSettings.tax_receipt_enabled}
+                    onChange={(e) => handleTournamentChange('tax_receipt_enabled', e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">
+                    {tournamentSettings.tax_receipt_enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </label>
+              </div>
+
+              {tournamentSettings.tax_receipt_enabled && (
+                <div className="space-y-4 pt-2 border-t border-gray-100">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Legal Tax-Exempt Organization Name
+                      </label>
+                      <input
+                        type="text"
+                        value={tournamentSettings.tax_org_name}
+                        onChange={(e) => handleTournamentChange('tax_org_name', e.target.value)}
+                        placeholder="Legal 501(c)(3) / association name"
+                        className="w-full px-3 sm:px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        EIN / Tax ID
+                      </label>
+                      <input
+                        type="text"
+                        value={tournamentSettings.tax_org_ein}
+                        onChange={(e) => handleTournamentChange('tax_org_ein', e.target.value)}
+                        placeholder="XX-XXXXXXX"
+                        className="w-full px-3 sm:px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Fair Market Value (FMV) per Player (USD)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={tournamentSettings.fmv_per_player_dollars}
+                      onChange={(e) => handleTournamentChange('fmv_per_player_dollars', e.target.value)}
+                      placeholder="0.00"
+                      className="w-full sm:w-56 px-3 sm:px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Used to calculate the deductible excess (payment minus FMV) for registrations and sponsorships over $75.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Custom Receipt Disclaimer
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={tournamentSettings.tax_receipt_disclaimer}
+                      onChange={(e) => handleTournamentChange('tax_receipt_disclaimer', e.target.value)}
+                      placeholder="Optional disclaimer text approved by your treasurer or CPA"
+                      className="w-full px-3 sm:px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             </>

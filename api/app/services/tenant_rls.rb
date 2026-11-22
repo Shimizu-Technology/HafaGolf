@@ -22,6 +22,8 @@ module TenantRls
     organization_payment_configs
     tournament_settlements
     tournament_payouts
+    sponsor_tiers
+    donations
   ].freeze
 
   # Tables scoped to an organization through `tournament_id -> tournaments.organization_id`
