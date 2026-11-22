@@ -54,6 +54,11 @@ class ActivityLog < ApplicationRecord
     raffle_winner_notification_resent
     raffle_tickets_synced
     raffle_settings_updated
+    settlement_calculated
+    settlement_finalized
+    payout_recorded
+    payout_marked_paid
+    payout_voided
   ].freeze
 
   validates :action, presence: true, inclusion: { in: ACTIONS }

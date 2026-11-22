@@ -67,6 +67,38 @@ class TenantRlsTest < ActiveSupport::TestCase
         payment_mode: "offline",
         processor_provider: "none"
       )
+      @settlement_a = @tournament_a.tournament_settlements.create!(
+        organization: @org_a,
+        version: 1,
+        status: "draft",
+        gross_cents: 10_000,
+        net_cents: 10_000,
+        organizer_proceeds_cents: 10_000,
+        payable_cents: 10_000
+      )
+      @settlement_b = @tournament_b.tournament_settlements.create!(
+        organization: @org_b,
+        version: 1,
+        status: "draft",
+        gross_cents: 10_000,
+        net_cents: 10_000,
+        organizer_proceeds_cents: 10_000,
+        payable_cents: 10_000
+      )
+      @payout_a = @settlement_a.tournament_payouts.create!(
+        organization: @org_a,
+        tournament: @tournament_a,
+        amount_cents: 5_000,
+        provider: "check",
+        status: "pending"
+      )
+      @payout_b = @settlement_b.tournament_payouts.create!(
+        organization: @org_b,
+        tournament: @tournament_b,
+        amount_cents: 5_000,
+        provider: "check",
+        status: "pending"
+      )
     end
   end
 
@@ -75,6 +107,8 @@ class TenantRlsTest < ActiveSupport::TestCase
       tournament_ids = [@tournament_a&.id, @tournament_b&.id].compact
       org_ids = [@org_a&.id, @org_b&.id].compact
 
+      TournamentPayout.where(organization_id: org_ids).delete_all if org_ids.any?
+      TournamentSettlement.where(organization_id: org_ids).delete_all if org_ids.any?
       OrganizationPaymentConfig.where(organization_id: org_ids).delete_all if org_ids.any?
 
       ActivityLog.where(tournament_id: tournament_ids).delete_all if tournament_ids.any?
@@ -95,6 +129,8 @@ class TenantRlsTest < ActiveSupport::TestCase
       assert_equal 0, Golfer.where(id: [@golfer_a.id, @golfer_b.id]).count
       assert_equal 0, MessageDelivery.where(id: [@delivery_a.id, @delivery_b.id]).count
       assert_equal 0, OrganizationPaymentConfig.where(id: [@payment_config_a.id, @payment_config_b.id]).count
+      assert_equal 0, TournamentSettlement.where(id: [@settlement_a.id, @settlement_b.id]).count
+      assert_equal 0, TournamentPayout.where(id: [@payout_a.id, @payout_b.id]).count
 
       TenantContext.with_closed_access do
         assert_equal 0, Tournament.where(id: [@tournament_a.id, @tournament_b.id]).count
@@ -117,6 +153,12 @@ class TenantRlsTest < ActiveSupport::TestCase
 
         visible_configs = OrganizationPaymentConfig.where(id: [@payment_config_a.id, @payment_config_b.id]).pluck(:id)
         assert_equal [@payment_config_a.id], visible_configs
+
+        visible_settlements = TournamentSettlement.where(id: [@settlement_a.id, @settlement_b.id]).pluck(:id)
+        assert_equal [@settlement_a.id], visible_settlements
+
+        visible_payouts = TournamentPayout.where(id: [@payout_a.id, @payout_b.id]).pluck(:id)
+        assert_equal [@payout_a.id], visible_payouts
 
         # Org-scoped activity log with tournament_id: nil succeeds under org context
         org_log = ActivityLog.log(

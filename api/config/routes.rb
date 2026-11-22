@@ -169,6 +169,15 @@ Rails.application.routes.draw do
         post 'raffle/sell' => 'raffle#sell_tickets'
         get 'payment_report' => 'payment_reports#show'
 
+        # Payout Settlements & Disbursements
+        get 'settlement' => 'settlements#show'
+        get 'settlement/export' => 'settlements#export_csv'
+        post 'settlement/calculate' => 'settlements#calculate'
+        post 'settlement/finalize' => 'settlements#finalize'
+        post 'settlement/payouts' => 'settlements#create_payout'
+        post 'settlement/payouts/:payout_id/mark_paid' => 'settlements#mark_payout_paid'
+        post 'settlement/payouts/:payout_id/void' => 'settlements#void_payout'
+
         # Sponsors
         resources :sponsors, only: [:index, :show, :create, :update, :destroy] do
           collection do
