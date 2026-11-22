@@ -17,7 +17,7 @@ import { useAdmin } from '../contexts';
 export const SuperAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { isSuperAdmin } = useAdmin();
-  const { setOrganization } = useOrganizationStore();
+  const { setOrganization, setAccessibleOrganizations } = useOrganizationStore();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -39,12 +39,13 @@ export const SuperAdminDashboard: React.FC = () => {
       setLoading(true);
       const data = await api.getAdminOrganizations();
       setOrganizations(data);
+      setAccessibleOrganizations(data);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load organizations');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setAccessibleOrganizations]);
 
   useEffect(() => {
     void loadOrganizations();
@@ -172,7 +173,7 @@ export const SuperAdminDashboard: React.FC = () => {
                 required
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="FD Alumni Golf"
+                placeholder="Pacific Classic Golf"
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
             </label>
@@ -182,7 +183,7 @@ export const SuperAdminDashboard: React.FC = () => {
                 type="text"
                 value={form.slug}
                 onChange={(e) => setForm({ ...form, slug: e.target.value })}
-                placeholder="fd-alumni"
+                placeholder="pacific-classic"
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
             </label>

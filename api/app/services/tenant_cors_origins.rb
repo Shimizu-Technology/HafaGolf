@@ -28,7 +28,7 @@ module TenantCorsOrigins
     host = uri.host.downcase
     return false unless registered_hosts.include?(host)
 
-    Rails.env.production? ? uri.scheme == "https" : true
+    Rails.env.production? ? (uri.scheme == "https" && (uri.port.nil? || uri.port == 443)) : true
   rescue URI::InvalidURIError
     false
   end

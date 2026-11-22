@@ -6,6 +6,22 @@ interface OffseasonPageProps {
   onRetry?: () => void;
 }
 
+export function getSafeHttpUrl(raw?: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function OffseasonPage({ organization, onRetry }: OffseasonPageProps) {
   const orgName = organization?.name || 'HafaGolf';
   const title =
@@ -18,8 +34,10 @@ export function OffseasonPage({ organization, onRetry }: OffseasonPageProps) {
     (organization
       ? 'Online registration is closed between events. Check back soon or reach out to the organizers for upcoming tournament dates.'
       : 'We are unable to connect to the event service right now, or registration is between seasons. Please check back shortly.');
-  const ctaUrl = organization?.offseason_cta_url || organization?.website_url || null;
+  const ctaUrl = getSafeHttpUrl(organization?.offseason_cta_url) || getSafeHttpUrl(organization?.website_url);
   const ctaLabel = organization?.offseason_cta_label || (organization ? `Visit ${orgName}` : null);
+  const contactEmail = organization?.contact_email?.trim() || null;
+  const contactPhone = organization?.contact_phone?.trim() || null;
 
   return (
     <main className="min-h-screen bg-white text-neutral-900 flex flex-col">
@@ -86,27 +104,27 @@ export function OffseasonPage({ organization, onRetry }: OffseasonPageProps) {
         </div>
       </section>
 
-      {(organization?.contact_email || organization?.contact_phone) ? (
+      {(contactEmail || contactPhone) ? (
         <section className="mx-auto w-full max-w-5xl px-6 py-12 lg:px-8">
           <div className="rounded-2xl border border-brand-100 bg-brand-50/50 p-6 sm:p-8">
             <h2 className="text-lg font-semibold text-neutral-900">Contact {orgName}</h2>
             <div className="mt-4 flex flex-col gap-3 text-sm text-neutral-600 sm:flex-row sm:gap-8">
-              {organization.contact_email ? (
+              {contactEmail ? (
                 <a
-                  href={`mailto:${organization.contact_email}`}
+                  href={`mailto:${encodeURIComponent(contactEmail)}`}
                   className="inline-flex items-center gap-2 font-medium text-neutral-900 hover:underline"
                 >
                   <Mail className="h-4 w-4 text-brand-600" />
-                  <span>{organization.contact_email}</span>
+                  <span>{contactEmail}</span>
                 </a>
               ) : null}
-              {organization.contact_phone ? (
+              {contactPhone ? (
                 <a
-                  href={`tel:${organization.contact_phone}`}
+                  href={`tel:${contactPhone.replace(/[^+\d]/g, '')}`}
                   className="inline-flex items-center gap-2 font-medium text-neutral-900 hover:underline"
                 >
                   <Phone className="h-4 w-4 text-brand-600" />
-                  <span>{organization.contact_phone}</span>
+                  <span>{contactPhone}</span>
                 </a>
               ) : null}
             </div>

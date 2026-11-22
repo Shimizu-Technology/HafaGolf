@@ -71,16 +71,33 @@ export function TournamentProvider({ children, orgSlug }: TournamentProviderProp
     }
   };
 
-  // Load tournaments on mount
+  // Load tournaments on mount or organization switch
   useEffect(() => {
+    let cancelled = false;
+
     const loadInitialTournaments = async () => {
+      if (!orgSlug) {
+        setTournaments([]);
+        setCurrentTournamentState(null);
+        api.setCurrentTournament(null);
+        setIsLoading(false);
+        return;
+      }
+
       try {
         setIsLoading(true);
         setError(null);
         const data = await fetchTournaments();
+        if (cancelled) return;
         setTournaments(data);
-        
-        // Try to restore from localStorage first
+
+        if (data.length === 0) {
+          setCurrentTournamentState(null);
+          api.setCurrentTournament(null);
+          return;
+        }
+
+        // Try to restore from localStorage first if it belongs to this org
         const savedId = localStorage.getItem('currentTournamentId');
         if (savedId) {
           const savedTournament = data.find(t => t.id === parseInt(savedId));
@@ -90,26 +107,34 @@ export function TournamentProvider({ children, orgSlug }: TournamentProviderProp
             return;
           }
         }
-        
+
         // Otherwise, find the open tournament
         const openTournament = data.find(t => t.status === 'open');
         if (openTournament) {
           setCurrentTournamentState(openTournament);
           api.setCurrentTournament(openTournament.id);
-        } else if (data.length > 0) {
+        } else {
           // Fall back to the most recent tournament
-          const mostRecent = data.sort((a, b) => b.year - a.year || b.id - a.id)[0];
+          const mostRecent = [...data].sort((a, b) => b.year - a.year || b.id - a.id)[0];
           setCurrentTournamentState(mostRecent);
           api.setCurrentTournament(mostRecent.id);
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load tournaments');
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load tournaments');
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
     loadInitialTournaments();
+
+    return () => {
+      cancelled = true;
+    };
   }, [orgSlug]);
 
   return (

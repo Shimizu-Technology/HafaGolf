@@ -47,9 +47,11 @@ export interface Organization {
 
 interface OrganizationState {
   organization: Organization | null;
+  accessibleOrganizations: Organization[];
   isLoading: boolean;
   error: string | null;
   setOrganization: (org: Organization | null) => void;
+  setAccessibleOrganizations: (orgs: Organization[]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearOrganization: () => void;
@@ -59,12 +61,14 @@ export const useOrganizationStore = create<OrganizationState>()(
   persist(
     (set) => ({
       organization: null,
+      accessibleOrganizations: [],
       isLoading: false,
       error: null,
       setOrganization: (org) => set({ organization: org, error: null }),
+      setAccessibleOrganizations: (orgs) => set({ accessibleOrganizations: orgs }),
       setLoading: (loading) => set({ isLoading: loading }),
       setError: (error) => set({ error, isLoading: false }),
-      clearOrganization: () => set({ organization: null, error: null }),
+      clearOrganization: () => set({ organization: null, accessibleOrganizations: [], error: null }),
     }),
     {
       name: 'hafagolf-organization',

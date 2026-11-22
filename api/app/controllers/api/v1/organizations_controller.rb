@@ -134,6 +134,8 @@ module Api
         render json: organization_response(organization.reload), status: :created
       rescue ActiveRecord::RecordInvalid => e
         render json: { errors: e.record.errors.full_messages }, status: :unprocessable_entity
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Organization slug, domain, or admin email is already taken."] }, status: :unprocessable_entity
       end
 
       # DELETE /api/v1/admin/organizations/:slug
@@ -171,16 +173,22 @@ module Api
         return if performed?
 
         organization = Organization.find_by_slug!(params[:slug])
-        domain = organization.organization_domains.build(domain_params)
-        domain.is_primary = true if organization.organization_domains.empty?
+        domain = nil
 
-        if domain.save
-          render json: { domain: domain_response(domain) }, status: :created
-        else
-          render json: { errors: domain.errors.full_messages }, status: :unprocessable_entity
+        organization.with_lock do
+          domain = organization.organization_domains.build(domain_params)
+          domain.is_primary = true if organization.organization_domains.empty?
+
+          unless domain.save
+            return render json: { errors: domain.errors.full_messages }, status: :unprocessable_entity
+          end
         end
+
+        render json: { domain: domain_response(domain) }, status: :created
       rescue ActiveRecord::RecordNotFound
         render json: { error: 'Organization not found' }, status: :not_found
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Domain hostname or primary domain conflict. Please try again."] }, status: :unprocessable_entity
       end
 
       # PATCH /api/v1/admin/organizations/:slug/domains/:domain_id
@@ -189,15 +197,28 @@ module Api
         return if performed?
 
         organization = Organization.find_by_slug!(params[:slug])
-        domain = organization.organization_domains.find(params[:domain_id])
+        domain = nil
 
-        if domain.update(domain_params)
-          render json: { domain: domain_response(domain) }
-        else
-          render json: { errors: domain.errors.full_messages }, status: :unprocessable_entity
+        organization.with_lock do
+          domain = organization.organization_domains.find(params[:domain_id])
+          permitted = domain_params
+
+          if domain.is_primary? && permitted.key?(:is_primary) && !ActiveModel::Type::Boolean.new.cast(permitted[:is_primary])
+            return render json: {
+              errors: ["Cannot unset the primary domain. Promote another domain to primary first."]
+            }, status: :unprocessable_entity
+          end
+
+          unless domain.update(permitted)
+            return render json: { errors: domain.errors.full_messages }, status: :unprocessable_entity
+          end
         end
+
+        render json: { domain: domain_response(domain) }
       rescue ActiveRecord::RecordNotFound
         render json: { error: 'Domain not found' }, status: :not_found
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Domain hostname or primary domain conflict. Please try again."] }, status: :unprocessable_entity
       end
 
       # DELETE /api/v1/admin/organizations/:slug/domains/:domain_id
@@ -206,11 +227,23 @@ module Api
         return if performed?
 
         organization = Organization.find_by_slug!(params[:slug])
-        domain = organization.organization_domains.find(params[:domain_id])
-        domain.destroy!
+
+        organization.with_lock do
+          domain = organization.organization_domains.find(params[:domain_id])
+          was_primary = domain.is_primary?
+          domain.destroy!
+
+          if was_primary
+            next_primary = organization.organization_domains.order(created_at: :asc).first
+            next_primary&.update!(is_primary: true)
+          end
+        end
+
         head :no_content
       rescue ActiveRecord::RecordNotFound
         render json: { error: 'Domain not found' }, status: :not_found
+      rescue ActiveRecord::RecordNotUnique
+        render json: { errors: ["Domain update conflicted with another request. Please try again."] }, status: :unprocessable_entity
       end
 
       # PATCH /api/v1/admin/organizations/:slug

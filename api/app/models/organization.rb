@@ -17,6 +17,7 @@ class Organization < ApplicationRecord
   validates :contact_email, format: { with: URI::MailTo::EMAIL_REGEXP }, allow_blank: true
   validates :sms_sender_id, length: { maximum: 11 }, allow_blank: true
   validates :subscription_status, inclusion: { in: %w[active past_due canceled trialing] }
+  validates :website_url, format: { with: /\Ahttps?:\/\/.+\z/i, message: 'must start with http:// or https://' }, allow_blank: true
   validates :offseason_cta_url, format: { with: /\Ahttps?:\/\/.+\z/i, message: 'must start with http:// or https://' }, allow_blank: true
 
   # Callbacks

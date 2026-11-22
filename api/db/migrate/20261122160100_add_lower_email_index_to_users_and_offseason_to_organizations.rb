@@ -2,6 +2,19 @@
 
 class AddLowerEmailIndexToUsersAndOffseasonToOrganizations < ActiveRecord::Migration[8.1]
   def up
+    duplicates = select_values(<<~SQL.squish)
+      SELECT LOWER(TRIM(email))
+      FROM users
+      WHERE email IS NOT NULL
+      GROUP BY LOWER(TRIM(email))
+      HAVING COUNT(*) > 1
+    SQL
+
+    if duplicates.any?
+      raise StandardError,
+            "Cannot add unique case-insensitive email index on users; duplicate emails found: #{duplicates.join(', ')}"
+    end
+
     # Normalize existing emails to lowercase trimmed values before creating unique index
     execute <<~SQL.squish
       UPDATE users

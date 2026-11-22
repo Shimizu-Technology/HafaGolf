@@ -51,7 +51,7 @@ function AdminShellPage({ children }: { children: React.ReactNode }) {
   return (
     <AdminProvider>
       <ProtectedRoute>
-        <OrganizationProvider>
+        <OrganizationProvider mode="admin" fallbackPath="">
           <AdminTournamentShell>
             <AdminLayout>{children}</AdminLayout>
           </AdminTournamentShell>

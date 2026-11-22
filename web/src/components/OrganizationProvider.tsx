@@ -12,24 +12,59 @@ interface OrganizationProviderProps {
   fallbackPath?: string;
   orgSlug?: string;
   isPublicRoute?: boolean;
+  mode?: 'public' | 'admin';
+}
+
+/**
+ * Selects the active organization for an authenticated admin session.
+ * Never depends on hostname so admin routes work on ADMIN_ORIGIN.
+ */
+export function selectAdminOrganization(
+  accessible: Organization[],
+  currentSlug?: string | null,
+  preferredSlug?: string | null
+): Organization | null {
+  if (accessible.length === 0) return null;
+
+  if (preferredSlug) {
+    const preferred = accessible.find((org) => org.slug === preferredSlug);
+    if (preferred) return preferred;
+  }
+
+  if (currentSlug) {
+    const current = accessible.find((org) => org.slug === currentSlug);
+    if (current) return current;
+  }
+
+  return accessible[0];
 }
 
 /**
  * OrganizationProvider resolves organization context from:
- * 1. Explicit orgSlug prop (admin org context)
- * 2. URL :orgSlug parameter (path-based routes)
- * 3. Current host via GET /api/v1/tenant (custom domain routing via X-Tenant-Host)
+ * - mode="admin": authenticated GET /api/v1/admin/organizations (never host-based)
+ * - mode="public":
+ *   1. Explicit orgSlug prop or URL :orgSlug parameter
+ *   2. Current host via GET /api/v1/tenant (custom domain routing via X-Tenant-Host)
  */
 export function OrganizationProvider({
   children,
   fallbackPath = '/admin/login',
   orgSlug: propOrgSlug,
   isPublicRoute = false,
+  mode = 'public',
 }: OrganizationProviderProps) {
   const { orgSlug: paramOrgSlug } = useParams<{ orgSlug: string }>();
   const explicitSlug = propOrgSlug || paramOrgSlug || null;
   const navigate = useNavigate();
-  const { organization, setOrganization, setLoading, setError, isLoading, error } = useOrganizationStore();
+  const {
+    organization,
+    setOrganization,
+    setAccessibleOrganizations,
+    setLoading,
+    setError,
+    isLoading,
+    error,
+  } = useOrganizationStore();
 
   useApplyBranding(organization);
 
@@ -37,7 +72,32 @@ export function OrganizationProvider({
     let cancelled = false;
 
     async function fetchOrganization() {
-      const needsLoad = !organization || (explicitSlug && organization.slug !== explicitSlug);
+      const storedOrg = useOrganizationStore.getState().organization;
+
+      if (mode === 'admin') {
+        if (!storedOrg) {
+          setLoading(true);
+        }
+
+        try {
+          const accessible = (await api.getAdminOrganizations()) as Organization[];
+          if (cancelled) return;
+
+          setAccessibleOrganizations(accessible);
+          const selected = selectAdminOrganization(accessible, storedOrg?.slug, explicitSlug);
+          setOrganization(selected);
+        } catch (err: unknown) {
+          if (cancelled) return;
+          console.error('Failed to load accessible organizations:', err);
+          const message = err instanceof Error ? err.message : 'Failed to load organizations';
+          setError(message);
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+        return;
+      }
+
+      const needsLoad = !storedOrg || (explicitSlug && storedOrg.slug !== explicitSlug);
       if (needsLoad) {
         setLoading(true);
       }
@@ -72,7 +132,7 @@ export function OrganizationProvider({
     return () => {
       cancelled = true;
     };
-  }, [explicitSlug, fallbackPath, navigate, organization?.slug, setError, setLoading, setOrganization]);
+  }, [explicitSlug, fallbackPath, mode, navigate, setAccessibleOrganizations, setError, setLoading, setOrganization]);
 
   if (isLoading && !organization) {
     return (
@@ -92,15 +152,19 @@ export function OrganizationProvider({
           <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
             <AlertTriangle className="w-10 h-10 text-red-500" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-3">Organization Not Found</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-3">
+            {mode === 'admin' ? 'Unable to Load Organizations' : 'Organization Not Found'}
+          </h1>
           <p className="text-gray-500 mb-8 leading-relaxed">
-            We could not find an organization configured for this address. Check the URL or contact your event organizer.
+            {mode === 'admin'
+              ? error
+              : 'We could not find an organization configured for this address. Check the URL or contact your event organizer.'}
           </p>
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate(mode === 'admin' ? '/admin/login' : '/')}
             className="px-6 py-3 bg-brand-600 text-white rounded-xl font-semibold hover:bg-brand-700 transition-all shadow-lg"
           >
-            Go Home
+            {mode === 'admin' ? 'Back to Sign In' : 'Go Home'}
           </button>
         </div>
       </div>
@@ -115,9 +179,10 @@ export function OrganizationProvider({
 }
 
 /**
- * Hook to get current organization from context
+ * Hook to get current organization and admin switcher state from context
  */
 export function useOrganization() {
-  const { organization, isLoading, error } = useOrganizationStore();
-  return { organization, isLoading, error };
+  const { organization, accessibleOrganizations, setOrganization, setAccessibleOrganizations, isLoading, error } =
+    useOrganizationStore();
+  return { organization, accessibleOrganizations, setOrganization, setAccessibleOrganizations, isLoading, error };
 }

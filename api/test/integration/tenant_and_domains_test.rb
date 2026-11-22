@@ -159,6 +159,40 @@ class TenantAndDomainsTest < ActionDispatch::IntegrationTest
     org = Organization.find_by_slug!(created["slug"])
     assert_equal "www.island.example.com", org.primary_host
     assert_equal 1, org.organization_domains.where(is_primary: true).count
+
+    # Unsetting primary on the sole primary domain is rejected
+    primary_domain = org.organization_domains.find_by!(is_primary: true)
+    patch "/api/v1/admin/organizations/#{created['slug']}/domains/#{primary_domain.id}",
+          params: { domain: { is_primary: false } },
+          headers: auth_headers
+    assert_response :unprocessable_entity
+
+    # Deleting the primary domain auto-promotes the remaining domain
+    delete "/api/v1/admin/organizations/#{created['slug']}/domains/#{primary_domain.id}",
+           headers: auth_headers
+    assert_response :no_content
+
+    org.reload
+    assert_equal "island.example.com", org.primary_host
+    assert_equal 1, org.organization_domains.where(is_primary: true).count
+  end
+
+  test "organization rejects non-http website_url schemes" do
+    org = Organization.new(name: "Bad Link Org", website_url: "javascript:alert(1)")
+    assert_not org.valid?
+    assert_includes org.errors[:website_url].join, "http://"
+  end
+
+  test "TenantCorsOrigins requires default HTTPS port for registered hosts in production" do
+    TenantCorsOrigins.invalidate!
+    original_env = Rails.env
+    Rails.env = ActiveSupport::StringInquirer.new("production")
+    assert TenantCorsOrigins.allowed?("https://alpha.example.com")
+    assert TenantCorsOrigins.allowed?("https://alpha.example.com:443")
+    assert_not TenantCorsOrigins.allowed?("https://alpha.example.com:8443")
+    assert_not TenantCorsOrigins.allowed?("http://alpha.example.com")
+  ensure
+    Rails.env = original_env
   end
 
   test "users table enforces case-insensitive unique email index" do
