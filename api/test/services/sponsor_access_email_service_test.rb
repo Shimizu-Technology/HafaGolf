@@ -56,6 +56,8 @@ class SponsorAccessEmailServiceTest < ActiveSupport::TestCase
     assert_equal "sponsor_portal_invite", delivery.purpose
     assert_equal "email_sponsor_ok_123", delivery.provider_message_id
     assert_equal @sponsor, delivery.messageable
+    assert_equal @organization.id, delivery.organization_id
+    assert_equal [ { name: "delivery_id", value: delivery.id.to_s } ], captured_payload.fetch(:tags)
   end
 
   test "send_access_link records Resend soft API error as failed" do

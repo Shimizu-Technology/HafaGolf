@@ -5,6 +5,7 @@ class Organization < ApplicationRecord
   has_many :tournaments, dependent: :restrict_with_error
   has_many :organization_memberships, dependent: :destroy
   has_many :users, through: :organization_memberships
+  has_many :message_deliveries, dependent: :nullify
 
   # Validations
   validates :name, presence: true
@@ -13,6 +14,7 @@ class Organization < ApplicationRecord
                    format: { with: /\A[a-z0-9\-]+\z/, message: 'only allows lowercase letters, numbers, and hyphens' }
   validates :primary_color, format: { with: /\A#[0-9A-Fa-f]{6}\z/, message: 'must be a valid hex color' }, allow_blank: true
   validates :contact_email, format: { with: URI::MailTo::EMAIL_REGEXP }, allow_blank: true
+  validates :sms_sender_id, length: { maximum: 11 }, allow_blank: true
   validates :subscription_status, inclusion: { in: %w[active past_due canceled trialing] }
 
   # Callbacks

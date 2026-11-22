@@ -15,6 +15,7 @@ class MessageDelivery < ApplicationRecord
     "skipped" => 3
   }.freeze
 
+  belongs_to :organization, optional: true
   belongs_to :tournament, optional: true
   belongs_to :messageable, polymorphic: true, optional: true
 
@@ -31,18 +32,36 @@ class MessageDelivery < ApplicationRecord
   def mark_from_result!(result)
     normalized = result.to_h.with_indifferent_access
     payload = normalized[:data].presence || normalized[:raw_response].presence
-    update!(
-      status: normalized[:status].presence || (normalized[:success] ? "accepted" : "failed"),
-      provider_message_id: normalized[:message_id].presence || provider_message_id,
-      provider_status_code: normalized[:provider_status_code].presence || normalized[:status_code].presence || provider_status_code,
-      provider_status_text: normalized[:provider_status_text].presence || normalized[:status_text].presence || provider_status_text,
-      error_code: normalized[:error_code].presence || error_code,
-      error_text: normalized[:error].presence || normalized[:error_text].presence || error_text,
-      response_payload: payload.present? ? self.class.normalize_response_payload(payload) : response_payload,
-      last_event_at: Time.current,
-      delivered_at: delivered_status?(normalized[:status]) ? Time.current : delivered_at,
-      failed_at: failed_status?(normalized[:status]) || normalized[:success] == false ? Time.current : failed_at
+    incoming_status = self.class.normalize_status(
+      normalized[:status].presence || (normalized[:success] ? "accepted" : "failed")
     )
+
+    with_lock do
+      regresses_status = STATUS_PRECEDENCE.fetch(incoming_status, 0) < STATUS_PRECEDENCE.fetch(self.status, 0)
+      next_status = regresses_status ? self.status : incoming_status
+      merged_payload =
+        if payload.present?
+          self.class.normalize_response_payload(payload).merge(
+            response_payload.slice("events", "latest_event", "latest_provider_event_at")
+          )
+        else
+          response_payload
+        end
+      now = Time.current
+
+      update!(
+        status: next_status,
+        provider_message_id: normalized[:message_id].presence || provider_message_id,
+        provider_status_code: normalized[:provider_status_code].presence || normalized[:status_code].presence || provider_status_code,
+        provider_status_text: normalized[:provider_status_text].presence || normalized[:status_text].presence || provider_status_text,
+        error_code: normalized[:error_code].presence || error_code,
+        error_text: normalized[:error].presence || normalized[:error_text].presence || error_text,
+        response_payload: merged_payload,
+        last_event_at: [ last_event_at, now ].compact.max,
+        delivered_at: delivered_status?(next_status) ? (delivered_at || now) : delivered_at,
+        failed_at: (!regresses_status && (failed_status?(incoming_status) || normalized[:success] == false)) ? (failed_at || now) : failed_at
+      )
+    end
   end
 
   def mark_skipped!(reason)

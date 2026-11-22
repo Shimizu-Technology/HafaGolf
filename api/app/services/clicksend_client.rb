@@ -7,19 +7,22 @@ require "base64"
 
 class ClicksendClient
   BASE_URL = "https://rest.clicksend.com/v3"
+  DEFAULT_SENDER_ID = "HafaGolf"
+  DEFAULT_SOURCE = "hafagolf"
 
   class << self
-    def send_sms(to:, body:, from: nil)
+    def send_sms(to:, body:, from: nil, source: nil)
       username = ENV["CLICKSEND_USERNAME"]
       api_key  = ENV["CLICKSEND_API_KEY"]
-      from   ||= ENV["CLICKSEND_SENDER_ID"] || "MAWGuam"
+      sender   = from.to_s.strip.presence || ENV["CLICKSEND_SENDER_ID"].to_s.strip.presence || DEFAULT_SENDER_ID
+      sms_source = source.to_s.strip.presence || DEFAULT_SOURCE
 
       if username.blank? || api_key.blank?
         Rails.logger.error("[ClicksendClient] Missing credentials — SMS not sent")
         return { success: false, error: "missing_credentials" }
       end
 
-      from = from[0...11] if from.length > 11
+      sender = sender[0...11] if sender.length > 11
 
       formatted_to = normalize_phone(to)
       encoded_body = body.gsub("$", "USD ")
@@ -27,8 +30,8 @@ class ClicksendClient
       payload = {
         messages: [
           {
-            source: "make_a_wish_guam",
-            from: from,
+            source: sms_source,
+            from: sender,
             body: encoded_body,
             to: formatted_to
           }

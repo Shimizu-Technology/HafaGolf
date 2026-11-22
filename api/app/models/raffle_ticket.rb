@@ -10,7 +10,7 @@ class RaffleTicket < ApplicationRecord
 
   PAYMENT_STATUSES = %w[pending paid refunded voided].freeze
 
-  validates :ticket_number, presence: true, uniqueness: true
+  validates :ticket_number, presence: true, uniqueness: { scope: :tournament_id }
   validates :payment_status, inclusion: { in: PAYMENT_STATUSES }
   validates :purchaser_name, presence: true
   validates :payment_method, inclusion: { in: %w[swipe_simple swipesimple cash check card credit comp stripe], allow_blank: true }
@@ -71,7 +71,7 @@ class RaffleTicket < ApplicationRecord
   private
 
   def generate_ticket_number
-    return if ticket_number.present?
+    return if ticket_number.present? || tournament.blank?
 
     prefix = ticket_prefix
     # Use a SQL subquery to atomically grab the next sequence in a single statement,
@@ -83,8 +83,21 @@ class RaffleTicket < ApplicationRecord
 
   def ticket_prefix
     org = tournament&.organization
-    return 'TIX' unless org
+    base_prefix =
+      if org
+        org.name.scan(/[A-Z]/).first(4).join.presence || org.slug&.first(3)&.upcase || 'TIX'
+      else
+        'TIX'
+      end
 
-    org.name.scan(/[A-Z]/).first(4).join.presence || org.slug&.first(3)&.upcase || 'TIX'
+    year_suffix = tournament_year_suffix
+    year_suffix.present? ? "#{base_prefix}#{year_suffix}" : base_prefix
+  end
+
+  def tournament_year_suffix
+    year = tournament&.year
+    return nil if year.blank?
+
+    year.to_i.abs.to_s.last(2).rjust(2, '0')
   end
 end

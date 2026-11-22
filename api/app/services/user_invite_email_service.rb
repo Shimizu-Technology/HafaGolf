@@ -18,6 +18,7 @@ class UserInviteEmailService
         channel: "email",
         purpose: "admin_invite",
         recipient: user.email,
+        organization: org,
         request_payload: {
           from: from_email,
           to: user.email,
@@ -25,14 +26,16 @@ class UserInviteEmailService
         },
         metadata: { invited_by_user_id: invited_by&.id, role: role_label, organization_id: org&.id }
       )
-      response = Resend::Emails.send(
-        {
-          from: from_email,
-          to: user.email,
-          subject: subject,
-          html: invite_html(user: user, invited_by: invited_by, role_label: role_label, org_name: org_name, brand_color: brand_color)
-        }
-      )
+
+      email_payload = {
+        from: from_email,
+        to: user.email,
+        subject: subject,
+        html: invite_html(user: user, invited_by: invited_by, role_label: role_label, org_name: org_name, brand_color: brand_color)
+      }
+      email_payload[:tags] = [ { name: "delivery_id", value: delivery.id.to_s } ] if delivery.present?
+
+      response = Resend::Emails.send(email_payload)
 
       Rails.logger.info("[InviteEmail] sent invite to #{user.email} response=#{response.inspect}")
       parsed = response.respond_to?(:parsed_response) ? response.parsed_response : response

@@ -71,7 +71,37 @@ class RaffleDeliveryExceptionTrackingTest < ActiveSupport::TestCase
       assert_equal "failed", delivery.status
       assert_equal "raffle_winner_notification", delivery.purpose
       assert_equal "Resend timeout", delivery.error_text
+      assert_equal @tournament.organization_id, delivery.organization_id
       assert delivery.failed_at.present?
+    end
+  ensure
+    ENV["RESEND_API_KEY"] = previous_key
+  end
+
+  test "raffle email sends delivery_id tag and records organization_id" do
+    previous_key = ENV["RESEND_API_KEY"]
+    ENV["RESEND_API_KEY"] = "test_resend_key"
+    captured_payload = nil
+
+    with_singleton_method(Resend::Emails, :send, ->(payload) {
+      captured_payload = payload
+      { "id" => "email_raffle_tag_123" }
+    }) do
+      result = RaffleMailer.new.send(
+        :send_email,
+        to: "winner@example.com",
+        subject: "Winner",
+        html: "<p>You won</p>",
+        purpose: "raffle_winner_notification",
+        tournament: @tournament,
+        messageable: winner_prize,
+        metadata: {}
+      )
+
+      delivery = MessageDelivery.last
+      assert_equal true, result.fetch(:success)
+      assert_equal @tournament.organization_id, delivery.organization_id
+      assert_equal [ { name: "delivery_id", value: delivery.id.to_s } ], captured_payload.fetch(:tags)
     end
   ensure
     ENV["RESEND_API_KEY"] = previous_key

@@ -219,18 +219,22 @@ class RaffleMailer
       channel: "email",
       purpose: purpose,
       recipient: to,
+      organization: tournament&.organization,
       tournament: tournament,
       messageable: messageable,
       request_payload: { from: from_email, to: to, subject: subject },
       metadata: metadata
     )
-    
-    response = Resend::Emails.send({
+
+    email_payload = {
       from: from_email,
       to: to,
       subject: subject,
       html: html
-    })
+    }
+    email_payload[:tags] = [ { name: "delivery_id", value: delivery.id.to_s } ] if delivery.present?
+
+    response = Resend::Emails.send(email_payload)
     
     parsed = response.respond_to?(:parsed_response) ? response.parsed_response : response
     

@@ -112,4 +112,19 @@ class OrganizationTest < ActiveSupport::TestCase
     @org.reload
     assert_equal 2, @org.tournament_count
   end
+
+  test "sms_sender_id is optional and enforces 11 character max" do
+    @org.sms_sender_id = nil
+    assert @org.valid?
+
+    @org.sms_sender_id = "HafaGolf27"
+    assert @org.valid?
+
+    @org.sms_sender_id = "12345678901"
+    assert @org.valid?
+
+    @org.sms_sender_id = "123456789012"
+    assert_not @org.valid?
+    assert_includes @org.errors[:sms_sender_id], "is too long (maximum is 11 characters)"
+  end
 end
