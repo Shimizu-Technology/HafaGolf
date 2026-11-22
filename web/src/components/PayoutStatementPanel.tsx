@@ -226,6 +226,30 @@ export function PayoutStatementPanel({ tournamentId }: PayoutStatementPanelProps
   }
 
   const summary = data.settlement ?? data.live_preview;
+  const isDirectCollection = data.payment_mode !== 'platform_collect';
+  const breakdown = (summary.breakdown || {}) as {
+    platform_fee?: {
+      billable_registrant_count?: number;
+      computed_cents?: number;
+      owed_to_platform_cents?: number;
+    };
+    direct_collected?: {
+      registrations?: { count?: number; billable_registrant_count?: number; gross_cents?: number; refund_cents?: number };
+      sponsorships?: { count?: number; gross_cents?: number; refund_cents?: number };
+      donations?: { count?: number; gross_cents?: number; refund_cents?: number };
+      raffle?: { count?: number; gross_cents?: number };
+    };
+  };
+  const owedToPlatformCents =
+    breakdown.platform_fee?.owed_to_platform_cents ??
+    (isDirectCollection ? Math.max(summary.platform_fee_cents - summary.adjustment_cents, 0) : 0);
+  const directRegGross = breakdown.direct_collected?.registrations?.gross_cents ?? 0;
+  const directSponsorGross = breakdown.direct_collected?.sponsorships?.gross_cents ?? 0;
+  const directDonationGross = breakdown.direct_collected?.donations?.gross_cents ?? 0;
+  const directRaffleGross = breakdown.direct_collected?.raffle?.gross_cents ?? 0;
+  const directTotalGross = directRegGross + directSponsorGross + directDonationGross + directRaffleGross;
+  const billableRegistrants = breakdown.platform_fee?.billable_registrant_count ?? 0;
+
   const remainingCapacity =
     data.settlement?.remaining_payout_capacity_cents ??
     Math.max(summary.organizer_proceeds_cents - (summary.paid_cents + summary.pending_payout_cents), 0);
@@ -311,21 +335,52 @@ export function PayoutStatementPanel({ tournamentId }: PayoutStatementPanelProps
         </div>
       )}
 
+      {isDirectCollection && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3.5 text-xs text-blue-900">
+          <p className="font-semibold">
+            Direct Collection Mode ({data.payment_mode.replace('_', ' ')})
+          </p>
+          <p className="mt-0.5 text-blue-800">
+            Payments are collected directly into this organization&apos;s own processor account — Shimizu Technology holds $0.00 and owes $0.00 in payouts.
+            {owedToPlatformCents > 0
+              ? ` Based on ${billableRegistrants} billable registrant${billableRegistrants === 1 ? '' : 's'}, the platform fee owed to Shimizu Technology is ${formatCents(owedToPlatformCents)}.`
+              : ' No platform fee balance is currently owed to Shimizu Technology.'}
+          </p>
+        </div>
+      )}
+
       {/* Statement Metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <MetricCard label="Gross Platform Collected" value={formatCents(summary.gross_cents)} />
-        <MetricCard label="Refunds" value={formatCents(-summary.refund_cents)} tone="muted" />
-        <MetricCard label="Processing Fees" value={formatCents(-summary.processing_fee_cents)} tone="muted" />
-        <MetricCard label="Platform Fee" value={formatCents(-summary.platform_fee_cents)} tone="muted" />
-        <MetricCard label="Adjustments" value={formatCents(summary.adjustment_cents)} />
-        <MetricCard label="Organizer Proceeds" value={formatCents(summary.organizer_proceeds_cents)} tone="brand" />
-        <MetricCard label="Paid Out" value={formatCents(summary.paid_cents)} tone="green" />
-        <MetricCard
-          label="Balance Owed (Payable)"
-          value={formatCents(summary.payable_cents)}
-          tone={summary.payable_cents > 0 ? 'amber' : 'green'}
-        />
-      </div>
+      {isDirectCollection ? (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <MetricCard label="Directly Collected (Total)" value={formatCents(directTotalGross)} />
+          <MetricCard label="Direct Registrations" value={formatCents(directRegGross)} tone="muted" />
+          <MetricCard label="Direct Sponsorships" value={formatCents(directSponsorGross)} tone="muted" />
+          <MetricCard label="Direct Donations" value={formatCents(directDonationGross)} tone="muted" />
+          <MetricCard label="Gross Platform Collected" value={formatCents(summary.gross_cents)} tone="muted" />
+          <MetricCard label="Balance Owed by Shimizu" value={formatCents(summary.payable_cents)} tone="green" />
+          <MetricCard label="Adjustments" value={formatCents(summary.adjustment_cents)} />
+          <MetricCard
+            label="Platform Fee Owed to Shimizu"
+            value={formatCents(owedToPlatformCents)}
+            tone={owedToPlatformCents > 0 ? 'amber' : 'green'}
+          />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <MetricCard label="Gross Platform Collected" value={formatCents(summary.gross_cents)} />
+          <MetricCard label="Refunds" value={formatCents(-summary.refund_cents)} tone="muted" />
+          <MetricCard label="Processing Fees" value={formatCents(-summary.processing_fee_cents)} tone="muted" />
+          <MetricCard label="Platform Fee" value={formatCents(-summary.platform_fee_cents)} tone="muted" />
+          <MetricCard label="Adjustments" value={formatCents(summary.adjustment_cents)} />
+          <MetricCard label="Organizer Proceeds" value={formatCents(summary.organizer_proceeds_cents)} tone="brand" />
+          <MetricCard label="Paid Out" value={formatCents(summary.paid_cents)} tone="green" />
+          <MetricCard
+            label="Balance Owed (Payable)"
+            value={formatCents(summary.payable_cents)}
+            tone={summary.payable_cents > 0 ? 'amber' : 'green'}
+          />
+        </div>
+      )}
 
       {/* Super Admin Controls */}
       {data.can_manage_payouts && (

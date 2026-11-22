@@ -269,12 +269,14 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {MODE_OPTIONS.map((opt) => {
             const active = paymentMode === opt.value;
+            const restrictedToSuperAdmin = opt.value === 'platform_collect' && !canEditFees && config?.payment_mode !== 'platform_collect';
             return (
               <button
                 key={opt.value}
                 type="button"
+                disabled={restrictedToSuperAdmin}
                 onClick={() => handleModeChange(opt.value)}
-                className={`text-left rounded-xl border p-3.5 transition-colors ${
+                className={`text-left rounded-xl border p-3.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   active
                     ? 'border-brand-600 bg-brand-50/40 ring-1 ring-brand-600'
                     : 'border-neutral-200 hover:border-neutral-300 bg-white'
@@ -303,7 +305,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
               ))}
             </select>
           </div>
-          {(paymentMode === 'platform_collect' || paymentMode === 'client_processor') && (
+          {canEditFees && (paymentMode === 'platform_collect' || paymentMode === 'client_processor') && (
             <div className="flex items-end pb-1.5">
               <label className="inline-flex items-center gap-2 text-sm text-neutral-700 cursor-pointer">
                 <input
@@ -368,7 +370,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
               <span>Encrypted Client Stripe Credentials</span>
             </div>
             <p className="text-xs text-neutral-500">
-              Keys are encrypted at rest and never displayed back. Leave blank to keep existing stored credentials.
+              Keys are encrypted at rest and never returned to the browser. Prefer a Stripe Restricted Key (<code>rk_live_...</code>) over a full secret key, and enter keys directly here — never send keys via email or chat. Leave blank to keep existing stored credentials.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
@@ -385,14 +387,14 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
               </div>
               <div>
                 <label className="block text-xs font-medium text-neutral-700 mb-1">
-                  Secret Key {config?.has_secret_key ? '(Stored)' : ''}
+                  Secret / Restricted Key {config?.has_secret_key ? '(Stored)' : ''}
                 </label>
                 <input
                   type="password"
                   autoComplete="new-password"
                   value={secretKey}
                   onChange={(e) => setSecretKey(e.target.value)}
-                  placeholder={config?.has_secret_key ? '•••••••• (saved)' : 'sk_live_...'}
+                  placeholder={config?.has_secret_key ? '•••••••• (saved)' : 'rk_live_... or sk_live_...'}
                   className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-mono"
                 />
               </div>

@@ -19,10 +19,16 @@ module Settlements
     end
 
     def call
+      breakdown = @settlement.breakdown_json.is_a?(Hash) ? @settlement.breakdown_json : {}
+      payment_mode = breakdown["payment_mode"].presence || @organization.effective_payment_config.payment_mode
+      owed_to_platform_cents = breakdown.dig("platform_fee", "owed_to_platform_cents").to_i
+      direct = breakdown["direct_collected"].is_a?(Hash) ? breakdown["direct_collected"] : {}
+
       CSV.generate(headers: false) do |csv|
         csv << ["Payout Settlement Statement"]
         csv << ["Organization", safe_cell(@organization.name)]
         csv << ["Tournament", safe_cell(@tournament.name)]
+        csv << ["Payment Mode", safe_cell(payment_mode)]
         csv << ["Statement Version", @settlement.version]
         csv << ["Status", @settlement.status]
         csv << ["Calculated At", @settlement.calculated_at&.iso8601]
@@ -39,7 +45,26 @@ module Settlements
         csv << ["Organizer Proceeds", dollars(@settlement.organizer_proceeds_cents), @settlement.organizer_proceeds_cents]
         csv << ["Paid Out", dollars(@settlement.paid_cents), @settlement.paid_cents]
         csv << ["Balance Owed (Payable)", dollars(@settlement.payable_cents), @settlement.payable_cents]
+        if payment_mode != "platform_collect" || owed_to_platform_cents.positive?
+          csv << ["Platform Fee Owed to Platform", dollars(owed_to_platform_cents), owed_to_platform_cents]
+        end
         csv << []
+
+        direct_gross = %w[registrations raffle sponsorships donations].sum { |k| direct.dig(k, "gross_cents").to_i }
+        if direct_gross.positive? || payment_mode != "platform_collect"
+          csv << ["Directly Collected by Organization (Not Held by Platform)"]
+          csv << ["Category", "Count", "Gross (USD)", "Refunds (USD)"]
+          %w[registrations sponsorships donations raffle].each do |cat|
+            row = direct[cat].is_a?(Hash) ? direct[cat] : {}
+            csv << [
+              cat.capitalize,
+              row["count"].to_i,
+              dollars(row["gross_cents"].to_i),
+              dollars(row["refund_cents"].to_i)
+            ]
+          end
+          csv << []
+        end
 
         csv << ["Recorded Payouts"]
         csv << ["Payout ID", "Status", "Provider", "Check / Reference #", "Payee", "Bank", "Amount (USD)", "Paid At", "Notes"]

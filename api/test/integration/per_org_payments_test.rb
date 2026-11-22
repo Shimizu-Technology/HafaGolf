@@ -421,6 +421,158 @@ class PerOrgPaymentsTest < ActionDispatch::IntegrationTest
     assert_equal "unpaid", @golfer_a.reload.payment_status
   end
 
+  test "client_processor per-org webhook marks registration, sponsor, and donation paid while rejecting wrong token/secret and platform endpoint" do
+    client_whsec = "whsec_client_a_dedicated_secret"
+    config_a = @org_a.create_organization_payment_config!(
+      payment_mode: "client_processor",
+      processor_provider: "stripe",
+      encrypted_public_key: "pk_test_client_a_9999",
+      encrypted_secret_key: "rk_test_client_a_restricted_9999",
+      encrypted_webhook_secret: client_whsec
+    )
+    @org_b.create_organization_payment_config!(
+      payment_mode: "platform_collect",
+      processor_provider: "stripe"
+    )
+
+    @tournament_a.update!(team_size: 4, allow_partial_teams: true, capacity_unit: "players", entry_fee: 15_000)
+    reg = @tournament_a.registrations.create!(
+      organization: @org_a,
+      team_name: "Client Webhook Team",
+      contact_name: "Webhook Cap",
+      contact_email: "whcap@example.com",
+      payment_type: "stripe",
+      payment_status: "unpaid",
+      registration_status: "pending",
+      stripe_checkout_session_id: "cs_client_reg_1",
+      team_members_attributes: [
+        { organization: @org_a, tournament: @tournament_a, position: 1, is_captain: true, name: "Webhook Cap" }
+      ]
+    )
+    tier = @tournament_a.sponsor_tiers.create!(
+      organization: @org_a,
+      key: "gold",
+      label: "Gold Sponsor",
+      price_cents: 100_000,
+      max_quantity: 2,
+      included_player_slots: 2,
+      online_checkout_enabled: true,
+      sort_order: 1
+    )
+    sponsor = @tournament_a.sponsors.create!(
+      sponsor_tier: tier,
+      name: "Client Webhook Sponsor",
+      login_email: "whsponsor@example.com",
+      tier: "gold",
+      payment_type: "stripe",
+      payment_status: "pending",
+      payment_amount_cents: 100_000,
+      stripe_checkout_session_id: "cs_client_sponsor_1",
+      active: false
+    )
+    donation = @tournament_a.donations.create!(
+      organization: @org_a,
+      donor_name: "Client Webhook Donor",
+      donor_email: "whdonor@example.com",
+      amount_cents: 5_000,
+      payment_type: "stripe",
+      payment_status: "pending",
+      stripe_checkout_session_id: "cs_client_donation_1"
+    )
+
+    reg_payload = {
+      id: "evt_client_reg_1",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_client_reg_1",
+          payment_status: "paid",
+          payment_intent: "pi_client_reg_1",
+          amount_total: 15_000,
+          metadata: { organization_id: @org_a.id.to_s, tournament_id: @tournament_a.id.to_s, registration_id: reg.id.to_s, item_type: "registration" }
+        }
+      }
+    }.to_json
+
+    # 1. Wrong org endpoint token returns 404
+    post "/api/v1/webhooks/stripe/orgs/wrong_token_999",
+         params: reg_payload,
+         headers: signed_stripe_headers(reg_payload, client_whsec)
+    assert_response :not_found
+    assert_equal "unpaid", reg.reload.payment_status
+
+    # 2. Wrong signing secret returns 400
+    post "/api/v1/webhooks/stripe/orgs/#{config_a.webhook_endpoint_token}",
+         params: reg_payload,
+         headers: signed_stripe_headers(reg_payload, "whsec_wrong_secret")
+    assert_response :bad_request
+    assert_equal "unpaid", reg.reload.payment_status
+
+    # 3. Platform webhook endpoint ignores client_processor org events
+    post "/api/v1/webhooks/stripe",
+         params: reg_payload,
+         headers: signed_stripe_headers(reg_payload, ENV["PLATFORM_STRIPE_WEBHOOK_SECRET"])
+    assert_response :ok
+    assert_equal "unpaid", reg.reload.payment_status
+
+    # 4. Signed per-org webhook marks registration, sponsor, and donation paid with client_processor origin
+    post "/api/v1/webhooks/stripe/orgs/#{config_a.webhook_endpoint_token}",
+         params: reg_payload,
+         headers: signed_stripe_headers(reg_payload, client_whsec)
+    assert_response :ok
+    reg.reload
+    assert_equal "paid", reg.payment_status
+    assert_equal "confirmed", reg.registration_status
+    assert_equal "client_processor:#{@org_a.id}", reg.stripe_account_origin
+
+    sponsor_payload = {
+      id: "evt_client_sponsor_1",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_client_sponsor_1",
+          payment_status: "paid",
+          payment_intent: "pi_client_sponsor_1",
+          amount_total: 100_000,
+          metadata: { organization_id: @org_a.id.to_s, tournament_id: @tournament_a.id.to_s, sponsor_id: sponsor.id.to_s, item_type: "sponsorship" }
+        }
+      }
+    }.to_json
+    post "/api/v1/webhooks/stripe/orgs/#{config_a.webhook_endpoint_token}",
+         params: sponsor_payload,
+         headers: signed_stripe_headers(sponsor_payload, client_whsec)
+    assert_response :ok
+    sponsor.reload
+    assert_equal "paid", sponsor.payment_status
+    assert sponsor.active?
+    assert_equal "client_processor:#{@org_a.id}", sponsor.stripe_account_origin
+
+    donation_payload = {
+      id: "evt_client_donation_1",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_client_donation_1",
+          payment_status: "paid",
+          payment_intent: "pi_client_donation_1",
+          amount_total: 5_000,
+          metadata: { organization_id: @org_a.id.to_s, tournament_id: @tournament_a.id.to_s, donation_id: donation.id.to_s, item_type: "donation" }
+        }
+      }
+    }.to_json
+    post "/api/v1/webhooks/stripe/orgs/#{config_a.webhook_endpoint_token}",
+         params: donation_payload,
+         headers: signed_stripe_headers(donation_payload, client_whsec)
+    assert_response :ok
+    donation.reload
+    assert_equal "paid", donation.payment_status
+    assert_equal "client_processor:#{@org_a.id}", donation.stripe_account_origin
+
+    # Org B (platform_collect) has zero leaked charges or settlement impact
+    org_b_calc = Settlements::Calculator.call(@tournament_b)
+    assert_equal 0, org_b_calc.gross_cents
+  end
+
   private
 
   def signed_stripe_headers(payload, secret)

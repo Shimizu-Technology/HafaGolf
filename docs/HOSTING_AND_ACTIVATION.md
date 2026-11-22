@@ -76,6 +76,21 @@ Validate the core Render + Netlify variables before any staging or production de
 | `VITE_ADMIN_ORIGIN` | Yes | `https://golf.shimizu-technology.com` (public domains redirect `/admin*` here) |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Yes | Loaded **only** inside the lazy-loaded `admin-clerk` chunk on the admin host |
 
+### 3.3 Client-Owned Stripe Keys (`client_processor` Mode) — Safe Key Handoff
+
+Organizations that already have their own Stripe account can run in `client_processor` mode so card proceeds settle directly into their own Stripe account (while HafaGolf tracks any platform fee separately as owed to Shimizu Technology).
+
+- **Use a Restricted Key (`rk_live_...`, preferred over `sk_live_...`):** `Payments::StripeAdapter` calls only scoped Checkout, PaymentIntent, PaymentMethod, and Refund endpoints, so a Stripe **Restricted Key** works out of the box with minimum permissions:
+  - **Checkout Sessions:** Write
+  - **PaymentIntents:** Read
+  - **PaymentMethods:** Read
+  - **Refunds:** Write
+- **Never transmit keys by email, SMS, WhatsApp, Slack, or chat.** The client's org admin enters their own Publishable Key (`pk_live_...`), Restricted/Secret Key (`rk_live_...`), and Webhook Signing Secret (`whsec_...`) directly into **Admin Console → Settings → Payments & Processor Mode** (`OrgPaymentConfigPanel`) — or enters them live during an onboarding screen-share with Shimizu Technology.
+- **Storage, masking & access control:**
+  - Keys are encrypted at rest via Rails 8 Active Record Encryption (`ACTIVE_RECORD_ENCRYPTION_*`) and are **never returned to the browser** after saving (only `masked_public_key` and `has_*` booleans are returned).
+  - Only that organization's admins (`org_admin`) and platform `super_admin`s can read or update its payment configuration; volunteers and admins of other organizations receive `403 Forbidden`.
+  - Saving `client_processor` generates a dedicated opaque webhook URL (`https://<api-host>/api/v1/webhooks/stripe/orgs/<webhook_endpoint_token>`). Register that URL in the client's Stripe Dashboard for `checkout.session.completed`, `checkout.session.expired`, and `payment_intent.payment_failed`, paste the resulting `whsec_...` signing secret into the settings panel, and use **Rotate Token** if the URL ever needs to be replaced.
+
 ---
 
 ## 4. Database, Migrations & PostgreSQL RLS Activation
