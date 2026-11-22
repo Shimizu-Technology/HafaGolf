@@ -178,6 +178,7 @@ if tournament.golfers.none?
       partner_email: "partner#{i + 1}@example.com",
       partner_phone: "671-555-#{(300 + i).to_s.rjust(4, '0')}",
       team_name: "#{team[:name]} & #{team[:partner]}",
+      team_category: 'Co-Ed',
       email: "golfer#{i + 1}@example.com",
       phone: "671-555-#{(200 + i).to_s.rjust(4, '0')}",
       company: team[:company],

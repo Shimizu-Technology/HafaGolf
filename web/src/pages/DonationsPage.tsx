@@ -37,7 +37,7 @@ export function DonationsPage() {
   }>();
   const [searchParams] = useSearchParams();
   const { organization, isLoading: orgLoading } = useOrganization();
-  const orgSlug = paramOrgSlug || organization?.slug || getDefaultOrgSlug();
+  const orgSlug = paramOrgSlug || organization?.slug || (!orgLoading ? getDefaultOrgSlug() : '');
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [summary, setSummary] = useState<DonationSummaryResponse | null>(null);
@@ -60,7 +60,11 @@ export function DonationsPage() {
   const pack = branding.themePack;
 
   const loadData = useCallback(async () => {
-    if (!orgSlug) return;
+    if (!paramOrgSlug && orgLoading) return;
+    if (!orgSlug) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     setFeatureDisabled(false);
@@ -104,7 +108,7 @@ export function DonationsPage() {
     } finally {
       setLoading(false);
     }
-  }, [orgSlug, tournamentSlug]);
+  }, [orgLoading, paramOrgSlug, orgSlug, tournamentSlug]);
 
   useEffect(() => {
     loadData();
@@ -247,6 +251,21 @@ export function DonationsPage() {
             <div>
               <p className="font-semibold">Donation checkout cancelled</p>
               <p className="mt-1 text-amber-800">No charge was made. You can try again below.</p>
+            </div>
+          </div>
+        )}
+
+        {summary.payment_mode === 'offline' && (
+          <div className="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-5 flex items-start gap-3 text-sm text-amber-900">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">Offline Donations Only</p>
+              <p className="mt-1 text-amber-800">
+                Online card donations are not enabled for this organization. To make a cash or check contribution,
+                please contact {tournament.contact_name || organization?.name || 'the tournament organizer'}
+                {tournament.contact_email ? ` at ${tournament.contact_email}` : ''}
+                {tournament.contact_phone ? ` (${tournament.contact_phone})` : ''}.
+              </p>
             </div>
           </div>
         )}
@@ -398,13 +417,18 @@ export function DonationsPage() {
 
                   <button
                     type="submit"
-                    disabled={submitting || effectiveAmountCents < 100}
+                    disabled={submitting || effectiveAmountCents < 100 || summary.payment_mode === 'offline'}
                     className="w-full inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-brand-600 text-brand-foreground font-semibold text-sm hover:bg-brand-700 disabled:opacity-50 transition-colors"
                   >
                     {submitting ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
                         Redirecting to Checkout...
+                      </>
+                    ) : summary.payment_mode === 'offline' ? (
+                      <>
+                        <Heart className="w-4 h-4" />
+                        Offline Donations Only
                       </>
                     ) : (
                       <>

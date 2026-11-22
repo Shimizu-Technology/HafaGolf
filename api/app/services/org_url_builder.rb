@@ -10,8 +10,14 @@ module OrgUrlBuilder
   def public_base_url(organization = nil)
     host = organization&.primary_host
     if host.present?
-      scheme = LOCAL_HOSTS.include?(host.downcase) ? "http" : "https"
-      "#{scheme}://#{host}"
+      downcased = host.downcase
+      if LOCAL_HOSTS.include?(downcased) || downcased.end_with?(".localhost")
+        port = fallback_local_port
+        host_with_port = (port && !host.include?(":")) ? "#{host}:#{port}" : host
+        "http://#{host_with_port}"
+      else
+        "https://#{host}"
+      end
     else
       fallback_frontend_url
     end
@@ -49,6 +55,16 @@ module OrgUrlBuilder
     ENV.fetch("FRONTEND_URL", "http://localhost:5173").sub(%r{/+\z}, "")
   end
   private_class_method :fallback_frontend_url
+
+  def fallback_local_port
+    uri = URI.parse(fallback_frontend_url)
+    return nil if uri.port.nil? || (uri.scheme == "http" && uri.port == 80) || (uri.scheme == "https" && uri.port == 443)
+
+    uri.port
+  rescue URI::InvalidURIError
+    nil
+  end
+  private_class_method :fallback_local_port
 
   def join_url(base, path)
     clean_base = base.to_s.sub(%r{/+\z}, "")

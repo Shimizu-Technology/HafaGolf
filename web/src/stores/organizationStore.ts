@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { FeatureMap } from '../utils/features';
+import type { OrgPaymentMode, PaymentProcessorProvider } from '../services/api';
 
 export interface HomepageStat {
   value: string;
@@ -40,6 +41,8 @@ export interface Organization {
     theme_pack?: string;
   };
   primary_host?: string | null;
+  payment_mode?: OrgPaymentMode;
+  processor_provider?: PaymentProcessorProvider;
   offseason_enabled?: boolean;
   offseason_title?: string | null;
   offseason_message?: string | null;

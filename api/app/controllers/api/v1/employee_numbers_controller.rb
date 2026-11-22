@@ -103,7 +103,7 @@ module Api
 
       # GET /api/v1/employee_numbers
       def index
-        records = @tournament.employee_numbers.includes(:used_by_golfer)
+        records = @tournament.employee_numbers.includes(:used_by_golfer, :used_by_registration)
 
         case params[:status].to_s
         when "available"
@@ -306,7 +306,7 @@ module Api
       end
 
       def set_employee_number
-        @employee_number = EmployeeNumber.includes(:tournament, :organization, :used_by_golfer).find(params[:id])
+        @employee_number = EmployeeNumber.includes(:tournament, :organization, :used_by_golfer, :used_by_registration).find(params[:id])
       end
 
       def authorize_member_access!
@@ -416,7 +416,8 @@ module Api
           employee_name: record.employee_name,
           used: record.used,
           used_by_golfer_id: record.used_by_golfer_id,
-          used_by_golfer_name: record.used_by_golfer&.name,
+          used_by_registration_id: record.used_by_registration_id,
+          used_by_golfer_name: record.used_by_golfer&.name || record.used_by_registration&.display_team_name,
           used_at: record.used_at&.iso8601,
           created_at: record.created_at&.iso8601,
           updated_at: record.updated_at&.iso8601

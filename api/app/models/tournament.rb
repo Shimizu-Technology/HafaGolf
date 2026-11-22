@@ -319,6 +319,15 @@ class Tournament < ApplicationRecord
     (current_fee || 0) / 100.0
   end
 
+  def formatted_entry_fee_display
+    return entry_fee_display if entry_fee_display.present?
+
+    cents = (current_fee || entry_fee || 0).to_i
+    amount = (cents % 100).zero? ? "$#{cents / 100}" : "$#{format('%.2f', cents / 100.0)}"
+    unit = (capacity_unit == 'players' || team_size.to_i == 1) ? 'player' : 'team'
+    "#{amount}/#{unit}"
+  end
+
   # Early bird pricing
   def early_bird_active?
     return false if early_bird_fee.nil? || early_bird_deadline.nil?

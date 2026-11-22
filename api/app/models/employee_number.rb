@@ -7,6 +7,7 @@ class EmployeeNumber < ApplicationRecord
   belongs_to :organization
   belongs_to :tournament
   belongs_to :used_by_golfer, class_name: "Golfer", optional: true
+  belongs_to :used_by_registration, class_name: "Registration", optional: true
 
   before_validation :normalize_fields
   before_validation :sync_organization_from_tournament
@@ -60,7 +61,7 @@ class EmployeeNumber < ApplicationRecord
     ActiveRecord::Base.transaction(requires_new: true) do
       lock!
 
-      if used? && used_by_golfer_id != golfer.id
+      if used? && (used_by_golfer_id != golfer.id || used_by_registration_id.present?)
         raise AlreadyClaimedError, "Employee number #{employee_number} has already been used"
       end
 
@@ -68,6 +69,7 @@ class EmployeeNumber < ApplicationRecord
         update!(
           used: true,
           used_by_golfer: golfer,
+          used_by_registration: nil,
           used_at: Time.current
         )
       end
@@ -81,26 +83,72 @@ class EmployeeNumber < ApplicationRecord
     self
   end
 
+  # Atomically claims this employee number for a persisted Registration (and optionally its captain TeamMember).
+  def claim_for_registration!(registration, team_member: nil)
+    raise ArgumentError, "Registration must be persisted to claim an employee number" unless registration&.persisted?
+
+    if registration.tournament_id != tournament_id
+      raise TournamentMismatchError, "Employee number does not belong to this tournament"
+    end
+
+    ActiveRecord::Base.transaction(requires_new: true) do
+      lock!
+
+      if used? && (used_by_registration_id != registration.id || used_by_golfer_id.present?)
+        raise AlreadyClaimedError, "Employee number #{employee_number} has already been used"
+      end
+
+      unless used? && used_by_registration_id == registration.id
+        update!(
+          used: true,
+          used_by_golfer: nil,
+          used_by_registration: registration,
+          used_at: Time.current
+        )
+      end
+
+      member = team_member || registration.captain
+      if member&.persisted? && (member.employee_number_record_id != id || !member.is_employee?)
+        member.assign_attributes(is_employee: true, employee_number_record_id: id)
+        member.save!(validate: false)
+      end
+    end
+
+    self
+  end
+
   # Releases this employee number so it becomes available again.
-  # When `expected_golfer_id` is supplied, only releases if currently claimed by that golfer.
-  def release!(clear_golfer: true, expected_golfer_id: nil)
+  # When `expected_golfer_id` or `expected_registration_id` is supplied, only releases if claimed by that owner.
+  def release!(clear_golfer: true, expected_golfer_id: nil, expected_registration_id: nil)
     ActiveRecord::Base.transaction(requires_new: true) do
       lock!
       if expected_golfer_id.present? && used_by_golfer_id != expected_golfer_id
         return self
       end
+      if expected_registration_id.present? && used_by_registration_id != expected_registration_id
+        return self
+      end
 
       previous_golfer = used_by_golfer
+      previous_registration = used_by_registration
 
       update!(
         used: false,
         used_by_golfer: nil,
+        used_by_registration: nil,
         used_at: nil
       )
 
       if clear_golfer && previous_golfer.present? && previous_golfer.employee_number_record_id == id
         previous_golfer.assign_attributes(is_employee: false, employee_number_record_id: nil)
         previous_golfer.save!(validate: false)
+      end
+
+      if clear_golfer && previous_registration.present?
+        previous_registration.team_members.where(employee_number_record_id: id).find_each do |member|
+          member.assign_attributes(is_employee: false, employee_number_record_id: nil)
+          member.save!(validate: false)
+        end
       end
     end
 

@@ -36,9 +36,11 @@ import {
 import {
   buildInitialPlayers,
   buildRegistrationPayload,
+  calculateRegistrationTotalCents,
   canAddPlayer,
   canRemovePlayer,
   createEmptyPlayerDraft,
+  formatEntryFeeDisplay,
   formatEntryUnitSubtitle,
   getDisplayTeamName,
   getStepNames,
@@ -90,8 +92,8 @@ function StepIndicator({ stepNames, currentStep }: { stepNames: string[]; curren
 export const OrgRegistrationPage: React.FC = () => {
   const navigate = useNavigate();
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
-  const { organization } = useOrganization();
-  const orgSlug = organization?.slug || getDefaultOrgSlug();
+  const { organization, isLoading: orgLoading } = useOrganization();
+  const orgSlug = organization?.slug || (!orgLoading ? getDefaultOrgSlug() : '');
 
   const [currentStep, setCurrentStep] = useState(1);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -113,7 +115,17 @@ export const OrgRegistrationPage: React.FC = () => {
     () => (Array.isArray(tournament?.team_categories) ? tournament.team_categories : []),
     [tournament?.team_categories]
   );
-  const stepNames = useMemo(() => getStepNames(teamSize), [teamSize]);
+  const paymentMode = tournament?.payment_mode || organization?.payment_mode || 'offline';
+  const isOfflineMode = paymentMode === 'offline';
+  const isStripeMode = paymentMode === 'platform_collect' || paymentMode === 'client_processor';
+
+  const stepNames = useMemo(() => {
+    const names = getStepNames(teamSize);
+    if (isOfflineMode && names.length > 0) {
+      return [...names.slice(0, -1), 'Review & Confirm'];
+    }
+    return names;
+  }, [teamSize, isOfflineMode]);
   const totalSteps = stepNames.length;
   const isIndividual = teamSize === 1;
 
@@ -160,6 +172,14 @@ export const OrgRegistrationPage: React.FC = () => {
     isEmployeeValidated,
   });
 
+  const totalDueCents = calculateRegistrationTotalCents({
+    entryFeeCents: tournament?.entry_fee,
+    captainEffectiveFeeCents: effectiveFeeCents,
+    playerCount: players.length,
+    teamSize,
+    capacityUnit: tournament?.capacity_unit,
+  });
+
   const handleValidateEmployeeNumber = async (rawValue?: string) => {
     if (!tournament || !employeePricingEnabled) return;
     const normalized = normalizeEmployeeNumber(rawValue ?? employeeNumberInput);
@@ -201,27 +221,40 @@ export const OrgRegistrationPage: React.FC = () => {
   };
 
   useEffect(() => {
-    async function fetchTournament() {
-      if (!orgSlug || !tournamentSlug) return;
+    if (orgLoading) return;
+    if (!orgSlug || !tournamentSlug) {
+      setIsLoading(false);
+      return;
+    }
 
+    let cancelled = false;
+    async function fetchTournament() {
       setIsLoading(true);
+      setSubmitError(null);
       try {
-        const data = await api.getOrganizationTournament(orgSlug, tournamentSlug);
-        setTournament(data);
-        setPlayers(buildInitialPlayers(data.team_size, Boolean(data.allow_partial_teams)));
-        setCurrentStep(1);
-        setErrors({ players: {} });
+        const data = await api.getOrganizationTournament(orgSlug, tournamentSlug!);
+        if (!cancelled) {
+          setTournament(data);
+          setPlayers(buildInitialPlayers(data.team_size, Boolean(data.allow_partial_teams)));
+          setCurrentStep(1);
+          setErrors({ players: {} });
+        }
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Failed to load tournament';
-        console.error('Failed to fetch tournament:', err);
-        setSubmitError(message);
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : 'Failed to load tournament';
+          console.error('Failed to fetch tournament:', err);
+          setSubmitError(message);
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
 
     fetchTournament();
-  }, [orgSlug, tournamentSlug]);
+    return () => {
+      cancelled = true;
+    };
+  }, [orgLoading, orgSlug, tournamentSlug]);
 
   const updatePlayer = <K extends keyof TeamPlayerDraft>(index: number, field: K, value: TeamPlayerDraft[K]) => {
     setPlayers((prev) => prev.map((player, idx) => (idx === index ? { ...player, [field]: value } : player)));
@@ -308,6 +341,8 @@ export const OrgRegistrationPage: React.FC = () => {
     setSubmitError(null);
 
     try {
+      const paymentType = isOfflineMode ? 'pay_on_day' : isStripeMode ? 'stripe' : 'swipe_simple';
+
       const payload = buildRegistrationPayload(
         {
           players,
@@ -315,8 +350,10 @@ export const OrgRegistrationPage: React.FC = () => {
           teamCategory,
         },
         {
-          paymentType: 'swipe_simple',
+          paymentType,
           organizationSlug: orgSlug,
+          isEmployee: isEmployeeValidated,
+          employeeNumber: isEmployeeValidated ? employeeValidation.employeeNumber : undefined,
         }
       );
 
@@ -347,8 +384,39 @@ export const OrgRegistrationPage: React.FC = () => {
         return;
       }
 
+      if (isOfflineMode) {
+        navigate(`/${tournamentSlug}/success`, {
+          state: {
+            golfer: golferCompat,
+            registration,
+            tournament,
+            paymentPending: true,
+          },
+        });
+        return;
+      }
+
       if (!registration.payment_token) {
         throw new Error('Registration saved, but payment link could not be initialized. Please contact the organizer.');
+      }
+
+      if (isStripeMode) {
+        const checkoutResponse = await api.createCheckoutSession(registration.payment_token);
+        if (checkoutResponse.checkout_url) {
+          setSubmitState('redirecting');
+          setPaymentUrl(checkoutResponse.checkout_url);
+          window.location.href = checkoutResponse.checkout_url;
+        } else {
+          navigate(`/${tournamentSlug}/success`, {
+            state: {
+              golfer: golferCompat,
+              registration,
+              tournament,
+              paymentPending: true,
+            },
+          });
+        }
+        return;
       }
 
       const checkoutResponse = await api.createSwipeSimpleCheckout(registration.payment_token);
@@ -376,7 +444,7 @@ export const OrgRegistrationPage: React.FC = () => {
   const inputClass =
     'w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20 transition-colors min-h-[44px]';
 
-  if (isLoading) {
+  if (orgLoading || isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="text-center">
@@ -997,8 +1065,14 @@ export const OrgRegistrationPage: React.FC = () => {
                 <div key="step-review">
                   <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-8">
                     <div className="border-l-4 border-brand-600 pl-3 mb-6">
-                      <h2 className="text-lg font-semibold text-neutral-900">Review & Pay</h2>
-                      <p className="text-sm text-neutral-500">Confirm your details before payment</p>
+                      <h2 className="text-lg font-semibold text-neutral-900">
+                        {isOfflineMode ? 'Review & Confirm' : 'Review & Pay'}
+                      </h2>
+                      <p className="text-sm text-neutral-500">
+                        {isOfflineMode
+                          ? 'Confirm your registration details'
+                          : 'Confirm your details before payment'}
+                      </p>
                     </div>
 
                     <div className="space-y-4">
@@ -1059,8 +1133,7 @@ export const OrgRegistrationPage: React.FC = () => {
                                 <span className="text-green-700">{formatUsdFromCents(effectiveFeeCents)}</span>
                               </span>
                             ) : (
-                              tournament.entry_fee_display ||
-                              `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/${isIndividual ? 'player' : 'team'}`
+                              formatEntryFeeDisplay(tournament)
                             )}
                           </span>
                         </div>
@@ -1080,13 +1153,16 @@ export const OrgRegistrationPage: React.FC = () => {
                       <div className="p-4 bg-neutral-100 rounded-2xl">
                         <div className="flex justify-between items-baseline">
                           <span className="text-sm font-medium text-neutral-700">Total</span>
-                          <span className="text-xl font-bold text-neutral-900">{formatUsdFromCents(effectiveFeeCents)}</span>
+                          <span className="text-xl font-bold text-neutral-900">{formatUsdFromCents(totalDueCents)}</span>
                         </div>
                       </div>
 
                       <div className="bg-brand-600/5 rounded-2xl p-4">
                         <p className="text-sm text-neutral-600">
-                          You will be redirected to complete payment securely online.
+                          {isOfflineMode
+                            ? tournament.payment_instructions ||
+                              'No online payment is required right now. Payment will be collected offline or on tournament day.'
+                            : 'You will be redirected to complete payment securely online.'}
                         </p>
                       </div>
                     </div>
@@ -1136,7 +1212,9 @@ export const OrgRegistrationPage: React.FC = () => {
                     <>
                       {anyAtCapacity && tournament.waitlist_enabled
                         ? 'Join Waitlist'
-                        : 'Register & Pay'}
+                        : isOfflineMode
+                          ? 'Complete Registration'
+                          : 'Register & Pay'}
                       <ChevronRight className="w-4 h-4" />
                     </>
                   )}
@@ -1215,8 +1293,7 @@ export const OrgRegistrationPage: React.FC = () => {
                       </div>
                     ) : (
                       <span className="text-2xl font-bold text-neutral-900">
-                        {tournament.entry_fee_display ||
-                          `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/${isIndividual ? 'player' : 'team'}`}
+                        {formatEntryFeeDisplay(tournament)}
                       </span>
                     )}
                   </div>
@@ -1226,7 +1303,9 @@ export const OrgRegistrationPage: React.FC = () => {
                       Employee rate applied ({employeeValidation.employeeNumber})
                     </p>
                   ) : (
-                    <p className="text-xs text-neutral-400">{formatEntryUnitSubtitle(teamSize, allowPartialTeams)}</p>
+                    <p className="text-xs text-neutral-400">
+                      {formatEntryUnitSubtitle(teamSize, allowPartialTeams, tournament.capacity_unit)}
+                    </p>
                   )}
 
                   {capacitySummary.label && (
@@ -1268,7 +1347,10 @@ export const OrgRegistrationPage: React.FC = () => {
                 ) : (
                   <div className="bg-brand-600/5 rounded-2xl p-3">
                     <p className="text-xs text-neutral-600">
-                      You will be redirected to complete payment securely after submitting.
+                      {isOfflineMode
+                        ? tournament.payment_instructions ||
+                          'Payment is collected offline (cash/check or organizer instructions).'
+                        : 'You will be redirected to complete payment securely after submitting.'}
                     </p>
                   </div>
                 )}

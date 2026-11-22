@@ -26,6 +26,7 @@ class TournamentSerializer < ActiveModel::Serializer
              :registration_deadline, :waitlist_enabled, :waitlist_max,
              # Payment
              :payment_instructions, :allow_cash, :allow_check, :allow_card,
+             :payment_mode, :processor_provider, :external_checkout_configured,
              :swipe_simple_url, :walkin_swipe_simple_url,
              :entry_fee_display, :banner_url_override, :logo_url_override,
              :primary_color_override, :accent_color_override, :signature_image_url_override,
@@ -73,6 +74,28 @@ class TournamentSerializer < ActiveModel::Serializer
 
   def entry_fee_dollars
     object.entry_fee_dollars
+  end
+
+  def entry_fee_display
+    object.formatted_entry_fee_display
+  end
+
+  def payment_mode
+    memoized_payment_config&.payment_mode || "offline"
+  end
+
+  def processor_provider
+    memoized_payment_config&.processor_provider || "none"
+  end
+
+  def external_checkout_configured
+    object.swipe_simple_url.present? || memoized_payment_config&.external_checkout_url.present?
+  end
+
+  def memoized_payment_config
+    return @memoized_payment_config if defined?(@memoized_payment_config)
+
+    @memoized_payment_config = object.organization&.effective_payment_config
   end
 
   def employee_entry_fee_dollars

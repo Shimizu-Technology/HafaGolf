@@ -18,6 +18,9 @@ class Registration < ApplicationRecord
   has_many :team_members, -> { order(:position) }, dependent: :destroy, inverse_of: :registration
   has_many :scores, dependent: :destroy
   has_many :raffle_tickets, dependent: :nullify
+  has_one :employee_number_record, class_name: "EmployeeNumber", foreign_key: :used_by_registration_id, dependent: :nullify
+
+  before_destroy :release_claimed_employee_numbers!
 
   accepts_nested_attributes_for :team_members, allow_destroy: true
 
@@ -127,6 +130,37 @@ class Registration < ApplicationRecord
     end
   end
 
+  def expected_entry_fee_cents(player_count_override: nil, employee_discount: nil)
+    base_fee = (tournament&.current_fee || tournament&.entry_fee || 0).to_i
+    players = [player_count_override || player_count, 1].max
+    has_employee = if employee_discount.nil?
+                     active_team_members.any?(&:is_employee?) || employee_number_record.present?
+                   else
+                     employee_discount
+                   end
+    employee_fee = tournament&.employee_entry_fee
+
+    if tournament&.capacity_unit == "players" || tournament&.team_size.to_i == 1
+      if has_employee && employee_fee.present?
+        employee_fee.to_i + (base_fee * [players - 1, 0].max)
+      else
+        base_fee * players
+      end
+    elsif has_employee && employee_fee.present?
+      employee_fee.to_i
+    else
+      base_fee
+    end
+  end
+
+  def is_employee?
+    active_team_members.any?(&:is_employee?) || employee_number_record.present?
+  end
+
+  def employee_number
+    employee_number_record&.employee_number
+  end
+
   def verify_payment!(admin:, method: nil, notes: nil, amount_cents: nil)
     attrs = {
       payment_status: "paid",
@@ -138,19 +172,30 @@ class Registration < ApplicationRecord
       payment_verified_at: Time.current
     }
     attrs[:registration_status] = "confirmed" if registration_status == "pending"
-    attrs[:payment_amount_cents] = amount_cents || payment_amount_cents || tournament&.current_fee || tournament&.entry_fee
+    attrs[:payment_amount_cents] = amount_cents || payment_amount_cents || expected_entry_fee_cents
 
     update!(attrs)
   end
 
   def cancel!(admin: nil, reason: nil)
-    update!(
-      group_id: nil,
-      registration_status: "cancelled",
-      refund_reason: reason,
-      refunded_at: Time.current,
-      refunded_by: admin
-    )
+    ActiveRecord::Base.transaction(requires_new: true) do
+      update!(
+        group_id: nil,
+        registration_status: "cancelled",
+        refund_reason: reason,
+        refunded_at: Time.current,
+        refunded_by: admin
+      )
+      release_claimed_employee_numbers!
+    end
+  end
+
+  def release_claimed_employee_numbers!
+    return unless persisted?
+
+    EmployeeNumber.where(used_by_registration_id: id).find_each do |record|
+      record.release!(expected_registration_id: id)
+    end
   end
 
   # Creates 1 complimentary raffle ticket per team_member, idempotent via (registration_id, team_member_id)

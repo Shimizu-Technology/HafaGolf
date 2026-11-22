@@ -82,11 +82,48 @@ export function getDisplayTeamName(teamName: string, players: TeamPlayerDraft[])
   return `${names[0]} + ${names.length - 1} teammates`;
 }
 
-export function formatEntryUnitSubtitle(teamSize?: number | null, allowPartialTeams = false): string {
+export function formatEntryUnitSubtitle(
+  teamSize?: number | null,
+  allowPartialTeams = false,
+  capacityUnit?: CapacityUnit
+): string {
   const normalized = normalizeTeamSize(teamSize);
   if (normalized === 1) return 'per player (individual entry)';
+  if (capacityUnit === 'players') {
+    if (allowPartialTeams) return `per player (teams up to ${normalized} players)`;
+    return `per player (${normalized}-player teams)`;
+  }
   if (allowPartialTeams) return `per team (up to ${normalized} players)`;
   return `per team (${normalized} players)`;
+}
+
+export function formatEntryFeeDisplay(tournament: {
+  entry_fee_display?: string | null;
+  entry_fee?: number | null;
+  team_size?: number | null;
+  capacity_unit?: CapacityUnit;
+}): string {
+  if (tournament.entry_fee_display) return tournament.entry_fee_display;
+  const cents = tournament.entry_fee || 0;
+  const dollars = cents % 100 === 0 ? (cents / 100).toFixed(0) : (cents / 100).toFixed(2);
+  const unit = tournament.capacity_unit === 'players' || normalizeTeamSize(tournament.team_size) === 1 ? 'player' : 'team';
+  return `$${dollars}/${unit}`;
+}
+
+export function calculateRegistrationTotalCents(params: {
+  entryFeeCents?: number | null;
+  captainEffectiveFeeCents: number;
+  playerCount: number;
+  teamSize?: number | null;
+  capacityUnit?: CapacityUnit;
+}): number {
+  const normalized = normalizeTeamSize(params.teamSize);
+  const count = Math.max(1, params.playerCount);
+  if (params.capacityUnit === 'players' && normalized > 1) {
+    const baseFee = Math.max(0, params.entryFeeCents || 0);
+    return params.captainEffectiveFeeCents + (count - 1) * baseFee;
+  }
+  return params.captainEffectiveFeeCents;
 }
 
 export function formatCapacityUnitName(unit: CapacityUnit | undefined, count: number): string {
@@ -234,6 +271,8 @@ export function buildRegistrationPayload(
   options?: {
     paymentType?: 'stripe' | 'pay_on_day' | 'swipe_simple' | 'walk_in' | 'offline';
     organizationSlug?: string;
+    isEmployee?: boolean;
+    employeeNumber?: string;
   }
 ): CreateRegistrationPayload {
   const captain = state.players[0];
@@ -266,6 +305,9 @@ export function buildRegistrationPayload(
       })),
     },
     waiver_accepted: state.players.every((player) => player.waiver_accepted),
+    ...(options?.isEmployee && options?.employeeNumber
+      ? { is_employee: true, employee_number: options.employeeNumber }
+      : {}),
     organization_slug: options?.organizationSlug,
   };
 }

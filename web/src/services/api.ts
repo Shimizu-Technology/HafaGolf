@@ -34,6 +34,8 @@ export interface Organization {
     banner_url?: string;
   };
   primary_host?: string | null;
+  payment_mode?: OrgPaymentMode;
+  processor_provider?: PaymentProcessorProvider;
   domains?: OrganizationDomain[];
   offseason_enabled?: boolean;
   offseason_title?: string | null;
@@ -158,6 +160,9 @@ export interface Registration {
   payment_status: 'unpaid' | 'pending' | 'paid' | 'refunded' | null;
   payment_method: string | null;
   payment_amount_cents: number | null;
+  expected_entry_fee_cents?: number | null;
+  is_employee?: boolean;
+  employee_number?: string | null;
   paid_at: string | null;
   payment_verified_at: string | null;
   payment_verified_by_id: number | null;
@@ -212,6 +217,8 @@ export interface CreateRegistrationPayload {
     team_members: CreateRegistrationTeamMemberInput[];
   };
   waiver_accepted?: boolean;
+  is_employee?: boolean;
+  employee_number?: string;
   organization_slug?: string;
 }
 
@@ -307,6 +314,9 @@ export interface Tournament {
   allow_cash?: boolean;
   allow_check?: boolean;
   allow_card?: boolean;
+  payment_mode?: OrgPaymentMode;
+  processor_provider?: PaymentProcessorProvider;
+  external_checkout_configured?: boolean;
   banner_url_override?: string | null;
   logo_url_override?: string | null;
   primary_color_override?: string | null;
@@ -726,7 +736,8 @@ export interface UpdateOrganizationPaymentConfigInput {
 export interface CheckoutSession {
   checkout_url: string;
   session_id: string;
-  golfer_id: number;
+  golfer_id?: number;
+  registration_id?: number;
   test_mode?: boolean;
 }
 
@@ -739,7 +750,11 @@ export interface EmbeddedCheckoutSession {
 
 export interface PaymentConfirmation {
   success: boolean;
-  golfer: Golfer;
+  golfer?: Golfer;
+  registration?: Registration;
+  tournament?: Tournament;
+  tournament_slug?: string;
+  test_mode?: boolean;
   message: string;
 }
 

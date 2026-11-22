@@ -38,6 +38,7 @@ module Api
       private
 
       def serialize_public_organization(organization)
+        payment_config = organization.effective_payment_config
         {
           id: organization.id,
           name: organization.name,
@@ -50,6 +51,8 @@ module Api
           contact_phone: organization.contact_phone,
           website_url: organization.website_url,
           primary_host: organization.primary_host,
+          payment_mode: payment_config.payment_mode,
+          processor_provider: payment_config.processor_provider,
           offseason_enabled: organization.offseason_enabled,
           offseason_title: organization.offseason_title,
           offseason_message: organization.offseason_message,

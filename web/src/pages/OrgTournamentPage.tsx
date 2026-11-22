@@ -14,6 +14,7 @@ import { getPublicFacingCapacitySummary, getRegistrationStatusLabel } from '../u
 import { useApplyBranding } from '../utils/branding';
 import type { ThemePackDefinition } from '../utils/themePacks';
 import { getDefaultOrgSlug } from '../utils/tenant';
+import { formatEntryFeeDisplay } from '../utils/teamRegistration';
 
 const FALLBACK_SPONSOR_TIERS: SponsorTier[] = [
   { key: 'title', label: 'Title Sponsors', sort_order: 0 },
@@ -42,7 +43,7 @@ function sortHoleSponsors(sponsors: Sponsor[], courseConfigs: Tournament['course
 export function OrgTournamentPage() {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization, isLoading: orgLoading } = useOrganization();
-  const orgSlug = organization?.slug || getDefaultOrgSlug();
+  const orgSlug = organization?.slug || (!orgLoading ? getDefaultOrgSlug() : '');
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -50,23 +51,34 @@ export function OrgTournamentPage() {
   const pack = branding.themePack;
 
   useEffect(() => {
-    async function fetchTournament() {
-      if (!orgSlug || !tournamentSlug) return;
+    if (orgLoading) return;
+    if (!orgSlug || !tournamentSlug) {
+      setIsLoading(false);
+      return;
+    }
 
+    let cancelled = false;
+    async function fetchTournament() {
       setIsLoading(true);
+      setError(null);
       try {
-        const data = await api.getOrganizationTournament(orgSlug, tournamentSlug);
-        setTournament(data);
+        const data = await api.getOrganizationTournament(orgSlug, tournamentSlug!);
+        if (!cancelled) setTournament(data);
       } catch (err: unknown) {
-        console.error('Failed to fetch tournament:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load tournament');
+        if (!cancelled) {
+          console.error('Failed to fetch tournament:', err);
+          setError(err instanceof Error ? err.message : 'Failed to load tournament');
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
 
     fetchTournament();
-  }, [orgSlug, tournamentSlug]);
+    return () => {
+      cancelled = true;
+    };
+  }, [orgLoading, orgSlug, tournamentSlug]);
 
   if (orgLoading || isLoading) {
     return (
@@ -211,7 +223,7 @@ export function OrgTournamentPage() {
             )}
             <div className="flex items-center gap-2 text-neutral-600">
               <DollarSign className="w-4 h-4 text-brand-600" strokeWidth={1.5} />
-              <span>{tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}</span>
+              <span>{formatEntryFeeDisplay(tournament)}</span>
             </div>
             {capacitySummary.label && (
               <div className="flex items-center gap-2 text-neutral-600">
@@ -340,7 +352,7 @@ export function OrgTournamentPage() {
                 <div className={pack.surfaces.insetBoxClass}>
                   <p className={pack.typography.eyebrowClass}>Entry Fee</p>
                   <p className="mt-2 text-2xl font-bold tracking-tight text-neutral-900 break-words">
-                    {tournament.entry_fee_display || `$${((tournament.entry_fee || 0) / 100).toFixed(0)}/team`}
+                    {formatEntryFeeDisplay(tournament)}
                   </p>
                 </div>
 
