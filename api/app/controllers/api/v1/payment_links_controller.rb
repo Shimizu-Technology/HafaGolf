@@ -76,12 +76,13 @@ module Api
           return handle_test_mode(golfer, tournament)
         end
 
-        unless setting.stripe_secret_key.present?
+        stripe_secret = StripeConfig.secret_key(setting: setting)
+        unless stripe_secret.present?
           render json: { error: "Payment processing is not configured" }, status: :service_unavailable
           return
         end
 
-        Stripe.api_key = setting.stripe_secret_key
+        Stripe.api_key = stripe_secret
         frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
         entry_fee = tournament&.entry_fee || 12500
 

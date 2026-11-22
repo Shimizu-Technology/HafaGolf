@@ -18,7 +18,7 @@ class Setting < ApplicationRecord
   end
 
   def stripe_configured?
-    stripe_public_key.present? && stripe_secret_key.present?
+    StripeConfig.configured?(setting: self)
   end
 
   def test_mode?

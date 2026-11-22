@@ -8,10 +8,7 @@ development:
 test:
   adapter: test
 
+# Production runs a single Puma process (WEB_CONCURRENCY=0) with the async adapter.
+# This avoids solid_cable's 0.1s Postgres polling loop so Neon can scale to zero cleanly.
 production:
-  adapter: solid_cable
-  connects_to:
-    database:
-      writing: cable
-  polling_interval: 0.1.seconds
-  message_retention: 1.day
+  adapter: async

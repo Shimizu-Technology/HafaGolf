@@ -322,9 +322,10 @@ class Golfer < ApplicationRecord
     raise "Already refunded" if refunded?
 
     setting = Setting.instance
-    raise "Stripe not configured" unless setting.stripe_secret_key.present?
+    stripe_secret = StripeConfig.secret_key(setting: setting)
+    raise "Stripe not configured" unless stripe_secret.present?
 
-    Stripe.api_key = setting.stripe_secret_key
+    Stripe.api_key = stripe_secret
 
     # Process the refund through Stripe
     refund = Stripe::Refund.create({
