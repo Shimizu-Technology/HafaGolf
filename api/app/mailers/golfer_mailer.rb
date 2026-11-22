@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class GolferMailer < ApplicationMailer
   helper PhoneHelper
 
@@ -6,17 +8,17 @@ class GolferMailer < ApplicationMailer
     @golfer = golfer
     @status = golfer.registration_status
     @is_confirmed = @status == "confirmed"
-    @setting = Setting.instance
     @tournament = golfer.tournament
+    @organization = @tournament&.organization
     @entry_fee = calculate_entry_fee(golfer)
     @payment_type = golfer.payment_type
     @is_swipe_simple = golfer.payment_type == "swipe_simple"
     @is_employee = golfer.is_employee
     @swipe_simple_url = @tournament&.swipe_simple_url.presence ||
-                        ENV.fetch('SWIPE_SIMPLE_PAYMENT_URL', 'https://swipesimple.com/links/lnk_e1c8f45f9c401c93552781ef3d52fdfc')
+                        @organization&.effective_payment_config&.external_checkout_url.presence
     set_org_branding
 
-    tournament_name = @tournament&.name || 'the tournament'
+    tournament_name = @tournament&.name || "the tournament"
     if !@is_confirmed
       subject = "#{tournament_name} — You've Been Added to the Waitlist"
     elsif @is_swipe_simple
@@ -31,10 +33,11 @@ class GolferMailer < ApplicationMailer
   def payment_confirmation_email(golfer)
     @golfer = golfer
     @tournament = golfer.tournament
+    @organization = @tournament&.organization
     @entry_fee = (golfer.payment_amount_cents || calculate_entry_fee_cents(golfer)).to_f / 100
     set_org_branding
 
-    tournament_name = @tournament&.name || 'the event'
+    tournament_name = @tournament&.name || "the event"
     mail(
       to: golfer.email,
       subject: "#{tournament_name} — Payment Confirmed!"
@@ -46,10 +49,9 @@ class GolferMailer < ApplicationMailer
     @golfer = golfer
     @status = golfer.registration_status
     @is_confirmed = @status == "confirmed"
-    @setting = Setting.instance
     @tournament = golfer.tournament
+    @organization = @tournament&.organization
     @is_employee = golfer.is_employee
-    # For Stripe payments, use the actual amount paid
     @entry_fee = (golfer.payment_amount_cents || calculate_entry_fee_cents(golfer)).to_f / 100
     set_org_branding
 
@@ -63,12 +65,13 @@ class GolferMailer < ApplicationMailer
   def promotion_email(golfer)
     @golfer = golfer
     @tournament = golfer.tournament
+    @organization = @tournament&.organization
     @entry_fee = calculate_entry_fee(golfer)
     @swipe_simple_url = @tournament&.swipe_simple_url.presence ||
-                        ENV.fetch('SWIPE_SIMPLE_PAYMENT_URL', 'https://swipesimple.com/links/lnk_e1c8f45f9c401c93552781ef3d52fdfc')
+                        @organization&.effective_payment_config&.external_checkout_url.presence
     set_org_branding
 
-    tournament_name = @tournament&.name || 'the event'
+    tournament_name = @tournament&.name || "the event"
     mail(
       to: golfer.email,
       subject: "#{tournament_name} — A Spot Has Opened Up!"
@@ -78,27 +81,27 @@ class GolferMailer < ApplicationMailer
   # Send refund confirmation email
   def refund_confirmation_email(golfer)
     @golfer = golfer
-    @setting = Setting.instance
     @tournament = golfer.tournament
+    @organization = @tournament&.organization
     @refund_amount = golfer.refund_amount_cents.to_f / 100
     set_org_branding
 
     mail(
       to: golfer.email,
-      subject: "Refund Processed - Golf Tournament Registration"
+      subject: "Refund Processed - #{@tournament&.name || 'Golf Tournament'} Registration"
     )
   end
 
   # Send cancellation confirmation email (for non-refund cancellations)
   def cancellation_email(golfer)
     @golfer = golfer
-    @setting = Setting.instance
     @tournament = golfer.tournament
+    @organization = @tournament&.organization
     set_org_branding
 
     mail(
       to: golfer.email,
-      subject: "Registration Cancelled - Golf Tournament"
+      subject: "Registration Cancelled - #{@tournament&.name || 'Golf Tournament'}"
     )
   end
 
@@ -106,6 +109,7 @@ class GolferMailer < ApplicationMailer
   def scoring_access_email(golfer)
     @golfer = golfer
     @tournament = golfer.tournament
+    @organization = @tournament&.organization
     @magic_link = golfer.magic_link_url
     @group = golfer.group
     @hole_position = golfer.hole_position_label
@@ -120,8 +124,8 @@ class GolferMailer < ApplicationMailer
   # Send payment link email
   def payment_link_email(golfer)
     @golfer = golfer
-    @setting = Setting.instance
     @tournament = golfer.tournament
+    @organization = @tournament&.organization
     @entry_fee = calculate_entry_fee(golfer)
     @payment_link = golfer.payment_link_url
     set_org_branding
@@ -135,10 +139,11 @@ class GolferMailer < ApplicationMailer
   def partner_confirmation_email(golfer)
     @golfer = golfer
     @tournament = golfer.tournament
+    @organization = @tournament&.organization
     @is_swipe_simple = golfer.payment_type == "swipe_simple"
     set_org_branding
 
-    tournament_name = @tournament&.name || 'the tournament'
+    tournament_name = @tournament&.name || "the tournament"
     mail(
       to: golfer.partner_email,
       subject: "#{tournament_name} — You've Been Registered!"
@@ -147,7 +152,6 @@ class GolferMailer < ApplicationMailer
 
   private
 
-  # Calculate entry fee
   def calculate_entry_fee(golfer)
     calculate_entry_fee_cents(golfer).to_f / 100
   end

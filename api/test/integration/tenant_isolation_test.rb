@@ -181,13 +181,15 @@ class TenantIsolationTest < ActionDispatch::IntegrationTest
     assert_equal @group_a.id, @golfer_a.reload.group_id
   end
 
-  test "Org A admin and volunteer cannot access global settings or Org B resources" do
+  test "Org A admin and volunteer cannot access Org B payment config or resources" do
     authenticate_as(@admin_a)
 
-    get "/api/v1/settings", headers: auth_headers
+    get "/api/v1/admin/organizations/#{@org_b.slug}/payment_config", headers: auth_headers
     assert_response :forbidden
 
-    patch "/api/v1/settings", params: { setting: { payment_mode: "test" } }, headers: auth_headers
+    patch "/api/v1/admin/organizations/#{@org_b.slug}/payment_config",
+          params: { payment_config: { payment_mode: "offline" } },
+          headers: auth_headers
     assert_response :forbidden
 
     get "/api/v1/golfers/#{@golfer_b.id}", headers: auth_headers
@@ -207,6 +209,11 @@ class TenantIsolationTest < ActionDispatch::IntegrationTest
 
   test "public checkout routes reject raw golfer_id without payment_token even with no host header" do
     @golfer_b.generate_payment_token!
+    @org_b.create_organization_payment_config!(
+      payment_mode: "external_link",
+      processor_provider: "swipesimple",
+      external_checkout_url: "https://pay.beta-iso.example.com/checkout"
+    )
 
     # Missing payment_token with NO host header -> 400 and Org B golfer untouched
     post "/api/v1/checkout/swipe_simple", params: { golfer_id: @golfer_b.id }

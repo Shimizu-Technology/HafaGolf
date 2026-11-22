@@ -16,6 +16,8 @@ class Tournament < ApplicationRecord
   has_many :message_deliveries, dependent: :nullify
   has_many :tournament_assignments, dependent: :destroy
   has_many :assigned_users, through: :tournament_assignments, source: :user
+  has_many :tournament_settlements, dependent: :restrict_with_error
+  has_many :tournament_payouts, dependent: :restrict_with_error
 
   # Validations
   validates :name, presence: true

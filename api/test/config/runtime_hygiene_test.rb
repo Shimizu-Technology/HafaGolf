@@ -70,41 +70,31 @@ class RuntimeHygieneTest < ActionDispatch::IntegrationTest
     assert_empty sql_queries, "Expected /up to avoid DB queries so Neon can scale to zero, got: #{sql_queries.inspect}"
   end
 
-  test "StripeConfig prefers PLATFORM_STRIPE_* then STRIPE_* then legacy Setting fallback" do
-    setting = Setting.instance
-    setting.update!(
-      stripe_secret_key: "sk_test_from_setting",
-      stripe_public_key: "pk_test_from_setting",
-      stripe_webhook_secret: "whsec_from_setting"
-    )
-
-    assert_equal "sk_test_from_setting", StripeConfig.secret_key(setting: setting)
-    assert_equal "pk_test_from_setting", StripeConfig.publishable_key(setting: setting)
-    assert_equal "whsec_from_setting", StripeConfig.webhook_secret(setting: setting)
-    assert StripeConfig.configured?(setting: setting)
+  test "StripeConfig reads PLATFORM_STRIPE_* before STRIPE_* strictly from ENV" do
+    assert_nil StripeConfig.secret_key
+    assert_nil StripeConfig.publishable_key
+    assert_nil StripeConfig.webhook_secret
+    assert_not StripeConfig.configured?
 
     ENV["STRIPE_SECRET_KEY"] = "sk_test_from_env"
     ENV["STRIPE_PUBLISHABLE_KEY"] = "pk_test_from_env"
     ENV["STRIPE_WEBHOOK_SECRET"] = "whsec_from_env"
 
-    assert_equal "sk_test_from_env", StripeConfig.secret_key(setting: setting)
-    assert_equal "pk_test_from_env", StripeConfig.publishable_key(setting: setting)
-    assert_equal "whsec_from_env", StripeConfig.webhook_secret(setting: setting)
+    assert_equal "sk_test_from_env", StripeConfig.secret_key
+    assert_equal "pk_test_from_env", StripeConfig.publishable_key
+    assert_equal "whsec_from_env", StripeConfig.webhook_secret
+    assert StripeConfig.configured?
 
     ENV["PLATFORM_STRIPE_SECRET_KEY"] = "sk_test_from_platform"
     ENV["PLATFORM_STRIPE_PUBLISHABLE_KEY"] = "pk_test_from_platform"
     ENV["PLATFORM_STRIPE_WEBHOOK_SECRET"] = "whsec_from_platform"
 
-    assert_equal "sk_test_from_platform", StripeConfig.secret_key(setting: setting)
-    assert_equal "pk_test_from_platform", StripeConfig.publishable_key(setting: setting)
-    assert_equal "whsec_from_platform", StripeConfig.webhook_secret(setting: setting)
+    assert_equal "sk_test_from_platform", StripeConfig.secret_key
+    assert_equal "pk_test_from_platform", StripeConfig.publishable_key
+    assert_equal "whsec_from_platform", StripeConfig.webhook_secret
   end
 
-  test "stripe webhook uses ENV Stripe credentials even when legacy Setting keys are blank" do
-    Setting.instance.update!(
-      stripe_secret_key: nil,
-      stripe_webhook_secret: nil
-    )
+  test "stripe webhook uses ENV platform Stripe credentials" do
     ENV["PLATFORM_STRIPE_SECRET_KEY"] = "sk_test_platform_only"
     ENV["PLATFORM_STRIPE_WEBHOOK_SECRET"] = "whsec_platform_only"
 
