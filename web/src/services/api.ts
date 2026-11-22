@@ -167,7 +167,7 @@ export interface Tournament {
   primary_color_override?: string | null;
   accent_color_override?: string | null;
   signature_image_url_override?: string | null;
-  theme_preset?: 'classic' | 'premium' | 'minimal' | 'event';
+  theme_preset?: 'default-clean' | 'charity-bright' | 'memorial-formal' | 'crest-classic' | 'classic' | 'premium' | 'minimal' | 'event';
   use_org_branding?: boolean;
   
   // Schedule

@@ -445,7 +445,8 @@ module Api
           render json: {
             tournament: tournament.as_json(
               only: [:id, :name, :slug, :year, :edition, :status, :event_date,
-                     :location_name, :entry_fee, :max_capacity, :event_type]
+                     :location_name, :entry_fee, :max_capacity, :event_type,
+                     :theme_preset, :use_org_branding]
             ),
             message: 'Tournament created successfully'
           }, status: :created
@@ -902,6 +903,7 @@ module Api
           :registration_deadline,
           :contact_name, :contact_phone, :fee_includes, :tournament_info,
           :walkin_fee, :walkin_registration_open,
+          :theme_preset, :use_org_branding,
           course_configs: [:key, :name, :hole_count]
         )
       end

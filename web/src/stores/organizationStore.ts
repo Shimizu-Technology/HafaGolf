@@ -13,6 +13,7 @@ export interface OrganizationSettings {
   primary_color?: string;
   secondary_color?: string;
   accent_color?: string;
+  theme_preset?: string;
 }
 
 export interface Organization {
@@ -34,6 +35,7 @@ export interface Organization {
     accent_color?: string;
     logo_url?: string;
     banner_url?: string;
+    theme_pack?: string;
   };
   primary_host?: string | null;
   offseason_enabled?: boolean;
