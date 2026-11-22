@@ -3,6 +3,8 @@
 module Api
   module V1
     class ActivityLogsController < BaseController
+      before_action :require_activity_log_admin!
+
       # GET /api/v1/activity_logs
       def index
         accessible_tournaments = current_user.accessible_tournaments
@@ -152,6 +154,16 @@ module Api
           by_admin: by_admin,
           daily_activity: daily_activity
         }
+      end
+
+      private
+
+      def require_activity_log_admin!
+        return if current_user&.super_admin?
+        return if current_user&.organization_memberships&.exists?(role: 'admin')
+        return if current_user&.tournament_assignments&.exists?
+
+        render json: { error: 'Forbidden: Admin access required' }, status: :forbidden
       end
     end
   end

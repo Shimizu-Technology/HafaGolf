@@ -2,7 +2,9 @@ module Api
   module V1
     class SponsorSlotsController < BaseController
       skip_before_action :authenticate_user!
+      skip_around_action :with_tenant_rls_context
       before_action :authenticate_sponsor!
+      around_action :with_tenant_rls_context
 
       # GET /api/v1/sponsor_slots
       def index
@@ -41,9 +43,10 @@ module Api
 
       def authenticate_sponsor!
         session_token = request.headers["X-Sponsor-Session"] || params[:session_token]
-        @sponsor = Sponsor.find_by_portal_session_token(session_token)
+        @sponsor = TenantContext.with_platform_access { Sponsor.includes(:tournament).find_by_portal_session_token(session_token) }
 
         unless @sponsor && (Current.organization.blank? || @sponsor.tournament.organization_id == Current.organization.id)
+          @sponsor = nil
           render json: { error: "Invalid or expired sponsor session" }, status: :unauthorized
         end
       end

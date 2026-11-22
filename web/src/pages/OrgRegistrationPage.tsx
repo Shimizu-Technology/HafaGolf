@@ -212,7 +212,11 @@ export const OrgRegistrationPage: React.FC = () => {
         return;
       }
 
-      const checkoutResponse = await api.createSwipeSimpleCheckout(result.golfer.id);
+      if (!result.golfer.payment_token) {
+        throw new Error('Registration saved, but payment link could not be initialized. Please contact the organizer.');
+      }
+
+      const checkoutResponse = await api.createSwipeSimpleCheckout(result.golfer.payment_token);
 
       if (checkoutResponse.redirect_url) {
         setSubmitState('redirecting');

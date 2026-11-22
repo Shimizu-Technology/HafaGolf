@@ -7,14 +7,16 @@ module Api
 
       # Skip default admin auth - we use dual auth for most endpoints
       skip_before_action :authenticate_user!
-      
+      skip_around_action :with_tenant_rls_context
+
+      # Auth required endpoints run dual auth BEFORE entering RLS context
+      before_action :authenticate_golfer_or_admin!, only: [:create, :update, :destroy, :verify, :batch, :scorecard]
+      around_action :with_tenant_rls_context
+
       before_action :set_tournament
+      before_action :verify_golfer_belongs_to_tournament!, only: [:create, :update, :destroy, :verify, :batch, :scorecard]
       before_action :authorize_public_tournament_access!, only: [:index, :leaderboard]
       before_action :set_score, only: [:update, :destroy, :verify]
-      
-      # Public endpoints (no auth)
-      # Auth required endpoints use authenticate_golfer_or_admin!
-      before_action :authenticate_golfer_or_admin!, only: [:create, :update, :destroy, :verify, :batch, :scorecard]
       before_action :authorize_admin_for_tournament!, only: [:create, :update, :destroy, :verify, :batch, :scorecard]
       before_action :verify_group_access_for_golfer!, only: [:batch, :scorecard]
       before_action :verify_golfer_owns_score!, only: [:update, :destroy, :verify]
@@ -135,7 +137,7 @@ module Api
         created_scores = []
         errors = []
 
-        ActiveRecord::Base.transaction do
+        ActiveRecord::Base.transaction(requires_new: true) do
           scores_data.each do |score_data|
             score = @tournament.scores.build(score_attributes_from_payload(score_data))
             score.entered_by = score_entered_by
@@ -491,6 +493,13 @@ module Api
         return 'E' if score == 0
         return nil if score.nil?
         score > 0 ? "+#{score}" : score.to_s
+      end
+
+      def verify_golfer_belongs_to_tournament!
+        return unless @current_golfer && @tournament
+        return if @current_golfer.tournament_id == @tournament.id
+
+        render json: { error: 'Unauthorized for this tournament' }, status: :unauthorized
       end
     end
   end

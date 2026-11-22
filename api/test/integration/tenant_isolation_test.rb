@@ -199,6 +199,113 @@ class TenantIsolationTest < ActionDispatch::IntegrationTest
     authenticate_as(@volunteer_a)
     post "/api/v1/golfers/#{@golfer_b.id}/check_in", headers: auth_headers
     assert_response :forbidden
+
+    # Volunteers cannot read org admin activity logs
+    get "/api/v1/activity_logs", params: { all_tournaments: "true" }, headers: auth_headers
+    assert_response :forbidden
+  end
+
+  test "public checkout routes reject raw golfer_id without payment_token even with no host header" do
+    @golfer_b.generate_payment_token!
+
+    # Missing payment_token with NO host header -> 400 and Org B golfer untouched
+    post "/api/v1/checkout/swipe_simple", params: { golfer_id: @golfer_b.id }
+    assert_response :bad_request
+    assert_equal "pay_on_day", @golfer_b.reload.payment_type
+    assert_equal "unpaid", @golfer_b.payment_status
+
+    post "/api/v1/checkout", params: { golfer_id: @golfer_b.id }
+    assert_response :bad_request
+    assert_nil @golfer_b.reload.stripe_checkout_session_id
+
+    # Spoofed Org A host with Org B payment_token -> 404 and untouched
+    post "/api/v1/checkout/swipe_simple",
+         params: { payment_token: @golfer_b.payment_token },
+         headers: { "X-Tenant-Host" => "alpha-iso.example.com" }
+    assert_response :not_found
+    assert_equal "pay_on_day", @golfer_b.reload.payment_type
+
+    # Matching Org B host + Org B payment_token -> 200
+    post "/api/v1/checkout/swipe_simple",
+         params: { payment_token: @golfer_b.payment_token },
+         headers: { "X-Tenant-Host" => "beta-iso.example.com" }
+    assert_response :success
+    assert_equal "swipe_simple", @golfer_b.reload.payment_type
+    assert_equal "pending", @golfer_b.payment_status
+  end
+
+  test "Authorization Bearer fake never grants RLS platform bypass" do
+    observed_bypass = nil
+    orig_closed = TenantContext.method(:with_closed_access)
+    orig_platform = TenantContext.method(:with_platform_access)
+    closed_called = false
+    platform_called = false
+
+    TenantContext.define_singleton_method(:with_closed_access) do |*args, **kwargs, &blk|
+      closed_called = true
+      orig_closed.call(*args, **kwargs, &blk)
+    end
+    TenantContext.define_singleton_method(:with_platform_access) do |*args, **kwargs, &blk|
+      platform_called = true
+      orig_platform.call(*args, **kwargs, &blk)
+    end
+
+    begin
+      get "/api/v1/tournaments/current", headers: { "Authorization" => "Bearer fake_untrusted_token" }
+      assert_response :not_found
+      assert closed_called, "Hostless public request with fake Bearer header must enter fail-closed RLS context"
+      assert_not platform_called, "Hostless public request with fake Bearer header must NEVER get platform RLS bypass"
+    ensure
+      TenantContext.define_singleton_method(:with_closed_access, orig_closed)
+      TenantContext.define_singleton_method(:with_platform_access, orig_platform)
+    end
+  end
+
+  test "batch score failure rolls back valid holes inside RLS-wrapped request" do
+    authenticate_as(@admin_a)
+
+    assert_no_difference "Score.count" do
+      post "/api/v1/tournaments/#{@tournament_a.id}/scores/batch",
+           params: {
+             scores: [
+               { golfer_id: @golfer_a.id, group_id: @group_a.id, hole: 1, strokes: 4 },
+               { golfer_id: @golfer_a.id, group_id: @group_a.id, hole: 2, strokes: 99 }
+             ]
+           },
+           headers: auth_headers
+      assert_response :unprocessable_entity
+    end
+  end
+
+  test "create_tickets partial failure rolls back earlier tickets inside RLS-wrapped request" do
+    authenticate_as(@admin_a)
+
+    # First ticket saves; second fails validation via a duplicate sequence conflict or invalid record
+    call_count = 0
+    orig_save = RaffleTicket.instance_method(:save)
+    RaffleTicket.define_method(:save) do |*args, **kwargs|
+      call_count += 1
+      if call_count == 2
+        errors.add(:base, "Simulated ticket failure")
+        return false
+      end
+      orig_save.bind_call(self, *args, **kwargs)
+    end
+
+    begin
+      assert_no_difference "RaffleTicket.count" do
+        post "/api/v1/tournaments/#{@tournament_a.id}/raffle/tickets",
+             params: {
+               quantity: 2,
+               purchaser_name: "Rollback Buyer",
+               purchaser_phone: "671-555-7788"
+             },
+             headers: auth_headers
+        assert_response :unprocessable_entity
+      end
+    ensure
+      RaffleTicket.define_method(:save, orig_save)
+    end
   end
 
   test "public token routes reject cross-tenant host mismatches" do
@@ -218,9 +325,9 @@ class TenantIsolationTest < ActionDispatch::IntegrationTest
         headers: { "X-Tenant-Host" => "beta-iso.example.com" }
     assert_response :success
 
-    # Org B checkout / swipe_simple on Org A host -> 404
+    # Org B checkout / swipe_simple with Org B token on Org A host -> 404
     post "/api/v1/checkout/swipe_simple",
-         params: { golfer_id: @golfer_b.id },
+         params: { payment_token: @golfer_b.payment_token },
          headers: { "X-Tenant-Host" => "alpha-iso.example.com" }
     assert_response :not_found
 

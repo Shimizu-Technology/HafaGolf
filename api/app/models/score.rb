@@ -23,7 +23,7 @@ class Score < ApplicationRecord
   # Callbacks
   before_save :calculate_relative_score
   before_save :set_par_from_tournament
-  after_save :broadcast_score_update
+  after_commit :broadcast_score_update, on: [:create, :update]
 
   # Scopes
   scope :for_hole, ->(hole) { where(hole: hole) }

@@ -78,6 +78,19 @@ class User < ApplicationRecord
     organizations
   end
 
+  def accessible_organization_ids
+    return Organization.pluck(:id) if super_admin?
+
+    membership_org_ids = organization_memberships.where(role: %w[admin volunteer]).pluck(:organization_id)
+    assigned_org_ids = TenantContext.with_platform_access do
+      Tournament.joins(:tournament_assignments)
+                .where(tournament_assignments: { user_id: id })
+                .distinct
+                .pluck(:organization_id)
+    end
+    (membership_org_ids + assigned_org_ids).compact.uniq
+  end
+
   def accessible_tournaments
     return Tournament.all if super_admin?
     

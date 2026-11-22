@@ -2,6 +2,7 @@ module Api
   module V1
     class TournamentsController < BaseController
       skip_before_action :authenticate_user!, only: [:current]
+      skip_around_action :with_tenant_rls_context, only: [:current]
       before_action :set_tournament, only: [:show, :update, :destroy, :archive, :copy, :open, :close, :complete]
       before_action :authorize_tournament_access!, only: [:show, :update, :destroy, :archive, :copy, :open, :close, :complete]
 
@@ -20,10 +21,21 @@ module Api
       # GET /api/v1/tournaments/current
       # Get the current open tournament for the resolved tenant organization
       def current
-        tournament = resolve_public_tournament(tournament_id: params[:tournament_id], require_listed: true)
+        org = resolve_public_organization
+        tournament = if org.present?
+          TenantContext.with_organization(org) do
+            resolve_public_tournament(tournament_id: params[:tournament_id], require_listed: true)
+          end
+        else
+          TenantContext.with_closed_access do
+            resolve_public_tournament(tournament_id: params[:tournament_id], require_listed: true)
+          end
+        end
         
         if tournament
-          render json: tournament, serializer: TournamentSerializer
+          TenantContext.with_organization(tournament.organization) do
+            render json: tournament, serializer: TournamentSerializer
+          end
         else
           render json: { error: "No active tournament found" }, status: :not_found
         end

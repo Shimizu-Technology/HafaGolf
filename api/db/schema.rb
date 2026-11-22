@@ -53,9 +53,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_170000) do
     t.string "target_type"
     t.bigint "tournament_id"
     t.datetime "updated_at", null: false
+    t.uuid "organization_id"
     t.index ["action"], name: "index_activity_logs_on_action"
     t.index ["admin_id"], name: "index_activity_logs_on_admin_id"
     t.index ["created_at"], name: "index_activity_logs_on_created_at"
+    t.index ["organization_id"], name: "index_activity_logs_on_organization_id"
     t.index ["target_type", "target_id"], name: "index_activity_logs_on_target_type_and_target_id"
     t.index ["tournament_id"], name: "index_activity_logs_on_tournament_id"
   end

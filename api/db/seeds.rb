@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+TenantContext.with_console_access(reason: "db:seed") do
 # Make-A-Wish Guam & CNMI Seeds
 # This is a single-org app — seeds create the MAW organization,
 # Golf for Wishes tournament, sponsors, demo golfers, scores, and raffle prizes.
@@ -304,3 +305,4 @@ puts "  Tournament: #{tournament.name} (#{tournament.status})"
 puts "  Sponsors: #{tournament.sponsors.count}"
 puts "  Golfers: #{tournament.golfers.count}"
 puts "  Raffle Prizes: #{tournament.raffle_prizes.count}"
+end

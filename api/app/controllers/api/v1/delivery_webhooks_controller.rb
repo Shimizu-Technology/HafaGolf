@@ -9,6 +9,7 @@ module Api
       SVIX_TOLERANCE_SECONDS = 300
 
       skip_before_action :authenticate_user!
+      skip_around_action :with_tenant_rls_context
       before_action :verify_delivery_webhook_auth!
 
       # POST /api/v1/webhooks/resend
@@ -20,35 +21,37 @@ module Api
         tagged_delivery_id = extract_delivery_id_tag(data)
         return missing_provider_message_id_response if provider_message_id.blank? && tagged_delivery_id.blank?
 
-        delivery = find_resend_delivery(
-          provider_message_id: provider_message_id,
-          tagged_delivery_id: tagged_delivery_id
-        )
-        if delivery.blank?
-          return render json: { message: "No matching delivery", provider_message_id: provider_message_id }, status: :accepted
-        end
-
+        delivery = nil
         matched = true
-        delivery.with_lock do
-          if delivery.provider_message_id.present? && provider_message_id.present? && delivery.provider_message_id != provider_message_id
-            matched = false
-            next
-          end
 
-          if delivery.provider_message_id.blank? && provider_message_id.present?
-            delivery.provider_message_id = provider_message_id
-          end
-
-          delivery.apply_provider_event!(
-            status: resend_status(event_type, current_status: delivery.status),
-            provider_status_text: event_type,
-            error_text: data[:error].presence || data[:reason].presence || (event_type == "email.suppressed" ? "Recipient suppressed" : nil),
-            payload: payload,
-            event_at: parse_event_time(payload["created_at"])
+        TenantContext.with_platform_access do
+          delivery = find_resend_delivery(
+            provider_message_id: provider_message_id,
+            tagged_delivery_id: tagged_delivery_id
           )
+          next if delivery.blank?
+
+          delivery.with_lock do
+            if delivery.provider_message_id.present? && provider_message_id.present? && delivery.provider_message_id != provider_message_id
+              matched = false
+              next
+            end
+
+            if delivery.provider_message_id.blank? && provider_message_id.present?
+              delivery.provider_message_id = provider_message_id
+            end
+
+            delivery.apply_provider_event!(
+              status: resend_status(event_type, current_status: delivery.status),
+              provider_status_text: event_type,
+              error_text: data[:error].presence || data[:reason].presence || (event_type == "email.suppressed" ? "Recipient suppressed" : nil),
+              payload: payload,
+              event_at: parse_event_time(payload["created_at"])
+            )
+          end
         end
 
-        unless matched
+        if delivery.blank? || !matched
           return render json: { message: "No matching delivery", provider_message_id: provider_message_id }, status: :accepted
         end
 
@@ -61,21 +64,26 @@ module Api
         provider_message_id = payload["message_id"].presence || payload["original_message_id"].presence
         return missing_provider_message_id_response if provider_message_id.blank?
 
-        delivery = MessageDelivery.where(provider: "clicksend", provider_message_id: provider_message_id).recent.first
-        return render json: { message: "No matching delivery", provider_message_id: provider_message_id }, status: :accepted if delivery.blank?
+        delivery = nil
+        TenantContext.with_platform_access do
+          delivery = MessageDelivery.where(provider: "clicksend", provider_message_id: provider_message_id).recent.first
+          next if delivery.blank?
 
-        status_text = payload["status_text"].presence || payload["status"].presence
-        delivery.with_lock do
-          delivery.apply_provider_event!(
-            status: status_text.presence || payload["status_code"],
-            provider_status_code: payload["status_code"],
-            provider_status_text: status_text,
-            error_code: payload["error_code"],
-            error_text: payload["error_text"],
-            payload: payload,
-            event_at: parse_event_time(payload["timestamp"])
-          )
+          status_text = payload["status_text"].presence || payload["status"].presence
+          delivery.with_lock do
+            delivery.apply_provider_event!(
+              status: status_text.presence || payload["status_code"],
+              provider_status_code: payload["status_code"],
+              provider_status_text: status_text,
+              error_code: payload["error_code"],
+              error_text: payload["error_text"],
+              payload: payload,
+              event_at: parse_event_time(payload["timestamp"])
+            )
+          end
         end
+
+        return render json: { message: "No matching delivery", provider_message_id: provider_message_id }, status: :accepted if delivery.blank?
 
         render json: { message: "Delivery updated", delivery_id: delivery.id, status: delivery.status }
       end

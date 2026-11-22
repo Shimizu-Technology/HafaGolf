@@ -70,6 +70,7 @@ module Api
           admin: current_user,
           action: 'admin_created',
           target: user,
+          organization: @organization_scope,
           details: "Added new user: #{user.email}"
         )
         render json: user, serializer: AdminSerializer, status: :created
@@ -114,6 +115,7 @@ module Api
           admin: current_user,
           action: 'admin_deleted',
           target: nil,
+          organization: @organization_scope,
           details: "Removed user: #{user_email}",
           metadata: { deleted_email: user_email }
         )

@@ -2,6 +2,7 @@ module Api
   module V1
     class GolfersController < BaseController
       skip_before_action :authenticate_user!, only: [:create, :registration_status]
+      skip_around_action :with_tenant_rls_context, only: [:create]
       before_action :authorize_collection_volunteer_access!, only: [:index]
       before_action :authorize_collection_tournament_access!, only: [:stats, :bulk_send_payment_links]
       before_action :authorize_golfer_volunteer_access!, only: [:check_in, :undo_check_in, :verify_payment]
@@ -71,45 +72,58 @@ module Api
       # Public registration endpoint
       # Uses database locking to prevent race conditions
       def create
-        # Find specific tournament scoped to resolved tenant organization
-        tournament = resolve_public_tournament(tournament_id: params[:tournament_id])
-        
-        unless tournament
+        org = resolve_public_organization
+        result = nil
+        error_response = nil
+        tournament_missing = false
+
+        run_in_public_rls_context(org) do
+          # Find specific tournament scoped to resolved tenant organization
+          tournament = resolve_public_tournament(tournament_id: params[:tournament_id])
+
+          unless tournament
+            tournament_missing = true
+            next
+          end
+
+          # Wrap in transaction with row locking to prevent race conditions
+          ActiveRecord::Base.transaction(requires_new: true) do
+            # Lock the tournament row to prevent concurrent capacity checks
+            tournament.lock!
+
+            # Re-check registration status after acquiring lock
+            unless tournament.can_register?
+              error_response = { errors: ["Registration is currently closed."], status: :unprocessable_entity }
+              raise ActiveRecord::Rollback
+            end
+
+            golfer = tournament.golfers.new(golfer_params)
+            golfer.waiver_accepted_at = Time.current if params[:waiver_accepted]
+
+            if golfer.save
+              if %w[stripe swipe_simple walk_in].include?(golfer.payment_type)
+                golfer.generate_payment_token!
+              end
+
+              result = {
+                golfer: golfer,
+                message: golfer.registration_status == "confirmed" ?
+                  "Your spot is confirmed!" :
+                  "You have been added to the waitlist."
+              }
+            else
+              error_response = { errors: golfer.errors.full_messages, status: :unprocessable_entity }
+              raise ActiveRecord::Rollback
+            end
+          end
+        end
+
+        if tournament_missing
           render json: { errors: ["No tournament is currently open for registration."] }, status: :unprocessable_entity
           return
         end
 
-        # Wrap in transaction with row locking to prevent race conditions
-        result = nil
-        error_response = nil
-
-        ActiveRecord::Base.transaction do
-          # Lock the tournament row to prevent concurrent capacity checks
-          tournament.lock!
-          
-          # Re-check registration status after acquiring lock
-          unless tournament.can_register?
-            error_response = { errors: ["Registration is currently closed."], status: :unprocessable_entity }
-            raise ActiveRecord::Rollback
-          end
-
-          golfer = tournament.golfers.new(golfer_params)
-          golfer.waiver_accepted_at = Time.current if params[:waiver_accepted]
-
-          if golfer.save
-            result = {
-              golfer: golfer,
-              message: golfer.registration_status == "confirmed" ?
-                "Your spot is confirmed!" :
-                "You have been added to the waitlist."
-            }
-          else
-            error_response = { errors: golfer.errors.full_messages, status: :unprocessable_entity }
-            raise ActiveRecord::Rollback
-          end
-        end
-
-        # Handle response outside of transaction
+        # Handle response & broadcasts AFTER transaction commits
         if error_response
           render json: { errors: error_response[:errors] }, status: error_response[:status]
         elsif result
@@ -1077,6 +1091,14 @@ module Api
               }
             }
           )
+        end
+      end
+
+      def run_in_public_rls_context(organization, &block)
+        if organization.present?
+          TenantContext.with_organization(organization, &block)
+        else
+          TenantContext.with_closed_access(&block)
         end
       end
     end

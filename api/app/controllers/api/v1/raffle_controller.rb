@@ -107,7 +107,7 @@ module Api
         prize.image_url = nil if remove_image_requested?
         saved = false
 
-        RafflePrize.transaction do
+        RafflePrize.transaction(requires_new: true) do
           saved = prize.save
           raise ActiveRecord::Rollback unless saved
 
@@ -143,7 +143,7 @@ module Api
         blob_to_purge = remove_image && prize.image.attached? ? prize.image.blob : nil
         saved = false
 
-        RafflePrize.transaction do
+        RafflePrize.transaction(requires_new: true) do
           prize.assign_attributes(prize_attributes)
           prize.image_url = nil if remove_image
           saved = prize.save
@@ -437,7 +437,7 @@ module Api
         tickets = []
         validation_error = nil
 
-        ActiveRecord::Base.transaction do
+        ActiveRecord::Base.transaction(requires_new: true) do
           @tournament.lock!
           quantity.times do
             ticket = @tournament.raffle_tickets.build(
@@ -591,7 +591,7 @@ module Api
 
         tickets = []
         sale_time = Time.current
-        ActiveRecord::Base.transaction do
+        ActiveRecord::Base.transaction(requires_new: true) do
           @tournament.lock!
           sale_batch = @tournament.raffle_sale_batches.create!(
             buyer_name: buyer_name,

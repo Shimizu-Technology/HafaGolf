@@ -44,11 +44,20 @@ module GolferOrAdminAuth
     payload = GolferAuth.verify(token)
     return false unless payload
 
-    @current_golfer = Golfer.find_by(id: payload['golfer_id'])
+    @current_golfer = TenantContext.with_platform_access do
+      Golfer.includes(:tournament).find_by(id: payload['golfer_id'])
+    end
     return false unless @current_golfer
 
-    # Verify golfer belongs to this tournament
+    # Reject cross-tenant host mismatch if a tenant host was resolved
+    if Current.organization.present? && @current_golfer.tournament.organization_id != Current.organization.id
+      @current_golfer = nil
+      return false
+    end
+
+    # Verify golfer belongs to this tournament when already loaded
     if @tournament && @current_golfer.tournament_id != @tournament.id
+      @current_golfer = nil
       return false
     end
 

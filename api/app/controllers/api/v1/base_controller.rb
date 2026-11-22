@@ -2,6 +2,7 @@ module Api
   module V1
     class BaseController < ApplicationController
       include Authenticated
+      around_action :with_tenant_rls_context
 
       # Standardized error handling
       rescue_from ActiveRecord::RecordNotFound, with: :record_not_found

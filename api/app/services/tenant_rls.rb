@@ -4,10 +4,12 @@
 # multi-tenant tables.
 #
 # Policy semantics (fail-closed):
-# - When `app.rls_bypass = 'on'` (platform/admin/webhook explicitly opted in), access is allowed.
-# - Otherwise, `app.current_organization_id` MUST be set to a non-empty UUID matching the row's
-#   owning organization (either directly via `organization_id` or through `tournaments.organization_id`).
-# - When neither is set, PostgreSQL returns 0 rows on SELECT and rejects INSERT/UPDATE/DELETE.
+# - When `app.rls_bypass = 'on'` (verified super-admin, verified webhook, or explicit
+#   platform job/console access), access is allowed.
+# - Otherwise, the row's owning organization MUST match either:
+#   * `app.current_organization_id` (single-org public/token request), OR
+#   * `app.accessible_organization_ids` (comma-separated UUID allowlist for verified org admins/volunteers).
+# - When none of those are set, PostgreSQL returns 0 rows on SELECT and rejects INSERT/UPDATE/DELETE.
 module TenantRls
   POLICY_NAME = "hafagolf_tenant_isolation"
 
@@ -29,10 +31,16 @@ module TenantRls
     raffle_tickets
     raffle_sale_batches
     scores
+    tournament_assignments
+  ].freeze
+
+  # Tables that may carry either a direct `organization_id` (e.g. org-level admin logs)
+  # or a `tournament_id` linked to `tournaments.organization_id`.
+  HYBRID_ORG_TABLES = %w[
     activity_logs
   ].freeze
 
-  ALL_TABLES = (DIRECT_ORG_TABLES + TOURNAMENT_SCOPED_TABLES).freeze
+  ALL_TABLES = (DIRECT_ORG_TABLES + TOURNAMENT_SCOPED_TABLES + HYBRID_ORG_TABLES).freeze
 
   module_function
 
@@ -45,10 +53,7 @@ module TenantRls
         table: table,
         predicate: <<~SQL.squish
           current_setting('app.rls_bypass', true) = 'on'
-          OR (
-            NULLIF(current_setting('app.current_organization_id', true), '') IS NOT NULL
-            AND organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
-          )
+          OR #{org_match_sql("organization_id")}
         SQL
       )
     end
@@ -56,19 +61,39 @@ module TenantRls
     TOURNAMENT_SCOPED_TABLES.each do |table|
       next unless connection.data_source_exists?(table)
 
+      quoted = connection.quote_table_name(table)
       apply_policy!(
         connection,
         table: table,
         predicate: <<~SQL.squish
           current_setting('app.rls_bypass', true) = 'on'
-          OR (
-            NULLIF(current_setting('app.current_organization_id', true), '') IS NOT NULL
-            AND EXISTS (
-              SELECT 1
-              FROM tournaments t
-              WHERE t.id = #{connection.quote_table_name(table)}.tournament_id
-                AND t.organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
-            )
+          OR EXISTS (
+            SELECT 1
+            FROM tournaments t
+            WHERE t.id = #{quoted}.tournament_id
+              AND #{org_match_sql("t.organization_id")}
+          )
+        SQL
+      )
+    end
+
+    HYBRID_ORG_TABLES.each do |table|
+      next unless connection.data_source_exists?(table)
+
+      quoted = connection.quote_table_name(table)
+      has_org_column = connection.column_exists?(table, :organization_id)
+      direct_clause = has_org_column ? "#{org_match_sql("#{quoted}.organization_id")} OR " : ""
+
+      apply_policy!(
+        connection,
+        table: table,
+        predicate: <<~SQL.squish
+          current_setting('app.rls_bypass', true) = 'on'
+          OR #{direct_clause}EXISTS (
+            SELECT 1
+            FROM tournaments t
+            WHERE t.id = #{quoted}.tournament_id
+              AND #{org_match_sql("t.organization_id")}
           )
         SQL
       )
@@ -96,12 +121,14 @@ module TenantRls
     quoted_role = connection.quote_column_name(role_name)
     exists = connection.select_value("SELECT 1 FROM pg_roles WHERE rolname = #{connection.quote(role_name)}")
 
-    unless exists
+    if exists
       if password.present?
-        connection.execute("CREATE ROLE #{quoted_role} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD #{connection.quote(password)}")
-      else
-        connection.execute("CREATE ROLE #{quoted_role} NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE")
+        connection.execute("ALTER ROLE #{quoted_role} WITH LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD #{connection.quote(password)}")
       end
+    elsif password.present?
+      connection.execute("CREATE ROLE #{quoted_role} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD #{connection.quote(password)}")
+    else
+      connection.execute("CREATE ROLE #{quoted_role} NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE")
     end
 
     connection.execute("GRANT USAGE ON SCHEMA public TO #{quoted_role}")
@@ -110,6 +137,43 @@ module TenantRls
     connection.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO #{quoted_role}")
     connection.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO #{quoted_role}")
   end
+
+  def status(connection = ActiveRecord::Base.connection)
+    role_row = connection.select_one(<<~SQL.squish)
+      SELECT current_user AS role_name, rolsuper, rolbypassrls
+      FROM pg_roles
+      WHERE rolname = current_user
+    SQL
+
+    table_rows = connection.select_all(<<~SQL.squish).to_a
+      SELECT relname AS table_name, relrowsecurity AS rls_enabled, relforcerowsecurity AS rls_forced
+      FROM pg_class
+      WHERE relname IN (#{ALL_TABLES.map { |t| connection.quote(t) }.join(", ")})
+      ORDER BY relname
+    SQL
+
+    {
+      role: role_row,
+      enforced_for_current_role: role_row && !role_row["rolsuper"] && !role_row["rolbypassrls"],
+      tables: table_rows
+    }
+  end
+
+  def org_match_sql(column_sql)
+    <<~SQL.squish
+      (
+        (
+          NULLIF(current_setting('app.current_organization_id', true), '') IS NOT NULL
+          AND #{column_sql} = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
+        )
+        OR (
+          NULLIF(current_setting('app.accessible_organization_ids', true), '') IS NOT NULL
+          AND #{column_sql} = ANY(string_to_array(current_setting('app.accessible_organization_ids', true), ',')::uuid[])
+        )
+      )
+    SQL
+  end
+  private_class_method :org_match_sql
 
   def apply_policy!(connection, table:, predicate:)
     quoted = connection.quote_table_name(table)

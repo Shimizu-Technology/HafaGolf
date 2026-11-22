@@ -48,18 +48,20 @@ module Api
           return
         end
 
-        # Handle the event
-        case event.type
-        when "checkout.session.completed"
-          handle_checkout_session_completed(event.data.object)
-        when "checkout.session.expired"
-          handle_checkout_session_expired(event.data.object)
-        when "payment_intent.succeeded"
-          handle_payment_intent_succeeded(event.data.object)
-        when "payment_intent.payment_failed"
-          handle_payment_intent_failed(event.data.object)
-        else
-          Rails.logger.info("Unhandled Stripe event type: #{event.type}")
+        # Handle the event ONLY AFTER signature verification has passed
+        TenantContext.with_platform_access do
+          case event.type
+          when "checkout.session.completed"
+            handle_checkout_session_completed(event.data.object)
+          when "checkout.session.expired"
+            handle_checkout_session_expired(event.data.object)
+          when "payment_intent.succeeded"
+            handle_payment_intent_succeeded(event.data.object)
+          when "payment_intent.payment_failed"
+            handle_payment_intent_failed(event.data.object)
+          else
+            Rails.logger.info("Unhandled Stripe event type: #{event.type}")
+          end
         end
 
         head :ok

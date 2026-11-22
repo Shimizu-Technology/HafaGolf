@@ -1204,11 +1204,11 @@ export class ApiClient {
     });
   }
 
-  // Checkout / Stripe
-  async createCheckoutSession(golferId: number): Promise<CheckoutSession> {
+  // Checkout / Stripe (keyed on golfer-bound cryptographic payment_token)
+  async createCheckoutSession(paymentToken: string): Promise<CheckoutSession> {
     return this.request('/api/v1/checkout', {
       method: 'POST',
-      body: JSON.stringify({ golfer_id: golferId }),
+      body: JSON.stringify({ payment_token: paymentToken }),
     }, false);
   }
 
@@ -1230,10 +1230,10 @@ export class ApiClient {
     }, false);
   }
 
-  async createSwipeSimpleCheckout(golferId: number): Promise<{ redirect_url: string }> {
+  async createSwipeSimpleCheckout(paymentToken: string): Promise<{ redirect_url: string }> {
     return this.request('/api/v1/checkout/swipe_simple', {
       method: 'POST',
-      body: JSON.stringify({ golfer_id: golferId }),
+      body: JSON.stringify({ payment_token: paymentToken }),
     }, false);
   }
 

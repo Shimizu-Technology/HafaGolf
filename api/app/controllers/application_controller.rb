@@ -2,7 +2,6 @@
 
 class ApplicationController < ActionController::API
   before_action :resolve_current_tenant
-  around_action :with_tenant_rls_context
 
   private
 
@@ -13,21 +12,29 @@ class ApplicationController < ActionController::API
     Current.organization = TenantResolver.resolve_host(Current.tenant_host)
   end
 
-  # Sets transaction-scoped PostgreSQL RLS session variables (`SET LOCAL`) for each request.
-  # Public requests on a resolved tenant host run strictly inside that org's RLS boundary.
-  # Admin / webhook / hostless requests run with platform RLS access and enforce
-  # fine-grained authorization via current_user.accessible_tournaments / webhook signatures.
+  # Sets transaction-scoped PostgreSQL RLS session variables (`SET LOCAL`) strictly
+  # AFTER authentication has run. Never trusts raw `Authorization` headers or missing hosts.
+  # - Verified super_admin -> platform access (`app.rls_bypass = 'on'`)
+  # - Verified org admin / volunteer / tournament admin -> org UUID allowlist (`app.accessible_organization_ids`)
+  # - Verified golfer / sponsor token -> single org (`app.current_organization_id`)
+  # - Public request on resolved tenant host -> single org (`app.current_organization_id`)
+  # - Unauthenticated hostless request (including spoofed Bearer headers) -> fail-closed (0 rows)
   def with_tenant_rls_context(&block)
-    if Current.organization.present? && !admin_or_webhook_request?
+    if respond_to?(:current_user, true) && current_user.present?
+      if current_user.super_admin?
+        TenantContext.with_platform_access(&block)
+      else
+        TenantContext.with_organizations(current_user.accessible_organization_ids, &block)
+      end
+    elsif instance_variable_defined?(:@current_golfer) && @current_golfer.present?
+      TenantContext.with_organization(@current_golfer.tournament.organization_id, &block)
+    elsif instance_variable_defined?(:@sponsor) && @sponsor.present?
+      TenantContext.with_organization(@sponsor.tournament.organization_id, &block)
+    elsif Current.organization.present?
       TenantContext.with_organization(Current.organization, &block)
     else
-      TenantContext.with_platform_access(&block)
+      TenantContext.with_closed_access(&block)
     end
-  end
-
-  def admin_or_webhook_request?
-    request.headers["Authorization"].present? ||
-      request.path.start_with?("/api/v1/admin/", "/api/v1/webhooks/")
   end
 
   # Verifies that a record's organization matches the resolved tenant host when present.
