@@ -30,6 +30,9 @@ Rails.application.routes.draw do
       get 'golfers/registration_status' => 'golfers#registration_status'
       post 'golfers' => 'golfers#create'
 
+      # Employee Numbers (public validation; admin CRUD below)
+      post 'employee_numbers/validate' => 'employee_numbers#validate'
+
       # Payment Links (public endpoints)
       get 'payment_links/:token' => 'payment_links#show'
       post 'payment_links/:token/checkout' => 'payment_links#create_checkout'
@@ -115,6 +118,7 @@ Rails.application.routes.draw do
           post :verify_payment
           post :payment_details
           post :promote
+          post :promote_and_checkin
           post :demote
           post :update_payment_status
           post :cancel
@@ -126,6 +130,13 @@ Rails.application.routes.draw do
         collection do
           get :stats
           post :bulk_send_payment_links
+        end
+      end
+
+      # Employee Numbers (admin, feature-gated by :employee_pricing)
+      resources :employee_numbers, only: [:index, :create, :update, :destroy] do
+        collection do
+          post :bulk_create
         end
       end
 

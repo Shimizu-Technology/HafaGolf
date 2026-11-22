@@ -439,6 +439,8 @@ export interface Golfer {
   // Employee fields
   is_employee: boolean;
   employee_number: string | null;
+  employee_number_record_id?: number | null;
+  expected_entry_fee_cents?: number | null;
   // Payment link
   payment_token: string | null;
   // Sponsor fields
@@ -813,6 +815,49 @@ export interface PaginationMeta {
   per_page: number;
 }
 
+export interface EmployeeNumberRecord {
+  id: number;
+  organization_id: string;
+  tournament_id: number;
+  employee_number: string;
+  employee_name: string | null;
+  used: boolean;
+  used_by_golfer_id: number | null;
+  used_by_golfer_name: string | null;
+  used_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmployeeNumberStats {
+  total: number;
+  used: number;
+  available: number;
+}
+
+export interface EmployeeNumberValidationResponse {
+  valid: boolean;
+  available: boolean;
+  employee_number?: string;
+  employee_name?: string | null;
+  employee_entry_fee_cents?: number | null;
+  message?: string;
+  error?: string;
+}
+
+export interface EmployeeNumbersListResponse {
+  employee_numbers: EmployeeNumberRecord[];
+  stats: EmployeeNumberStats;
+}
+
+export interface BulkCreateEmployeeNumbersResponse {
+  created: number;
+  skipped: number;
+  errors: string[];
+  employee_numbers: EmployeeNumberRecord[];
+  stats: EmployeeNumberStats;
+}
+
 // API client class
 export class ApiClient {
   private getAuthToken: (() => Promise<string | null>) | null = null;
@@ -1109,9 +1154,13 @@ export class ApiClient {
       partner_tshirt_size?: string;
       raffle_tickets_requested?: number;
       raffle_bundle_label?: string;
+      is_employee?: boolean;
+      employee_number?: string;
     };
     waiver_accepted: boolean;
     tournament_id?: string | number;
+    is_employee?: boolean;
+    employee_number?: string;
   }): Promise<{ golfer: Golfer; message: string }> {
     return this.request('/api/v1/golfers', {
       method: 'POST',
@@ -1195,6 +1244,22 @@ export class ApiClient {
   async promoteGolfer(id: number): Promise<Golfer> {
     return this.request(`/api/v1/golfers/${id}/promote`, {
       method: 'POST',
+    });
+  }
+
+  async promoteAndCheckInGolfer(
+    id: number,
+    data?: {
+      mark_paid?: boolean;
+      payment_method?: string;
+      receipt_number?: string;
+      payment_amount_cents?: number;
+      payment_notes?: string;
+    }
+  ): Promise<Golfer> {
+    return this.request(`/api/v1/golfers/${id}/promote_and_checkin`, {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
     });
   }
 
@@ -1601,6 +1666,84 @@ export class ApiClient {
     return this.request(`/api/v1/admin/organizations/${encodeURIComponent(slug)}/features`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
+    });
+  }
+
+  // Employee Numbers (public validation + admin CRUD, feature-gated by :employee_pricing)
+  async validateEmployeeNumber(
+    employeeNumber: string,
+    tournamentId?: number,
+    organizationSlug?: string
+  ): Promise<EmployeeNumberValidationResponse> {
+    return this.request(
+      '/api/v1/employee_numbers/validate',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          employee_number: employeeNumber,
+          tournament_id: tournamentId,
+          organization_slug: organizationSlug,
+        }),
+      },
+      false
+    );
+  }
+
+  async getEmployeeNumbers(params?: {
+    tournament_id?: number;
+    search?: string;
+    status?: 'all' | 'available' | 'used';
+  }): Promise<EmployeeNumbersListResponse> {
+    const searchParams = new URLSearchParams();
+    const tournamentId = params?.tournament_id || this.currentTournamentId;
+    if (tournamentId) searchParams.set('tournament_id', String(tournamentId));
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.status && params.status !== 'all') searchParams.set('status', params.status);
+    const query = searchParams.toString();
+    return this.request(`/api/v1/employee_numbers${query ? `?${query}` : ''}`);
+  }
+
+  async createEmployeeNumber(data: {
+    tournament_id: number;
+    employee_number: string;
+    employee_name?: string;
+  }): Promise<{ employee_number: EmployeeNumberRecord; stats: EmployeeNumberStats }> {
+    return this.request('/api/v1/employee_numbers', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async bulkCreateEmployeeNumbers(data: {
+    tournament_id: number;
+    employee_numbers?: Array<string | { employee_number: string; employee_name?: string }>;
+    raw_text?: string;
+  }): Promise<BulkCreateEmployeeNumbersResponse> {
+    return this.request('/api/v1/employee_numbers/bulk_create', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateEmployeeNumber(
+    id: number,
+    data: {
+      employee_number?: string;
+      employee_name?: string;
+      release?: boolean;
+      used?: boolean;
+    }
+  ): Promise<{ employee_number: EmployeeNumberRecord; stats: EmployeeNumberStats }> {
+    return this.request(`/api/v1/employee_numbers/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteEmployeeNumber(id: number, options?: { release?: boolean }): Promise<void> {
+    const query = options?.release ? '?release=true' : '';
+    return this.request(`/api/v1/employee_numbers/${id}${query}`, {
+      method: 'DELETE',
     });
   }
 

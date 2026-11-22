@@ -23,6 +23,8 @@ class GolferSerializer < ActiveModel::Serializer
              :sponsor_id, :sponsor_name, :sponsor_display_name,
              # Raffle add-on
              :raffle_tickets_requested, :raffle_bundle_label,
+             # Employee pricing fields
+             :is_employee, :employee_number, :employee_number_record_id, :expected_entry_fee_cents,
              # Registration source
              :registration_source
 
@@ -34,6 +36,14 @@ class GolferSerializer < ActiveModel::Serializer
 
   def sponsor_display_name
     object.sponsor_name.presence || object.sponsor&.name
+  end
+
+  def employee_number
+    object.employee_number
+  end
+
+  def expected_entry_fee_cents
+    object.expected_entry_fee_cents
   end
 
   # Extract last name (last word of the full name) for sorting

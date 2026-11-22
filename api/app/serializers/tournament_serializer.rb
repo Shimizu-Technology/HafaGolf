@@ -21,6 +21,7 @@ class TournamentSerializer < ActiveModel::Serializer
              # Pricing
              :early_bird_fee, :early_bird_fee_dollars, :early_bird_deadline,
              :early_bird_active, :current_fee, :current_fee_dollars,
+             :employee_entry_fee, :employee_entry_fee_dollars,
              # Registration
              :registration_deadline, :waitlist_enabled, :waitlist_max,
              # Payment
@@ -72,6 +73,10 @@ class TournamentSerializer < ActiveModel::Serializer
 
   def entry_fee_dollars
     object.entry_fee_dollars
+  end
+
+  def employee_entry_fee_dollars
+    object.employee_entry_fee_dollars
   end
 
   def can_register

@@ -20,7 +20,8 @@ import {
   ChevronDown,
   ChevronUp,
   ShieldCheck,
-  Flag
+  Flag,
+  BadgeCheck
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AddGolferModal } from '../components/AddGolferModal';
@@ -870,6 +871,12 @@ export const OrgTournamentAdmin: React.FC = () => {
                               {golfer.registration_source === 'admin' && (
                                 <span className="inline-flex items-center text-[10px] font-medium text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded-full">
                                   Admin
+                                </span>
+                              )}
+                              {golfer.is_employee && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-brand-700 bg-brand-50 px-1.5 py-0.5 rounded-full">
+                                  <BadgeCheck className="w-3 h-3" />
+                                  {golfer.employee_number || 'Employee'}
                                 </span>
                               )}
                             </div>

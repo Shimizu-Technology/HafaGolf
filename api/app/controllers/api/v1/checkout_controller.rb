@@ -37,7 +37,7 @@ module Api
           return
         end
 
-        entry_fee = tournament&.entry_fee || 12500
+        entry_fee = golfer.expected_entry_fee_cents
 
         begin
           # External Stripe HTTP call runs OUTSIDE any DB transaction using per-request api_key

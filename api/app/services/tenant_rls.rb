@@ -26,6 +26,7 @@ module TenantRls
     donations
     registrations
     team_members
+    employee_numbers
   ].freeze
 
   # Tables scoped to an organization through `tournament_id -> tournaments.organization_id`
