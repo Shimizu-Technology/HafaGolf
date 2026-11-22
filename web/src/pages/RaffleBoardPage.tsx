@@ -19,9 +19,23 @@ import {
   ChevronUp,
   Check,
   X,
+  Pin,
+  Timer,
+  ArrowRight,
 } from 'lucide-react';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { getDefaultOrgSlug } from '../utils/tenant';
+import {
+  applyServerHoldPreference,
+  AUTO_DISMISS_DELAY_MS,
+  shouldAutoDismissSpotlight,
+  toggleLocalHoldPreference,
+  transitionSpotlightOnCleared,
+  transitionSpotlightOnDrawStarted,
+  transitionSpotlightOnWinnerRevealed,
+  type LiveDrawState,
+  type SpotlightPreferencesState,
+} from '../utils/raffleSpotlight';
 
 interface Prize {
   id: number;
@@ -51,6 +65,7 @@ interface RaffleBoardData {
     raffle_enabled: boolean;
     raffle_draw_time: string | null;
     raffle_description: string | null;
+    raffle_hold_winner_on_screen?: boolean;
   };
   prizes: Prize[];
   stats: {
@@ -74,21 +89,6 @@ const FALLBACK_SPINNING_TICKETS = ['TIX-0001', 'TIX-0002', 'TIX-0003', 'TIX-0004
 
 type PublicPrizeStatusFilter = '' | 'available' | 'won';
 type PublicPrizeSort = 'tier' | 'position' | 'name' | 'value_desc' | 'value_asc';
-type DrawPhase = 'spinning' | 'revealing';
-
-interface LiveDrawState {
-  drawId: string;
-  phase: DrawPhase;
-  prizeId: number;
-  prizeName: string;
-  eligibleTicketCount: number;
-  previewTicketSampleCount: number;
-  previewTicketSampleIsSample: boolean;
-  previewTicketNumbers: string[];
-  winnerName?: string;
-  winnerTicketNumber?: string;
-  startedAt: number;
-}
 
 // ---------------------------------------------------------------------------
 // Tier styling helpers
@@ -168,9 +168,18 @@ export const RaffleBoardPage: React.FC = () => {
   const [sortBy, setSortBy] = useState<PublicPrizeSort>('tier');
   const [page, setPage] = useState(1);
   const [liveDraw, setLiveDraw] = useState<LiveDrawState | null>(null);
+  const [spotlightPrefs, setSpotlightPrefs] = useState<SpotlightPreferencesState>({
+    holdWinnerOnScreen: true,
+    hasLocalOverride: false,
+  });
+  const holdWinnerOnScreen = spotlightPrefs.holdWinnerOnScreen;
   const [spinSampleOffset, setSpinSampleOffset] = useState(0);
   const revealTimeoutRef = useRef<number | null>(null);
   const drawSafetyTimeoutRef = useRef<number | null>(null);
+
+  const toggleHoldWinnerMode = useCallback(() => {
+    setSpotlightPrefs((current) => toggleLocalHoldPreference(current));
+  }, []);
 
   const clearLiveDrawTimers = useCallback(() => {
     if (revealTimeoutRef.current) {
@@ -205,6 +214,9 @@ export const RaffleBoardPage: React.FC = () => {
       const boardData = await boardRes.json();
 
       setData(boardData);
+      setSpotlightPrefs((current) =>
+        applyServerHoldPreference(current, boardData.tournament?.raffle_hold_winner_on_screen)
+      );
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load raffle');
@@ -255,6 +267,7 @@ export const RaffleBoardPage: React.FC = () => {
         received(event: {
           action: string;
           draw_id?: string;
+          hold_on_screen?: boolean;
           eligible_ticket_count?: number;
           preview_ticket_numbers?: string[];
           preview_ticket_sample_count?: number;
@@ -267,21 +280,28 @@ export const RaffleBoardPage: React.FC = () => {
             winning_ticket?: { ticket_number?: string };
           };
         }) {
+          if (event.action === 'spotlight_cleared') {
+            clearLiveDrawTimers();
+            setLiveDraw(transitionSpotlightOnCleared());
+            return;
+          }
+
           if (event.action === 'draw_started' && event.draw_id && event.prize) {
             const drawId = event.draw_id;
             clearLiveDrawTimers();
             setSpinSampleOffset(0);
-            setLiveDraw({
-              drawId,
-              phase: 'spinning',
-              prizeId: event.prize.id,
-              prizeName: event.prize.name,
-              eligibleTicketCount: event.eligible_ticket_count || 0,
-              previewTicketSampleCount: event.preview_ticket_sample_count || event.preview_ticket_numbers?.length || 0,
-              previewTicketSampleIsSample: event.preview_ticket_sample_is_sample === true,
-              previewTicketNumbers: event.preview_ticket_numbers || [],
-              startedAt: Date.now(),
-            });
+            setLiveDraw(
+              transitionSpotlightOnDrawStarted({
+                drawId,
+                prizeId: event.prize.id,
+                prizeName: event.prize.name,
+                eligibleTicketCount: event.eligible_ticket_count || 0,
+                previewTicketSampleCount: event.preview_ticket_sample_count || event.preview_ticket_numbers?.length || 0,
+                previewTicketSampleIsSample: event.preview_ticket_sample_is_sample === true,
+                previewTicketNumbers: event.preview_ticket_numbers || [],
+                startedAt: Date.now(),
+              })
+            );
             drawSafetyTimeoutRef.current = window.setTimeout(() => {
               setLiveDraw((current) => (
                 current?.drawId === drawId && current.phase === 'spinning' ? null : current
@@ -296,6 +316,11 @@ export const RaffleBoardPage: React.FC = () => {
             const eligibleTicketCount = event.eligible_ticket_count || 0;
             const previewTicketSampleCount = event.preview_ticket_sample_count || 0;
             const previewTicketSampleIsSample = event.preview_ticket_sample_is_sample === true;
+            if (typeof event.hold_on_screen === 'boolean') {
+              setSpotlightPrefs((current) =>
+                applyServerHoldPreference(current, event.hold_on_screen)
+              );
+            }
             if (drawSafetyTimeoutRef.current) {
               window.clearTimeout(drawSafetyTimeoutRef.current);
               drawSafetyTimeoutRef.current = null;
@@ -311,18 +336,18 @@ export const RaffleBoardPage: React.FC = () => {
               }
               revealTimeoutRef.current = window.setTimeout(() => {
                 setSpinSampleOffset(0);
-                setLiveDraw((latest) => latest?.drawId === drawId ? {
-                  ...latest,
-                  phase: 'revealing',
-                  winnerName: prize.winner_name,
-                  winnerTicketNumber: prize.winning_ticket?.ticket_number,
-                } : latest);
+                setLiveDraw((latest) =>
+                  transitionSpotlightOnWinnerRevealed(latest, {
+                    drawId,
+                    winnerName: prize.winner_name,
+                    winnerTicketNumber: prize.winning_ticket?.ticket_number,
+                  })
+                );
                 void fetchData();
               }, revealDelay);
 
-              return current || {
+              return current || transitionSpotlightOnDrawStarted({
                 drawId,
-                phase: 'spinning',
                 prizeId: prize.id,
                 prizeName: prize.name,
                 eligibleTicketCount,
@@ -330,7 +355,7 @@ export const RaffleBoardPage: React.FC = () => {
                 previewTicketSampleIsSample,
                 previewTicketNumbers: [],
                 startedAt,
-              };
+              });
             });
           }
         },
@@ -403,11 +428,23 @@ export const RaffleBoardPage: React.FC = () => {
   }, [page, totalPages]);
 
   useEffect(() => {
-    if (liveDraw?.phase !== 'revealing') return;
+    if (!shouldAutoDismissSpotlight(liveDraw, holdWinnerOnScreen)) return;
 
-    const timeout = window.setTimeout(() => setLiveDraw(null), 9000);
+    const timeout = window.setTimeout(() => setLiveDraw(null), AUTO_DISMISS_DELAY_MS);
     return () => window.clearTimeout(timeout);
-  }, [liveDraw?.phase, liveDraw?.drawId]);
+  }, [liveDraw, holdWinnerOnScreen]);
+
+  useEffect(() => {
+    if (!liveDraw) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        dismissLiveDraw();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [liveDraw, dismissLiveDraw]);
 
   useEffect(() => {
     if (liveDraw?.phase !== 'spinning') return;
@@ -524,20 +561,42 @@ export const RaffleBoardPage: React.FC = () => {
     <div className="min-h-screen bg-neutral-100 text-neutral-900">
       <SignedInAdminBar />
       {liveDraw && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/80 px-4 py-6 backdrop-blur-sm">
-          <div className="relative w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/85 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Live raffle draw spotlight"
+        >
+          <div className="relative w-full max-w-4xl overflow-hidden rounded-3xl bg-white shadow-2xl">
             <button
               type="button"
               onClick={dismissLiveDraw}
-              className="absolute right-3 top-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus:outline-none focus:ring-2 focus:ring-white/70"
+              className="absolute right-4 top-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus:outline-none focus:ring-2 focus:ring-white/70"
               aria-label="Dismiss live draw"
             >
-              <X className="h-4 w-4" />
+              <X className="h-5 w-5" />
             </button>
-            <div className="bg-brand-600 px-5 py-4 text-brand-foreground sm:px-8 sm:py-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-accent-300">Live raffle draw</p>
-              <h2 className="mt-2 text-2xl font-bold tracking-tight sm:text-4xl">{liveDraw.prizeName}</h2>
-              <p className="mt-2 text-sm text-white/75">
+            <div className="bg-brand-600 px-6 py-5 text-brand-foreground sm:px-10 sm:py-7">
+              <div className="flex flex-wrap items-center gap-2.5 pr-12">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-accent-300">
+                  Live raffle draw
+                </p>
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                  {holdWinnerOnScreen ? (
+                    <>
+                      <Pin className="h-3 w-3" />
+                      Banquet Hold Mode
+                    </>
+                  ) : (
+                    <>
+                      <Timer className="h-3 w-3" />
+                      Auto-dismiss (9s)
+                    </>
+                  )}
+                </span>
+              </div>
+              <h2 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">{liveDraw.prizeName}</h2>
+              <p className="mt-1.5 text-sm text-white/80">
                 Drawing from {liveDraw.eligibleTicketCount.toLocaleString()} ticket{liveDraw.eligibleTicketCount === 1 ? '' : 's'} in this draw.
                 {liveDraw.phase === 'spinning' && liveDraw.previewTicketNumbers.length > 0 && liveDraw.previewTicketSampleIsSample && (
                   <span className="block">
@@ -552,7 +611,7 @@ export const RaffleBoardPage: React.FC = () => {
               </p>
             </div>
 
-            <div className="p-5 sm:p-8">
+            <div className="p-6 sm:p-10">
               {liveDraw.phase === 'spinning' ? (
                 <>
                   <div className="rounded-3xl border border-neutral-200 bg-neutral-950 p-4 text-white sm:p-6">
@@ -575,12 +634,63 @@ export const RaffleBoardPage: React.FC = () => {
                 </>
               ) : (
                 <div className="text-center">
-                  <PartyPopper className="mx-auto h-14 w-14 text-accent-500" />
-                  <p className="mt-4 text-xs font-semibold uppercase tracking-[0.22em] text-brand-600">Winner</p>
-                  <p className="mt-2 text-3xl font-bold tracking-tight text-neutral-950 sm:text-5xl">{liveDraw.winnerName || 'Winner selected'}</p>
-                  {liveDraw.winnerTicketNumber && (
-                    <p className="mt-3 font-mono text-lg font-semibold text-neutral-600">Ticket #{liveDraw.winnerTicketNumber}</p>
-                  )}
+                  <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-600">
+                    <Trophy className="h-9 w-9" />
+                  </div>
+                  <p className="mt-4 text-sm font-bold uppercase tracking-[0.26em] text-brand-600">
+                    Winner
+                  </p>
+                  <p
+                    className="mt-3 text-4xl font-extrabold tracking-tight text-neutral-950 sm:text-6xl lg:text-7xl leading-[1.08] break-words"
+                    data-testid="spotlight-winner-name"
+                  >
+                    {liveDraw.winnerName || 'Winner Selected'}
+                  </p>
+                  <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                    {liveDraw.winnerTicketNumber && (
+                      <span className="inline-flex items-center gap-2 rounded-2xl border-2 border-neutral-900 bg-neutral-950 px-5 py-2.5 font-mono text-xl sm:text-2xl font-bold tracking-wider text-white">
+                        <Ticket className="h-5 w-5 text-accent-300" />
+                        #{liveDraw.winnerTicketNumber}
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 bg-neutral-100 px-5 py-2.5 text-lg sm:text-xl font-semibold text-neutral-800">
+                      <Gift className="h-5 w-5 text-brand-600 shrink-0" />
+                      {liveDraw.prizeName}
+                    </span>
+                  </div>
+
+                  {/* Banquet MC controls */}
+                  <div className="mt-8 pt-6 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={toggleHoldWinnerMode}
+                      className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors w-full sm:w-auto ${
+                        holdWinnerOnScreen
+                          ? 'border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100'
+                          : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:bg-neutral-100'
+                      }`}
+                    >
+                      {holdWinnerOnScreen ? (
+                        <>
+                          <Pin className="h-4 w-4" />
+                          Hold Winner: ON
+                        </>
+                      ) : (
+                        <>
+                          <Timer className="h-4 w-4" />
+                          Auto-Dismiss: 9s
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={dismissLiveDraw}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-semibold text-brand-foreground hover:bg-brand-700 transition-colors w-full sm:w-auto"
+                    >
+                      Dismiss / Next Prize
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -619,6 +729,34 @@ export const RaffleBoardPage: React.FC = () => {
                   </p>
                 </div>
               )}
+              <button
+                type="button"
+                onClick={toggleHoldWinnerMode}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                  holdWinnerOnScreen
+                    ? 'bg-white/20 text-white hover:bg-white/30'
+                    : 'bg-white/10 text-white/80 hover:bg-white/20'
+                }`}
+                title={
+                  holdWinnerOnScreen
+                    ? 'Banquet Hold Mode ON: winners stay on screen until dismissed or next prize is drawn'
+                    : 'Auto-dismiss ON: winner overlay closes after 9 seconds'
+                }
+              >
+                {holdWinnerOnScreen ? (
+                  <>
+                    <Pin className="w-3.5 h-3.5 text-accent-300" />
+                    <span className="hidden sm:inline">Hold Winner: ON</span>
+                    <span className="sm:hidden">Hold</span>
+                  </>
+                ) : (
+                  <>
+                    <Timer className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Auto-Dismiss (9s)</span>
+                    <span className="sm:hidden">9s</span>
+                  </>
+                )}
+              </button>
               <button
                 onClick={fetchData}
                 className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
@@ -962,7 +1100,9 @@ export const RaffleBoardPage: React.FC = () => {
           <p>
             Powered by <span className="font-medium text-neutral-600">Shimizu Technology</span>
           </p>
-          <p className="text-xs">Updates every 5 seconds</p>
+          <p className="text-xs">
+            {cableConnected ? 'Live updates connected' : 'Syncing every 5 seconds'}
+          </p>
         </div>
       </footer>
     </div>

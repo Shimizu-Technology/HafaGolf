@@ -35,7 +35,9 @@ import {
   Mail,
   MessageSquare,
   Phone,
-  Pencil
+  Pencil,
+  MonitorOff,
+  ShieldAlert
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { ActivityLog } from '../services/api';
@@ -48,6 +50,7 @@ import {
   type TicketDeliveryStatus,
 } from '../utils/raffleDelivery';
 import { RaffleEditContactModal } from '../components/RaffleEditContactModal';
+import { RafflePreDrawModal, type PreDrawTarget } from '../components/RafflePreDrawModal';
 
 interface Prize {
   id: number;
@@ -160,6 +163,7 @@ interface Tournament {
   raffle_enabled: boolean;
   raffle_ticket_price_cents: number;
   raffle_include_with_registration: boolean;
+  raffle_hold_winner_on_screen?: boolean;
   raffle_bundles: RaffleBundleDef[];
 }
 
@@ -620,6 +624,7 @@ export const RaffleManagementPage: React.FC = () => {
   // Modals
   const [showPrizeModal, setShowPrizeModal] = useState(false);
   const [editingPrize, setEditingPrize] = useState<Prize | null>(null);
+  const [preDrawTarget, setPreDrawTarget] = useState<PreDrawTarget | null>(null);
   
   // Actions
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -780,33 +785,16 @@ export const RaffleManagementPage: React.FC = () => {
     }
   }, [activeTab, fetchActivityLogs]);
 
-  const handleDrawPrize = async (prize: Prize) => {
-    if (!confirm(`Draw a winner for "${prize.name}"?`)) return;
-
-    setActionLoading(`draw-${prize.id}`);
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament?.id}/raffle/prizes/${prize.id}/draw`,
-        {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
-        }
-      );
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to draw winner');
-      }
-
-      const data = await res.json();
-      toast.success(data.message);
-      void refreshRaffle();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to draw');
-    } finally {
-      setActionLoading(null);
-    }
+  const handleDrawPrize = (prize: Prize) => {
+    setPreDrawTarget({
+      type: 'single',
+      prize: {
+        id: prize.id,
+        name: prize.name,
+        tier_display: prize.tier_display,
+        value_dollars: prize.value_dollars,
+      },
+    });
   };
 
   const handleResetPrize = async (prize: Prize) => {
@@ -880,31 +868,117 @@ export const RaffleManagementPage: React.FC = () => {
     }
   };
 
-  const handleDrawAll = async () => {
+  const handleDrawAll = () => {
     const remaining = prizes.filter(p => !p.won).length;
-    if (!confirm(`Draw winners for all ${remaining} remaining prizes?`)) return;
+    if (remaining === 0) return;
+    setPreDrawTarget({ type: 'all', remainingCount: remaining });
+  };
 
-    setActionLoading('draw-all');
+  const handleConfirmPreDraw = async (options: {
+    overrideReadiness: boolean;
+    overrideReason: string;
+  }) => {
+    if (!tournament || !preDrawTarget) return;
+
+    const loadingKey =
+      preDrawTarget.type === 'single' ? `draw-${preDrawTarget.prize.id}` : 'draw-all';
+    setActionLoading(loadingKey);
+
+    try {
+      const token = await getToken();
+      const url =
+        preDrawTarget.type === 'single'
+          ? `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament.id}/raffle/prizes/${preDrawTarget.prize.id}/draw`
+          : `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament.id}/raffle/draw_all`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          enforce_readiness: true,
+          override_readiness: options.overrideReadiness,
+          override_reason: options.overrideReason || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to draw winner');
+      }
+
+      toast.success(data.message);
+      setPreDrawTarget(null);
+      void refreshRaffle();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to draw';
+      toast.error(message);
+      throw err;
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleReviewNeedsAttentionFromModal = () => {
+    setPreDrawTarget(null);
+    setActiveTab('tickets');
+    setTicketFilter('needs_attention');
+    setTicketPage(1);
+  };
+
+  const handleClearProjectorSpotlight = async () => {
+    if (!tournament) return;
+    setActionLoading('clear-spotlight');
     try {
       const token = await getToken();
       const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament?.id}/raffle/draw_all`,
+        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament.id}/raffle/board/clear_spotlight`,
         {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${token}` },
         }
       );
-
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to draw');
+        throw new Error(data.error || 'Failed to clear projector spotlight');
       }
-
-      const data = await res.json();
-      toast.success(data.message);
-      void refreshRaffle();
+      toast.success('Cleared winner spotlight on projector board');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to draw');
+      toast.error(err instanceof Error ? err.message : 'Failed to clear projector spotlight');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleToggleHoldWinner = async () => {
+    if (!tournament) return;
+    const currentValue = tournament.raffle_hold_winner_on_screen ?? true;
+    const newValue = !currentValue;
+    setActionLoading('toggle-hold-winner');
+    try {
+      const token = await getToken();
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ tournament: { raffle_hold_winner_on_screen: newValue } }),
+        }
+      );
+      if (!res.ok) throw new Error('Failed to update projector hold mode');
+      setTournament((prev) => (prev ? { ...prev, raffle_hold_winner_on_screen: newValue } : prev));
+      toast.success(
+        newValue
+          ? 'Banquet Hold Mode enabled — winners stay on screen until cleared'
+          : 'Auto-dismiss enabled — winner overlay closes after 9 seconds'
+      );
+    } catch {
+      toast.error('Failed to update projector hold mode');
     } finally {
       setActionLoading(null);
     }
@@ -1260,31 +1334,58 @@ export const RaffleManagementPage: React.FC = () => {
         </div>
       )}
 
-      {/* Raffle Enabled Toggle */}
+      {/* Raffle Enabled & Banquet Hold Mode Toggles */}
       {tournament && (
         <div className="max-w-6xl mx-auto px-4 pb-2">
-          <div className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between">
-            <div>
-              <p className="font-semibold text-gray-900">Raffle Active</p>
-              <p className="text-sm text-gray-500">
-                {tournament.raffle_enabled
-                  ? 'Raffle is visible on the public page'
-                  : 'Raffle is hidden from the public page'}
-              </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="font-semibold text-gray-900">Raffle Active</p>
+                <p className="text-sm text-gray-500">
+                  {tournament.raffle_enabled
+                    ? 'Raffle is visible on the public page'
+                    : 'Raffle is hidden from the public page'}
+                </p>
+              </div>
+              <button
+                onClick={handleToggleRaffle}
+                disabled={actionLoading === 'toggle-raffle'}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
+                  tournament.raffle_enabled ? 'bg-green-500' : 'bg-gray-300'
+                } disabled:opacity-50`}
+                aria-label="Toggle raffle active"
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    tournament.raffle_enabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
             </div>
-            <button
-              onClick={handleToggleRaffle}
-              disabled={actionLoading === 'toggle-raffle'}
-              className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${
-                tournament.raffle_enabled ? 'bg-green-500' : 'bg-gray-300'
-              } disabled:opacity-50`}
-            >
-              <span
-                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
-                  tournament.raffle_enabled ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
-            </button>
+            <div className="bg-white rounded-xl shadow-sm p-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="font-semibold text-gray-900">Hold Winner on Projector</p>
+                <p className="text-sm text-gray-500">
+                  {(tournament.raffle_hold_winner_on_screen ?? true)
+                    ? 'Banquet mode: winner stays up until cleared or next draw'
+                    : 'Auto-dismisses winner overlay after 9 seconds'}
+                </p>
+              </div>
+              <button
+                onClick={handleToggleHoldWinner}
+                disabled={actionLoading === 'toggle-hold-winner'}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
+                  (tournament.raffle_hold_winner_on_screen ?? true) ? 'bg-brand-600' : 'bg-gray-300'
+                } disabled:opacity-50`}
+                aria-label="Toggle hold winner on projector"
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    (tournament.raffle_hold_winner_on_screen ?? true) ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1354,20 +1455,37 @@ export const RaffleManagementPage: React.FC = () => {
                 <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
                 Add Prize
               </button>
-              {prizes.filter(p => !p.won).length > 0 && (
-                <button
-                  onClick={handleDrawAll}
-                  disabled={actionLoading === 'draw-all'}
-                  className="flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 disabled:opacity-50 text-sm font-medium"
-                >
-                  {actionLoading === 'draw-all' ? (
-                    <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4 sm:w-5 sm:h-5" />
-                  )}
-                  Draw All Remaining
-                </button>
-              )}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                {prizes.some((p) => p.won) && (
+                  <button
+                    type="button"
+                    onClick={() => void handleClearProjectorSpotlight()}
+                    disabled={actionLoading === 'clear-spotlight'}
+                    className="flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-50 text-sm font-medium"
+                  >
+                    {actionLoading === 'clear-spotlight' ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <MonitorOff className="w-4 h-4" />
+                    )}
+                    Clear Projector Spotlight
+                  </button>
+                )}
+                {prizes.filter(p => !p.won).length > 0 && (
+                  <button
+                    onClick={handleDrawAll}
+                    disabled={actionLoading === 'draw-all'}
+                    className="flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 disabled:opacity-50 text-sm font-medium"
+                  >
+                    {actionLoading === 'draw-all' ? (
+                      <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4 sm:w-5 sm:h-5" />
+                    )}
+                    Draw All Remaining
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Search + Filters */}
@@ -2118,6 +2236,7 @@ export const RaffleManagementPage: React.FC = () => {
                     <div key={log.id} className="px-4 py-3 sm:px-5 sm:py-4 hover:bg-gray-50">
                       <div className="flex items-start gap-3">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                          log.action === 'raffle_draw_readiness_overridden' ? 'bg-amber-100 text-amber-700' :
                           log.action?.includes('sold') ? 'bg-green-100 text-green-600' :
                           log.action?.includes('paid') ? 'bg-green-100 text-green-600' :
                           log.action?.includes('drawn') || log.action?.includes('draw') ? 'bg-yellow-100 text-yellow-600' :
@@ -2128,7 +2247,8 @@ export const RaffleManagementPage: React.FC = () => {
                           log.action?.includes('claimed') ? 'bg-emerald-100 text-emerald-600' :
                           'bg-gray-100 text-gray-600'
                         }`}>
-                          {log.action?.includes('sold') ? <DollarSign className="w-4 h-4" /> :
+                          {log.action === 'raffle_draw_readiness_overridden' ? <ShieldAlert className="w-4 h-4" /> :
+                           log.action?.includes('sold') ? <DollarSign className="w-4 h-4" /> :
                            log.action?.includes('paid') ? <DollarSign className="w-4 h-4" /> :
                            log.action?.includes('drawn') || log.action?.includes('draw') ? <Play className="w-3.5 h-3.5" /> :
                            log.action?.includes('void') ? <Ban className="w-4 h-4" /> :
@@ -2197,6 +2317,17 @@ export const RaffleManagementPage: React.FC = () => {
               void fetchActivityLogs();
             }
           }}
+        />
+      )}
+
+      {preDrawTarget && tournament && (
+        <RafflePreDrawModal
+          tournamentId={tournament.id}
+          target={preDrawTarget}
+          getToken={getToken}
+          onClose={() => setPreDrawTarget(null)}
+          onReviewNeedsAttention={handleReviewNeedsAttentionFromModal}
+          onConfirmDraw={handleConfirmPreDraw}
         />
       )}
     </div>

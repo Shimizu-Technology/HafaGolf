@@ -148,15 +148,18 @@ class RafflePrize < ApplicationRecord
   end
 
   def broadcast_winner(draw_id:, eligible_snapshot:)
+    resolved_winner_name = winner_name.presence || winning_ticket&.purchaser_display
     ActionCable.server.broadcast(
       "tournament_#{tournament_id}_raffle",
       {
         action: 'prize_won',
         draw_id: draw_id,
+        hold_on_screen: tournament.raffle_hold_winner_on_screen?,
         eligible_ticket_count: eligible_snapshot[:count],
         preview_ticket_sample_count: eligible_snapshot[:preview_numbers].length,
         preview_ticket_sample_is_sample: eligible_snapshot[:preview_numbers].length < eligible_snapshot[:count],
-        prize: as_json(only: [:id, :name, :tier, :value_cents, :winner_name, :won_at]).merge(
+        prize: as_json(only: [:id, :name, :tier, :value_cents, :won_at]).merge(
+          winner_name: resolved_winner_name,
           winning_ticket: { ticket_number: winning_ticket&.display_number }
         )
       }

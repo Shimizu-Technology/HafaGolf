@@ -15,6 +15,7 @@ module Api
       before_action :authorize_public_tournament_access!, only: [:prizes, :tickets, :board]
       before_action :authorize_tournament_admin!, only: [
         :create_prize, :update_prize, :destroy_prize,
+        :draw_readiness, :clear_spotlight,
         :draw, :draw_all, :reset_prize, :claim_prize,
         :mark_ticket_paid, :void_ticket, :destroy_ticket,
         :sync_tickets, :resend_winner_notification
@@ -39,7 +40,8 @@ module Api
             name: @tournament.name,
             raffle_enabled: @tournament.raffle_enabled,
             raffle_ticket_price_cents: @tournament.raffle_ticket_price_cents,
-            raffle_draw_time: @tournament.raffle_draw_time
+            raffle_draw_time: @tournament.raffle_draw_time,
+            raffle_hold_winner_on_screen: @tournament.raffle_hold_winner_on_screen?
           },
           prizes: prizes.map { |p| prize_response(p, include_winner: p.won?) }
         }
@@ -56,7 +58,8 @@ module Api
             name: @tournament.name,
             raffle_enabled: @tournament.raffle_enabled,
             raffle_draw_time: @tournament.raffle_draw_time,
-            raffle_description: @tournament.raffle_description
+            raffle_description: @tournament.raffle_description,
+            raffle_hold_winner_on_screen: @tournament.raffle_hold_winner_on_screen?
           },
           prizes: prizes.map { |p| prize_response(p, include_winner: p.won?) },
           stats: {
@@ -189,6 +192,31 @@ module Api
       # ADMIN ENDPOINTS - Drawing
       # ===========================================
 
+      # GET /api/v1/tournaments/:tournament_id/raffle/draw_readiness
+      # Admin - pre-draw readiness check ("Everyone got their numbers")
+      def draw_readiness
+        render json: RaffleDrawReadinessService.new(@tournament).report
+      end
+
+      # POST /api/v1/tournaments/:tournament_id/raffle/board/clear_spotlight
+      # Admin - dismiss the held winner spotlight on the live projector board
+      def clear_spotlight
+        cleared_at = Time.current.iso8601
+        ActionCable.server.broadcast(
+          "tournament_#{@tournament.id}_raffle",
+          {
+            action: 'spotlight_cleared',
+            tournament_id: @tournament.id,
+            cleared_at: cleared_at
+          }
+        )
+
+        render json: {
+          message: 'Winner spotlight cleared on raffle board',
+          cleared_at: cleared_at
+        }
+      end
+
       # POST /api/v1/tournaments/:tournament_id/raffle/prizes/:id/draw
       # Admin - draw a winner for a specific prize
       def draw
@@ -199,7 +227,19 @@ module Api
           return
         end
 
+        readiness_check = evaluate_draw_readiness
+        return if readiness_check == :blocked
+
         if prize.draw_winner!
+          if readiness_check[:override_readiness]
+            log_draw_readiness_override!(
+              readiness: readiness_check[:readiness],
+              target: prize,
+              draw_scope: 'single_prize',
+              override_reason: readiness_check[:override_reason]
+            )
+          end
+
           ActivityLog.log(
             admin: current_user, action: 'raffle_prize_drawn', target: prize,
             details: "Drew winner #{prize.winner_name} (ticket #{prize.winning_ticket&.display_number}) for #{prize.name}",
@@ -208,6 +248,7 @@ module Api
               ticket_number: prize.winning_ticket&.ticket_number,
               draw_id: prize.draw_id,
               eligible_ticket_count: prize.draw_eligible_ticket_count,
+              readiness_overridden: readiness_check[:override_readiness],
               notification_delivery: delivery_summary_for(prize)
             },
             tournament: @tournament
@@ -231,6 +272,9 @@ module Api
           return
         end
 
+        readiness_check = evaluate_draw_readiness
+        return if readiness_check == :blocked
+
         results = []
         available_prizes.each do |prize|
           if prize.draw_winner!
@@ -241,10 +285,22 @@ module Api
         end
 
         won_count = results.count { |r| r[:success] }
+        if won_count.positive? && readiness_check[:override_readiness]
+          log_draw_readiness_override!(
+            readiness: readiness_check[:readiness],
+            target: @tournament,
+            draw_scope: 'draw_all',
+            override_reason: readiness_check[:override_reason]
+          )
+        end
+
         ActivityLog.log(
           admin: current_user, action: 'raffle_draw_all', target: @tournament,
           details: "Drew #{won_count} winners from #{results.size} remaining prizes",
-          metadata: { results: results },
+          metadata: {
+            results: results,
+            readiness_overridden: readiness_check[:override_readiness]
+          },
           tournament: @tournament
         )
         render json: {
@@ -948,6 +1004,66 @@ module Api
         require_volunteer_or_admin!(@tournament.organization)
       end
 
+      def evaluate_draw_readiness
+        enforce_readiness = ActiveModel::Type::Boolean.new.cast(params[:enforce_readiness])
+        override_readiness = ActiveModel::Type::Boolean.new.cast(params[:override_readiness])
+        override_reason = params[:override_reason].to_s.strip.presence
+
+        unless enforce_readiness || override_readiness
+          return { readiness: nil, override_readiness: false, override_reason: nil }
+        end
+
+        readiness = RaffleDrawReadinessService.new(@tournament).report
+
+        if enforce_readiness && !readiness[:ready] && !override_readiness
+          render json: {
+            error: "Pre-draw readiness checks have unresolved warnings",
+            readiness: readiness
+          }, status: :unprocessable_entity
+          return :blocked
+        end
+
+        {
+          readiness: readiness,
+          override_readiness: override_readiness == true,
+          override_reason: override_reason
+        }
+      end
+
+      def log_draw_readiness_override!(readiness:, target:, draw_scope:, override_reason:)
+        warning_counts = {
+          eligible_ticket_count: readiness[:eligible_ticket_count],
+          paid_buyer_batch_count: readiness[:paid_buyer_batch_count],
+          confirmed_delivered_count: readiness[:confirmed_delivered_count],
+          unconfirmed_delivery_count: readiness[:unconfirmed_delivery_count],
+          failed_delivery_count: readiness[:failed_delivery_count],
+          missing_name_count: readiness[:missing_name_count]
+        }
+
+        summary_parts = []
+        summary_parts << "#{readiness[:failed_delivery_count]} failed" if readiness[:failed_delivery_count].to_i.positive?
+        summary_parts << "#{readiness[:unconfirmed_delivery_count]} unconfirmed" if readiness[:unconfirmed_delivery_count].to_i.positive?
+        summary_parts << "#{readiness[:missing_name_count]} missing name" if readiness[:missing_name_count].to_i.positive?
+        summary_text = summary_parts.any? ? summary_parts.join(", ") : "no warnings"
+        reason_suffix = override_reason.present? ? " — Reason: #{override_reason}" : ""
+
+        ActivityLog.log(
+          admin: current_user,
+          action: 'raffle_draw_readiness_overridden',
+          target: target,
+          details: "Overrode pre-draw readiness check (#{summary_text})#{reason_suffix}",
+          metadata: {
+            draw_scope: draw_scope,
+            prize_id: target.is_a?(RafflePrize) ? target.id : nil,
+            prize_name: target.is_a?(RafflePrize) ? target.name : nil,
+            override_reason: override_reason,
+            ready: readiness[:ready],
+            warning_counts: warning_counts
+          }.merge(warning_counts).compact,
+          tournament: @tournament
+        )
+      end
+
       def send_purchase_notifications(tickets:, buyer_email:, buyer_phone:, buyer_name:)
         delivery = {
           email: skipped_delivery_result('No email provided'),
@@ -1261,7 +1377,7 @@ module Api
 
         if include_winner && prize.won?
           response[:winner] = {
-            name: prize.winner_name,
+            name: prize.winner_name.presence || prize.winning_ticket&.purchaser_display,
             won_at: prize.won_at&.iso8601,
             ticket_number: prize.winning_ticket&.display_number
           }

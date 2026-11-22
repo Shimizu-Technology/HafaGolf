@@ -79,6 +79,14 @@ class Tournament < ApplicationRecord
     config&.dig('raffle_include_with_registration') == true
   end
 
+  # Whether the public raffle board holds a drawn winner on screen until cleared or next draw
+  def raffle_hold_winner_on_screen?
+    value = config&.dig('raffle_hold_winner_on_screen')
+    return true if value.nil?
+
+    ActiveModel::Type::Boolean.new.cast(value)
+  end
+
   # Configurable raffle bundle options for point-of-sale UI
   DEFAULT_RAFFLE_BUNDLES = [
     { 'quantity' => 4,  'price_cents' => 2000,  'label' => '$20 for 4 tickets' },
