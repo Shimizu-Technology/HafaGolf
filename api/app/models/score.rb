@@ -23,7 +23,7 @@ class Score < ApplicationRecord
   # Callbacks
   before_save :calculate_relative_score
   before_save :set_par_from_tournament
-  after_save :broadcast_score_update
+  after_commit :broadcast_score_update, on: [:create, :update]
 
   # Scopes
   scope :for_hole, ->(hole) { where(hole: hole) }
@@ -108,10 +108,12 @@ class Score < ApplicationRecord
   end
 
   def broadcast_score_update
-    # Broadcast to ActionCable for real-time updates
-    ActionCable.server.broadcast(
-      "tournament_#{tournament_id}_scores",
-      {
+    payload = nil
+    org_id = TenantContext.with_platform_access { tournament&.organization_id }
+    runner = org_id.present? ? ->(&b) { TenantContext.with_organization(org_id, &b) } : ->(&b) { b.call }
+
+    runner.call do
+      payload = {
         action: 'score_update',
         score: as_json(
           only: [:id, :hole, :strokes, :par, :relative_score, :score_type],
@@ -122,7 +124,10 @@ class Score < ApplicationRecord
         ),
         leaderboard_updated: true
       }
-    )
+    end
+
+    # Broadcast to ActionCable AFTER commit
+    ActionCable.server.broadcast("tournament_#{tournament_id}_scores", payload)
   rescue => e
     Rails.logger.error "Failed to broadcast score: #{e.message}"
   end

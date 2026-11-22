@@ -11,7 +11,9 @@ module Api
       MAX_PRIZE_IMAGE_SIZE = 5.megabytes
 
       skip_before_action :authenticate_user!, only: [:prizes, :tickets, :board]
+      skip_around_action :with_tenant_rls_context, only: [:draw, :draw_all, :claim_prize, :resend_winner_notification]
       before_action :set_tournament
+      before_action :authorize_public_tournament_access!, only: [:prizes, :tickets, :board]
       before_action :authorize_tournament_admin!, only: [
         :create_prize, :update_prize, :destroy_prize,
         :draw_readiness, :clear_spotlight,
@@ -110,7 +112,7 @@ module Api
         prize.image_url = nil if remove_image_requested?
         saved = false
 
-        RafflePrize.transaction do
+        RafflePrize.transaction(requires_new: true) do
           saved = prize.save
           raise ActiveRecord::Rollback unless saved
 
@@ -146,7 +148,7 @@ module Api
         blob_to_purge = remove_image && prize.image.attached? ? prize.image.blob : nil
         saved = false
 
-        RafflePrize.transaction do
+        RafflePrize.transaction(requires_new: true) do
           prize.assign_attributes(prize_attributes)
           prize.image_url = nil if remove_image
           saved = prize.save
@@ -219,43 +221,58 @@ module Api
       # POST /api/v1/tournaments/:tournament_id/raffle/prizes/:id/draw
       # Admin - draw a winner for a specific prize
       def draw
-        prize = @tournament.raffle_prizes.find(params[:id])
+        prize = nil
+        readiness_check = nil
+        already_won = false
 
-        if prize.won?
+        with_user_rls_context do
+          prize = @tournament.raffle_prizes.find(params[:id])
+          if prize.won?
+            already_won = true
+            next
+          end
+          readiness_check = evaluate_draw_readiness
+        end
+
+        if already_won
           render json: { error: 'Prize already won' }, status: :unprocessable_entity
           return
         end
-
-        readiness_check = evaluate_draw_readiness
         return if readiness_check == :blocked
 
+        # Runs OUTSIDE any outer request transaction: draw commits & releases row locks
+        # BEFORE broadcasts and Resend/ClickSend winner notifications execute.
         if prize.draw_winner!
-          if readiness_check[:override_readiness]
-            log_draw_readiness_override!(
-              readiness: readiness_check[:readiness],
-              target: prize,
-              draw_scope: 'single_prize',
-              override_reason: readiness_check[:override_reason]
-            )
-          end
+          payload = nil
+          with_user_rls_context do
+            if readiness_check[:override_readiness]
+              log_draw_readiness_override!(
+                readiness: readiness_check[:readiness],
+                target: prize,
+                draw_scope: 'single_prize',
+                override_reason: readiness_check[:override_reason]
+              )
+            end
 
-          ActivityLog.log(
-            admin: current_user, action: 'raffle_prize_drawn', target: prize,
-            details: "Drew winner #{prize.winner_name} (ticket #{prize.winning_ticket&.display_number}) for #{prize.name}",
-            metadata: {
-              winner_name: prize.winner_name,
-              ticket_number: prize.winning_ticket&.ticket_number,
-              draw_id: prize.draw_id,
-              eligible_ticket_count: prize.draw_eligible_ticket_count,
-              readiness_overridden: readiness_check[:override_readiness],
-              notification_delivery: delivery_summary_for(prize)
-            },
-            tournament: @tournament
-          )
-          render json: {
-            prize: prize_response(prize, include_winner: true),
-            message: "#{prize.winner_name} won #{prize.name}!"
-          }
+            ActivityLog.log(
+              admin: current_user, action: 'raffle_prize_drawn', target: prize,
+              details: "Drew winner #{prize.winner_name} (ticket #{prize.winning_ticket&.display_number}) for #{prize.name}",
+              metadata: {
+                winner_name: prize.winner_name,
+                ticket_number: prize.winning_ticket&.ticket_number,
+                draw_id: prize.draw_id,
+                eligible_ticket_count: prize.draw_eligible_ticket_count,
+                readiness_overridden: readiness_check[:override_readiness],
+                notification_delivery: delivery_summary_for(prize)
+              },
+              tournament: @tournament
+            )
+            payload = {
+              prize: prize_response(prize, include_winner: true),
+              message: "#{prize.winner_name} won #{prize.name}!"
+            }
+          end
+          render json: payload
         else
           render json: { error: 'No eligible tickets for drawing' }, status: :unprocessable_entity
         end
@@ -264,16 +281,23 @@ module Api
       # POST /api/v1/tournaments/:tournament_id/raffle/draw_all
       # Admin - draw winners for all remaining prizes
       def draw_all
-        available_prizes = @tournament.raffle_prizes.available.ordered
-        
+        available_prizes = nil
+        readiness_check = nil
+
+        with_user_rls_context do
+          available_prizes = @tournament.raffle_prizes.available.ordered.to_a
+          next if available_prizes.empty?
+
+          readiness_check = evaluate_draw_readiness
+        end
+
         if available_prizes.empty?
           render json: { error: 'No prizes remaining to draw' }, status: :unprocessable_entity
           return
         end
-
-        readiness_check = evaluate_draw_readiness
         return if readiness_check == :blocked
 
+        # Each prize commits its own short transaction BEFORE broadcasting & notifying
         results = []
         available_prizes.each do |prize|
           if prize.draw_winner!
@@ -284,24 +308,27 @@ module Api
         end
 
         won_count = results.count { |r| r[:success] }
-        if won_count.positive? && readiness_check[:override_readiness]
-          log_draw_readiness_override!(
-            readiness: readiness_check[:readiness],
-            target: @tournament,
-            draw_scope: 'draw_all',
-            override_reason: readiness_check[:override_reason]
+        with_user_rls_context do
+          if won_count.positive? && readiness_check[:override_readiness]
+            log_draw_readiness_override!(
+              readiness: readiness_check[:readiness],
+              target: @tournament,
+              draw_scope: 'draw_all',
+              override_reason: readiness_check[:override_reason]
+            )
+          end
+
+          ActivityLog.log(
+            admin: current_user, action: 'raffle_draw_all', target: @tournament,
+            details: "Drew #{won_count} winners from #{results.size} remaining prizes",
+            metadata: {
+              results: results,
+              readiness_overridden: readiness_check[:override_readiness]
+            },
+            tournament: @tournament
           )
         end
 
-        ActivityLog.log(
-          admin: current_user, action: 'raffle_draw_all', target: @tournament,
-          details: "Drew #{won_count} winners from #{results.size} remaining prizes",
-          metadata: {
-            results: results,
-            readiness_overridden: readiness_check[:override_readiness]
-          },
-          tournament: @tournament
-        )
         render json: {
           results: results,
           message: "Drew #{won_count} winners"
@@ -330,24 +357,37 @@ module Api
       # POST /api/v1/tournaments/:tournament_id/raffle/prizes/:id/claim
       # Admin - mark prize as claimed
       def claim_prize
-        prize = @tournament.raffle_prizes.find(params[:id])
+        claimed_payload = nil
+        with_user_rls_context do
+          prize = @tournament.raffle_prizes.find(params[:id])
 
-        if prize.claim!
-          ActivityLog.log(
-            admin: current_user, action: 'raffle_prize_claimed', target: prize,
-            details: "Marked #{prize.name} as claimed by #{prize.winner_name}",
-            tournament: @tournament
-          )
-          render json: { prize: prize_response(prize), message: 'Prize marked as claimed' }
+          if prize.claim!
+            ActivityLog.log(
+              admin: current_user, action: 'raffle_prize_claimed', target: prize,
+              details: "Marked #{prize.name} as claimed by #{prize.winner_name}",
+              tournament: @tournament
+            )
+            claimed_payload = { prize: prize_response(prize), message: 'Prize marked as claimed' }
+          end
+        end
+
+        if claimed_payload
+          render json: claimed_payload
         else
           render json: { error: 'Cannot claim prize' }, status: :unprocessable_entity
         end
       end
 
       # POST /api/v1/tournaments/:tournament_id/raffle/prizes/:id/resend_notification
-      # Admin - resend winner notification email/SMS
+      # Admin - resend winner notification email/SMS (external HTTP calls run OUTSIDE DB transaction)
       def resend_winner_notification
-        prize = @tournament.raffle_prizes.find(params[:id])
+        prize = nil
+        winner_phone = nil
+
+        with_user_rls_context do
+          prize = @tournament.raffle_prizes.includes(:winning_ticket, tournament: :organization).find(params[:id])
+          winner_phone = prize.winner_phone.presence || prize.winning_ticket&.purchaser_phone
+        end
 
         unless prize.won?
           return render json: { error: 'Prize has not been won yet' }, status: :unprocessable_entity
@@ -369,7 +409,6 @@ module Api
           end
         end
 
-        winner_phone = prize.winner_phone.presence || prize.winning_ticket&.purchaser_phone
         if winner_phone.present?
           begin
             result = RaffleSmsService.winner_notification(raffle_prize: prize)
@@ -384,12 +423,14 @@ module Api
         channels = delivery_success_channels(delivery)
 
         if channels.any?
-          ActivityLog.log(
-            admin: current_user, action: 'raffle_winner_notification_resent', target: prize,
-            details: "Resent winner notification for #{prize.name} to #{prize.winner_name} via #{channels.join(' and ')}",
-            metadata: { channels: channels, winner_name: prize.winner_name, delivery: delivery },
-            tournament: @tournament
-          )
+          with_user_rls_context do
+            ActivityLog.log(
+              admin: current_user, action: 'raffle_winner_notification_resent', target: prize,
+              details: "Resent winner notification for #{prize.name} to #{prize.winner_name} via #{channels.join(' and ')}",
+              metadata: { channels: channels, winner_name: prize.winner_name, delivery: delivery },
+              tournament: @tournament
+            )
+          end
           render json: { message: "Notification resent via #{channels.join(' and ')}", delivery: delivery }
         else
           render json: { error: 'No contact info available for this winner or delivery failed', delivery: delivery }, status: :unprocessable_entity
@@ -493,7 +534,7 @@ module Api
         tickets = []
         validation_error = nil
 
-        ActiveRecord::Base.transaction do
+        ActiveRecord::Base.transaction(requires_new: true) do
           @tournament.lock!
           quantity.times do
             ticket = @tournament.raffle_tickets.build(
@@ -647,7 +688,7 @@ module Api
 
         tickets = []
         sale_time = Time.current
-        ActiveRecord::Base.transaction do
+        ActiveRecord::Base.transaction(requires_new: true) do
           @tournament.lock!
           sale_batch = @tournament.raffle_sale_batches.create!(
             buyer_name: buyer_name,
@@ -992,7 +1033,11 @@ module Api
       private
 
       def set_tournament
-        @tournament = Tournament.find(params[:tournament_id])
+        if %w[draw draw_all claim_prize resend_winner_notification].include?(action_name)
+          @tournament = with_user_rls_context { Tournament.includes(:organization).find(params[:tournament_id]) }
+        else
+          @tournament = Tournament.find(params[:tournament_id])
+        end
       end
 
       def authorize_tournament_admin!
@@ -1205,6 +1250,14 @@ module Api
 
       def failed_delivery_result(error)
         { success: false, skipped: false, error: error.presence || 'Delivery failed' }
+      end
+
+      def authorize_public_tournament_access!
+        return unless verify_tenant_match!(@tournament.organization_id, status: :not_found, message: 'Tournament not found')
+
+        unless @tournament.public_listed? && !@tournament.draft? && !@tournament.archived?
+          render json: { error: 'Tournament not found' }, status: :not_found
+        end
       end
 
       def delivery_success?(result)

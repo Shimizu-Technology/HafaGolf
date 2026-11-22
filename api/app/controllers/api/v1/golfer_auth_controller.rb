@@ -18,8 +18,16 @@ module Api
           }, status: :bad_request
         end
 
-        # Find golfers for this email in active tournaments
-        golfers = Golfer.find_for_scoring_access(email)
+        # Find golfers for this email in active tournaments (scoped to Current.organization when resolved)
+        golfers = if Current.organization.present?
+          TenantContext.with_organization(Current.organization) do
+            Golfer.find_for_scoring_access(email, organization: Current.organization).to_a
+          end
+        else
+          TenantContext.with_closed_access do
+            Golfer.find_for_scoring_access(email, organization: nil).to_a
+          end
+        end
 
         if golfers.empty?
           # Don't reveal if email exists - security best practice
@@ -32,7 +40,9 @@ module Api
         end
 
         golfers.each do |golfer|
-          golfer.generate_magic_link!
+          TenantContext.with_organization(golfer.tournament.organization_id) do
+            golfer.generate_magic_link!
+          end
 
           begin
             GolferMailer.scoring_access_email(golfer).deliver_later
@@ -61,29 +71,36 @@ module Api
           }, status: :bad_request
         end
 
-        golfer = Golfer.find_by_magic_link(token)
+        golfer = TenantContext.with_platform_access do
+          Golfer.includes(tournament: :organization, group: :golfers).find_by_magic_link(token)
+        end
 
-        if golfer.nil?
+        if golfer.nil? || (Current.organization.present? && golfer.tournament.organization_id != Current.organization.id)
           return render json: { 
             success: false, 
             error: "Invalid or expired link. Please request a new one." 
           }, status: :unauthorized
         end
 
-        # Generate session JWT
-        session_token = GolferAuth.generate_token(golfer)
+        session_token = nil
+        payload = nil
+        TenantContext.with_organization(golfer.tournament.organization_id) do
+          # Generate session JWT
+          session_token = GolferAuth.generate_token(golfer)
 
-        # Clear the magic link (one-time use)
-        golfer.clear_magic_link!
+          # Clear the magic link (one-time use)
+          golfer.clear_magic_link!
 
-        # Return golfer info and session token
-        render json: {
-          success: true,
-          token: session_token,
-          golfer: golfer_response(golfer),
-          tournament: tournament_response(golfer.tournament),
-          group: golfer.group ? group_response(golfer.group) : nil
-        }
+          payload = {
+            success: true,
+            token: session_token,
+            golfer: golfer_response(golfer),
+            tournament: tournament_response(golfer.tournament),
+            group: golfer.group ? group_response(golfer.group) : nil
+          }
+        end
+
+        render json: payload
       end
 
       # GET /api/v1/golfer_auth/me
@@ -92,12 +109,16 @@ module Api
         golfer = authenticate_golfer!
         return unless golfer
 
-        render json: {
-          success: true,
-          golfer: golfer_response(golfer),
-          tournament: tournament_response(golfer.tournament),
-          group: golfer.group ? group_response(golfer.group) : nil
-        }
+        payload = TenantContext.with_organization(golfer.tournament.organization_id) do
+          {
+            success: true,
+            golfer: golfer_response(golfer),
+            tournament: tournament_response(golfer.tournament),
+            group: golfer.group ? group_response(golfer.group) : nil
+          }
+        end
+
+        render json: payload
       end
 
       # POST /api/v1/golfer_auth/refresh
@@ -125,9 +146,9 @@ module Api
         end
 
         token = header.split(" ").last
-        golfer = GolferAuth.golfer_from_token(token)
+        golfer = TenantContext.with_platform_access { GolferAuth.golfer_from_token(token) }
 
-        unless golfer
+        if golfer.nil? || (Current.organization.present? && golfer.tournament.organization_id != Current.organization.id)
           render json: { success: false, error: "Invalid or expired session" }, status: :unauthorized
           return nil
         end

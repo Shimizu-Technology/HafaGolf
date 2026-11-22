@@ -84,7 +84,7 @@ test:
 #
 production:
   <<: *default
-  url: <%= ENV["DATABASE_URL"] %>
+  url: <%= ENV["DATABASE_APP_URL"].presence || ENV["DATABASE_URL"] %>
   pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
   checkout_timeout: 10
   reaping_frequency: 10
@@ -96,7 +96,7 @@ production:
 
 cable:
   <<: *default
-  url: <%= ENV["DATABASE_URL"] %>
+  url: <%= ENV["DATABASE_APP_URL"].presence || ENV["DATABASE_URL"] %>
 
 queue:
   <<: *default

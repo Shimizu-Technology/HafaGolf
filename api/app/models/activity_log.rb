@@ -1,6 +1,7 @@
 class ActivityLog < ApplicationRecord
   belongs_to :user, foreign_key: :admin_id, optional: true
   belongs_to :tournament, optional: true
+  belongs_to :organization, optional: true
   
   # Alias for backwards compatibility
   alias_method :admin, :user
@@ -65,20 +66,26 @@ class ActivityLog < ApplicationRecord
   scope :for_tournament, ->(tournament_id) { where(tournament_id: tournament_id) }
 
   # Helper method to create logs easily
-  def self.log(admin:, action:, target: nil, details: nil, metadata: {}, tournament: nil)
+  def self.log(admin:, action:, target: nil, details: nil, metadata: {}, tournament: nil, organization: nil)
     # Include admin identifier in metadata for traceability
     enriched_metadata = metadata.merge(
       admin_email: admin&.email,
       admin_name: admin&.name
     )
 
-    # Try to infer tournament from target if not provided
+    # Try to infer tournament and organization from target if not provided
     inferred_tournament = tournament || (target.respond_to?(:tournament) ? target.tournament : nil)
+    inferred_org_id = organization&.id ||
+                      inferred_tournament&.organization_id ||
+                      (target.is_a?(Organization) ? target.id : nil) ||
+                      (target.respond_to?(:organization_id) ? target.organization_id : nil) ||
+                      Current.organization&.id
     
     create!(
       admin: admin,
       action: action,
       tournament: inferred_tournament,
+      organization_id: inferred_org_id,
       target_type: target&.class&.name,
       target_id: target&.id,
       target_name: target.respond_to?(:name) ? target.name : target&.to_s,

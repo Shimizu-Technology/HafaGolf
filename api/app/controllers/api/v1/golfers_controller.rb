@@ -2,6 +2,7 @@ module Api
   module V1
     class GolfersController < BaseController
       skip_before_action :authenticate_user!, only: [:create, :registration_status]
+      skip_around_action :with_tenant_rls_context, only: [:create, :refund]
       before_action :authorize_collection_volunteer_access!, only: [:index]
       before_action :authorize_collection_tournament_access!, only: [:stats, :bulk_send_payment_links]
       before_action :authorize_golfer_volunteer_access!, only: [:check_in, :undo_check_in, :verify_payment]
@@ -71,57 +72,71 @@ module Api
       # Public registration endpoint
       # Uses database locking to prevent race conditions
       def create
-        # Find specific tournament by ID, or fall back to current open tournament
-        tournament = if params[:tournament_id].present?
-          Tournament.find_by(id: params[:tournament_id])
-        else
-          Tournament.current
+        org = resolve_public_organization
+        result = nil
+        error_response = nil
+        tournament_missing = false
+
+        run_in_public_rls_context(org) do
+          # Find specific tournament scoped to resolved tenant organization
+          tournament = resolve_public_tournament(tournament_id: params[:tournament_id])
+
+          unless tournament
+            tournament_missing = true
+            next
+          end
+
+          # Wrap in transaction with row locking to prevent race conditions
+          ActiveRecord::Base.transaction(requires_new: true) do
+            # Lock the tournament row to prevent concurrent capacity checks
+            tournament.lock!
+
+            # Re-check registration status after acquiring lock
+            unless tournament.can_register?
+              error_response = { errors: ["Registration is currently closed."], status: :unprocessable_entity }
+              raise ActiveRecord::Rollback
+            end
+
+            golfer = tournament.golfers.new(golfer_params)
+            golfer.waiver_accepted_at = Time.current if params[:waiver_accepted]
+
+            if golfer.save
+              if %w[stripe swipe_simple walk_in].include?(golfer.payment_type)
+                golfer.generate_payment_token!
+              end
+
+              result = {
+                golfer: golfer,
+                message: golfer.registration_status == "confirmed" ?
+                  "Your spot is confirmed!" :
+                  "You have been added to the waitlist."
+              }
+            else
+              error_response = { errors: golfer.errors.full_messages, status: :unprocessable_entity }
+              raise ActiveRecord::Rollback
+            end
+          end
         end
-        
-        unless tournament
+
+        if tournament_missing
           render json: { errors: ["No tournament is currently open for registration."] }, status: :unprocessable_entity
           return
         end
 
-        # Wrap in transaction with row locking to prevent race conditions
-        result = nil
-        error_response = nil
-
-        ActiveRecord::Base.transaction do
-          # Lock the tournament row to prevent concurrent capacity checks
-          tournament.lock!
-          
-          # Re-check registration status after acquiring lock
-          unless tournament.can_register?
-            error_response = { errors: ["Registration is currently closed."], status: :unprocessable_entity }
-            raise ActiveRecord::Rollback
-          end
-
-          golfer = tournament.golfers.new(golfer_params)
-          golfer.waiver_accepted_at = Time.current if params[:waiver_accepted]
-
-          if golfer.save
-            result = {
-              golfer: golfer,
-              message: golfer.registration_status == "confirmed" ?
-                "Your spot is confirmed!" :
-                "You have been added to the waitlist."
-            }
-          else
-            error_response = { errors: golfer.errors.full_messages, status: :unprocessable_entity }
-            raise ActiveRecord::Rollback
-          end
-        end
-
-        # Handle response outside of transaction
+        # Handle response & broadcasts AFTER transaction commits
         if error_response
           render json: { errors: error_response[:errors] }, status: error_response[:status]
         elsif result
+          # Serialize inside org RLS context so lazy associations work under non-owner RLS
+          serialized_golfer = TenantContext.with_organization(result[:golfer].tournament.organization_id) do
+            GolferSerializer.new(result[:golfer]).as_json
+          end
+
           # Broadcast after transaction commits (non-critical)
           broadcast_golfer_update(result[:golfer])
 
           render json: {
-            golfer: GolferSerializer.new(result[:golfer]),
+            golfer: serialized_golfer,
             message: result[:message]
           }, status: :created
         end
@@ -131,8 +146,19 @@ module Api
       def update
         golfer = Golfer.find(params[:id])
         old_values = golfer.attributes.slice('group_id', 'payment_status', 'registration_status', 'name', 'email', 'phone', 'company', 'address', 'payment_notes')
+        permitted = golfer_update_params
 
-        if golfer.update(golfer_update_params)
+        if permitted[:group_id].present? && !golfer.tournament.groups.exists?(id: permitted[:group_id])
+          render json: { errors: ["Group must belong to the same tournament"] }, status: :unprocessable_entity
+          return
+        end
+
+        if permitted[:sponsor_id].present? && !golfer.tournament.sponsors.exists?(id: permitted[:sponsor_id])
+          render json: { errors: ["Sponsor must belong to the same tournament"] }, status: :unprocessable_entity
+          return
+        end
+
+        if golfer.update(permitted)
           # Log activity for meaningful changes
           log_golfer_update(golfer, old_values)
           broadcast_golfer_update(golfer)
@@ -234,9 +260,15 @@ module Api
       end
 
       # POST /api/v1/golfers/:id/refund
-      # Process a refund through Stripe and cancel the registration
+      # Process a refund through Stripe and cancel the registration.
+      # Runs OUTSIDE any outer request transaction so Stripe::Refund.create never holds a DB transaction.
       def refund
-        golfer = Golfer.find(params[:id])
+        golfer = nil
+        old_group = nil
+        with_user_rls_context do
+          golfer = Golfer.includes(:group, :tournament).find(params[:id])
+          old_group = golfer.group
+        end
 
         unless golfer.can_refund?
           if golfer.refunded?
@@ -252,22 +284,21 @@ module Api
         end
 
         reason = params[:reason]
-        old_group = golfer.group
 
         begin
-          # CRITICAL: Process the refund first and only clear the group
-          # after the refund succeeds so a Stripe failure leaves the pairing intact.
+          # CRITICAL: Process the refund first (Stripe HTTP outside DB tx, then short org-scoped DB tx)
           stripe_refund = golfer.process_refund!(
             admin: current_admin,
             reason: reason,
             clear_group_assignment: old_group.present?
           )
 
+          serialized_golfer = with_user_rls_context { GolferSerializer.new(golfer).as_json }
+
           # CRITICAL: Return success response FIRST before non-critical operations
-          # This ensures user sees success even if activity log or broadcast fails
           render json: {
             success: true,
-            golfer: GolferSerializer.new(golfer),
+            golfer: serialized_golfer,
             refund: {
               id: stripe_refund.id,
               amount: stripe_refund.amount,
@@ -276,38 +307,39 @@ module Api
             message: "Refund processed successfully"
           }
 
-          # NON-CRITICAL: Log group removal if applicable
-          if old_group.present?
+          # NON-CRITICAL: Log group removal & refund inside short RLS context (wrapped in rescue)
+          with_user_rls_context do
+            if old_group.present?
+              begin
+                ActivityLog.log(
+                  admin: current_admin,
+                  action: 'golfer_removed_from_group',
+                  target: golfer,
+                  details: "Removed #{golfer.name} from #{old_group.hole_position_label} (refunded)"
+                )
+              rescue StandardError => e
+                Rails.logger.error("Failed to log group removal: #{e.message}")
+              end
+            end
+
             begin
               ActivityLog.log(
                 admin: current_admin,
-                action: 'golfer_removed_from_group',
+                action: 'golfer_refunded',
                 target: golfer,
-                details: "Removed #{golfer.name} from #{old_group.hole_position_label} (refunded)"
+                details: "Refunded #{golfer.name} - $#{'%.2f' % (stripe_refund.amount / 100.0)}",
+                metadata: {
+                  reason: reason,
+                  refund_id: stripe_refund.id,
+                  amount_cents: stripe_refund.amount
+                }
               )
             rescue StandardError => e
-              Rails.logger.error("Failed to log group removal: #{e.message}")
+              Rails.logger.error("Failed to log refund activity: #{e.message}")
             end
           end
 
-          # NON-CRITICAL: Log activity (wrapped in rescue)
-          begin
-            ActivityLog.log(
-              admin: current_admin,
-              action: 'golfer_refunded',
-              target: golfer,
-              details: "Refunded #{golfer.name} - $#{'%.2f' % (stripe_refund.amount / 100.0)}",
-              metadata: { 
-                reason: reason, 
-                refund_id: stripe_refund.id,
-                amount_cents: stripe_refund.amount
-              }
-            )
-          rescue StandardError => e
-            Rails.logger.error("Failed to log refund activity: #{e.message}")
-          end
-
-          # NON-CRITICAL: Broadcast update (already wrapped in rescue in helper method)
+          # NON-CRITICAL: Broadcast update AFTER commit (already wrapped in rescue in helper method)
           broadcast_golfer_update(golfer)
 
         rescue Stripe::StripeError => e
@@ -820,7 +852,7 @@ module Api
       # GET /api/v1/golfers/registration_status
       # Public endpoint to check registration capacity
       def registration_status
-        tournament = Tournament.current
+        tournament = resolve_public_tournament(tournament_id: params[:tournament_id])
         settings = Setting.instance
 
         if tournament
@@ -917,7 +949,11 @@ module Api
       end
 
       def authorize_golfer_access!
-        golfer = Golfer.find(params[:id])
+        golfer = if action_name == "refund"
+          with_user_rls_context { Golfer.includes(:tournament).find(params[:id]) }
+        else
+          Golfer.find(params[:id])
+        end
         require_tournament_admin!(golfer.tournament)
       end
 
@@ -930,7 +966,7 @@ module Api
         if params[:tournament_id].present?
           Tournament.find(params[:tournament_id])
         else
-          Tournament.current
+          current_user&.accessible_tournaments&.recent&.first
         end
       end
 
@@ -1070,6 +1106,14 @@ module Api
               }
             }
           )
+        end
+      end
+
+      def run_in_public_rls_context(organization, &block)
+        if organization.present?
+          TenantContext.with_organization(organization, &block)
+        else
+          TenantContext.with_closed_access(&block)
         end
       end
     end

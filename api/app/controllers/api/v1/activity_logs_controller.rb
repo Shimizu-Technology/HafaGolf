@@ -1,17 +1,26 @@
+# frozen_string_literal: true
+
 module Api
   module V1
     class ActivityLogsController < BaseController
+      before_action :require_activity_log_admin!
+
       # GET /api/v1/activity_logs
       def index
+        accessible_tournaments = current_user.accessible_tournaments
         logs = ActivityLog.recent.includes(:user, :tournament)
 
-        # Filter by tournament
         if params[:tournament_id].present?
-          logs = logs.for_tournament(params[:tournament_id])
-        elsif params[:all_tournaments] != 'true'
-          # Default to current tournament
-          tournament = Tournament.current
-          logs = logs.for_tournament(tournament&.id) if tournament
+          tournament = Tournament.find(params[:tournament_id])
+          require_tournament_admin!(tournament)
+          return if performed?
+
+          logs = logs.for_tournament(tournament.id)
+        elsif params[:all_tournaments] == 'true'
+          logs = logs.where(tournament_id: accessible_tournaments.select(:id))
+        else
+          tournament = accessible_tournaments.recent.first
+          logs = tournament ? logs.for_tournament(tournament.id) : ActivityLog.none
         end
 
         # Filter by admin
@@ -53,7 +62,7 @@ module Api
         # Pagination
         page = (params[:page] || 1).to_i
         per_page = (params[:per_page] || 50).to_i.clamp(1, 100)
-        
+
         total = logs.count
         logs = logs.offset((page - 1) * per_page).limit(per_page)
 
@@ -72,13 +81,17 @@ module Api
       # Get activity logs for a specific golfer
       def golfer_history
         golfer = Golfer.find(params[:golfer_id])
+        require_tournament_admin!(golfer.tournament)
+        return if performed?
+
+        tournament_scope = ActivityLog.where(tournament_id: golfer.tournament_id)
         logs = ActivityLog
-          .where(target_type: 'Golfer', target_id: golfer.id)
-          .or(ActivityLog.where("metadata->>'golfer_name' = ?", golfer.name))
+          .where(target_type: 'Golfer', target_id: golfer.id, tournament_id: [golfer.tournament_id, nil])
+          .or(tournament_scope.where("metadata->>'golfer_name' = ?", golfer.name))
 
         if golfer.group_id.present?
           logs = logs.or(
-            ActivityLog.where(
+            tournament_scope.where(
               target_type: 'Group',
               target_id: golfer.group_id,
               action: 'group_updated'
@@ -101,18 +114,22 @@ module Api
       # GET /api/v1/activity_logs/summary
       def summary
         tournament = if params[:tournament_id].present?
-          Tournament.find(params[:tournament_id])
+          found = Tournament.find(params[:tournament_id])
+          require_tournament_admin!(found)
+          return if performed?
+
+          found
         else
-          Tournament.current
+          current_user.accessible_tournaments.recent.first
         end
 
-        base_scope = tournament ? ActivityLog.for_tournament(tournament.id) : ActivityLog
+        base_scope = tournament ? ActivityLog.for_tournament(tournament.id) : ActivityLog.none
 
         today_count = base_scope.today.count
-        
+
         # Activity by action type
         by_action = base_scope.group(:action).count
-        
+
         # Activity by admin (top 10)
         by_admin = base_scope
           .joins(:user)
@@ -137,6 +154,16 @@ module Api
           by_admin: by_admin,
           daily_activity: daily_activity
         }
+      end
+
+      private
+
+      def require_activity_log_admin!
+        return if current_user&.super_admin?
+        return if current_user&.organization_memberships&.exists?(role: 'admin')
+        return if current_user&.tournament_assignments&.exists?
+
+        render json: { error: 'Forbidden: Admin access required' }, status: :forbidden
       end
     end
   end

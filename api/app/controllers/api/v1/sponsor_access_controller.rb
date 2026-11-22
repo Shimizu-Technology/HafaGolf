@@ -2,6 +2,7 @@ module Api
   module V1
     class SponsorAccessController < BaseController
       skip_before_action :authenticate_user!
+      skip_around_action :with_tenant_rls_context
 
       # POST /api/v1/sponsor_access/request_link
       def request_link
@@ -11,9 +12,20 @@ module Api
           return
         end
 
-        sponsors = Sponsor.active.includes(tournament: :organization).where("LOWER(login_email) = ?", email)
-        if Current.organization.present?
-          sponsors = sponsors.joins(:tournament).where(tournaments: { organization_id: Current.organization.id })
+        sponsors = if Current.organization.present?
+          TenantContext.with_organization(Current.organization) do
+            Sponsor.active.includes(tournament: :organization)
+                   .joins(:tournament)
+                   .where(tournaments: { organization_id: Current.organization.id })
+                   .where("LOWER(login_email) = ?", email)
+                   .to_a
+          end
+        else
+          TenantContext.with_closed_access do
+            Sponsor.active.includes(tournament: :organization)
+                   .where("LOWER(login_email) = ?", email)
+                   .to_a
+          end
         end
 
         # Filter to sponsors on tournaments where the sponsors feature is enabled.
@@ -30,9 +42,10 @@ module Api
 
         enabled_sponsors.each do |sponsor|
           begin
-            token = sponsor.generate_access_token!
-            # Send access links synchronously so this login flow does not depend on
-            # the in-process async job adapter in production.
+            token = TenantContext.with_organization(sponsor.tournament.organization_id) do
+              sponsor.generate_access_token!
+            end
+            # Send access links synchronously OUTSIDE DB transaction
             SponsorAccessEmailService.send_access_link(sponsor: sponsor, token: token)
           rescue StandardError => e
             Rails.logger.error("Failed to send sponsor access link for sponsor #{sponsor.id}: #{e.message}")
@@ -47,9 +60,9 @@ module Api
       # The frontend must then POST to /confirm with the email to get full access.
       def verify
         token = params[:token]
-        sponsor = Sponsor.find_by_access_token(token)
+        sponsor = TenantContext.with_platform_access { Sponsor.includes(:tournament).find_by_access_token(token) }
 
-        unless sponsor
+        unless sponsor && (Current.organization.blank? || sponsor.tournament.organization_id == Current.organization.id)
           render json: { error: "Invalid or expired access link" }, status: :unauthorized
           return
         end
@@ -69,9 +82,9 @@ module Api
         token = params[:token]
         email = params[:email]&.strip&.downcase
 
-        sponsor = Sponsor.find_by_access_token(token)
+        sponsor = TenantContext.with_platform_access { Sponsor.includes(tournament: :organization).find_by_access_token(token) }
 
-        unless sponsor
+        unless sponsor && (Current.organization.blank? || sponsor.tournament.organization_id == Current.organization.id)
           render json: { error: "Invalid or expired access link" }, status: :unauthorized
           return
         end
@@ -83,7 +96,9 @@ module Api
           return
         end
 
-        session_token = sponsor.generate_portal_session_token!(verified_email: email)
+        session_token = TenantContext.with_organization(sponsor.tournament.organization_id) do
+          sponsor.generate_portal_session_token!(verified_email: email)
+        end
         tournament = sponsor.tournament
         org = tournament&.organization
 

@@ -25,6 +25,9 @@ module MakeAWishGuamApi
     config.time_zone = "Guam"
     # config.eager_load_paths << Rails.root.join("extras")
 
+    # Ensure ActionMailer deliver_later jobs run with explicit RLS context
+    config.action_mailer.delivery_job = "ApplicationMailDeliveryJob"
+
     # Only loads a smaller set of middleware suitable for API only apps.
     # Middleware like session, flash, cookies can be added back manually.
     # Skip views, helpers and assets when generating a new resource.

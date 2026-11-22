@@ -70,6 +70,7 @@ module Api
           admin: current_user,
           action: 'admin_created',
           target: user,
+          organization: @organization_scope,
           details: "Added new user: #{user.email}"
         )
         render json: user, serializer: AdminSerializer, status: :created
@@ -114,6 +115,7 @@ module Api
           admin: current_user,
           action: 'admin_deleted',
           target: nil,
+          organization: @organization_scope,
           details: "Removed user: #{user_email}",
           metadata: { deleted_email: user_email }
         )
@@ -128,7 +130,15 @@ module Api
       end
 
       def set_organization_scope
-        @organization_scope = current_user.accessible_organizations.first
+        accessible = current_user.accessible_organizations
+        @organization_scope = if params[:organization_slug].present?
+          accessible.find_by(slug: params[:organization_slug].to_s.downcase)
+        elsif Current.organization.present? && current_user.member_of?(Current.organization)
+          Current.organization
+        else
+          accessible.order(:name).first
+        end
+
         unless @organization_scope
           render json: { error: 'No accessible organization found' }, status: :forbidden
           return

@@ -4,11 +4,13 @@ module Api
   module V1
     class OrganizationsController < BaseController
       skip_before_action :authenticate_user!, only: [:show, :tournaments, :tournament]
+      skip_around_action :with_tenant_rls_context, only: [:show, :tournaments, :tournament]
 
       # GET /api/v1/organizations/:slug
       # Public endpoint - returns organization info
       def show
         organization = Organization.find_by_slug!(params[:slug])
+        tournament_count = TenantContext.with_organization(organization) { organization.tournament_count }
         
         render json: {
           id: organization.id,
@@ -29,7 +31,7 @@ module Api
           offseason_cta_url: organization.offseason_cta_url,
           settings: organization.settings || {},
           features: Features.for(organization).to_h,
-          tournament_count: organization.tournament_count
+          tournament_count: tournament_count
         }
       rescue ActiveRecord::RecordNotFound
         render json: { error: 'Organization not found' }, status: :not_found
@@ -39,14 +41,17 @@ module Api
       # Public endpoint - returns organization's public tournaments
       def tournaments
         organization = Organization.find_by_slug!(params[:slug])
-        loaded = organization.tournaments
+        loaded = TenantContext.with_organization(organization) do
+          list = organization.tournaments
                              .includes(:organization, :sponsors)
                              .where(public_listed: true)
                              .where(status: %w[open closed in_progress completed])
                              .order(event_date: :desc)
                              .to_a
 
-        preload_tournament_stats(loaded) if loaded.any?
+          preload_tournament_stats(list) if list.any?
+          list
+        end
 
         render json: loaded, each_serializer: TournamentSerializer
       rescue ActiveRecord::RecordNotFound
@@ -57,38 +62,41 @@ module Api
       # Public endpoint - returns specific tournament with sponsors
       def tournament
         organization = Organization.find_by_slug!(params[:slug])
-        tournament = organization.tournaments.where(public_listed: true).find_by!(slug: params[:tournament_slug])
-        
-        # Get active sponsors grouped by tier
-        sponsors = tournament.sponsors.active.ordered.includes(logo_attachment: :blob).map do |s|
-          logo = if s.logo.attached?
-                   Rails.application.routes.url_helpers.rails_blob_url(
-                     s.logo,
-                     host: ENV.fetch('API_URL', request.base_url)
-                   )
-                 else
-                   s.logo_url
-                 end
+        tournament_data = TenantContext.with_organization(organization) do
+          tournament = organization.tournaments.where(public_listed: true).find_by!(slug: params[:tournament_slug])
+          
+          # Get active sponsors grouped by tier
+          sponsors = tournament.sponsors.active.ordered.includes(logo_attachment: :blob).map do |s|
+            logo = if s.logo.attached?
+                     Rails.application.routes.url_helpers.rails_blob_url(
+                       s.logo,
+                       host: ENV.fetch('API_URL', request.base_url)
+                     )
+                   else
+                     s.logo_url
+                   end
 
-          {
-            id: s.id,
-            name: s.name,
-            tier: s.tier,
-            tier_display: s.tier_display,
-            logo_url: logo,
-            website_url: s.website_url,
-            description: s.description,
-            course_key: s.course_key,
-            course_name: s.course_name,
-            hole_number: s.hole_number,
-            display_label: s.display_label,
-            major: s.major?
-          }
+            {
+              id: s.id,
+              name: s.name,
+              tier: s.tier,
+              tier_display: s.tier_display,
+              logo_url: logo,
+              website_url: s.website_url,
+              description: s.description,
+              course_key: s.course_key,
+              course_name: s.course_name,
+              hole_number: s.hole_number,
+              display_label: s.display_label,
+              major: s.major?
+            }
+          end
+
+          # Render tournament with sponsors
+          data = TournamentSerializer.new(tournament).as_json
+          data[:sponsors] = sponsors
+          data
         end
-
-        # Render tournament with sponsors
-        tournament_data = TournamentSerializer.new(tournament).as_json
-        tournament_data[:sponsors] = sponsors
         
         render json: tournament_data
       rescue ActiveRecord::RecordNotFound
@@ -112,7 +120,7 @@ module Api
         primary_domain_host = params.dig(:organization, :primary_domain).presence || params[:primary_domain].presence
         initial_admin_email = (params.dig(:organization, :admin_email).presence || params[:admin_email].presence)&.strip&.downcase
 
-        ActiveRecord::Base.transaction do
+        ActiveRecord::Base.transaction(requires_new: true) do
           organization.save!
 
           if primary_domain_host.present?

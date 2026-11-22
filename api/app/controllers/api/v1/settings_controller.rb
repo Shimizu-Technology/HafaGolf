@@ -1,6 +1,8 @@
 module Api
   module V1
     class SettingsController < BaseController
+      before_action :require_super_admin!
+
       # GET /api/v1/settings
       # Returns global settings (shared across all tournaments)
       def show

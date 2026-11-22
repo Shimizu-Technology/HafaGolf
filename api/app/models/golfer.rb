@@ -165,18 +165,21 @@ class Golfer < ApplicationRecord
   end
 
   # Find golfers by email for active tournaments (class method)
-  def self.find_for_scoring_access(email)
+  def self.find_for_scoring_access(email, organization: nil)
     return [] if email.blank?
 
-    # Find active tournaments (open, in_progress, or recently completed)
+    # Find active tournaments (open, closed, or in_progress)
     active_statuses = %w[open closed in_progress]
-    
-    joins(:tournament)
-      .where(email: email.downcase.strip)
+
+    scope = joins(:tournament)
+      .where("LOWER(golfers.email) = ?", email.downcase.strip)
       .where(tournaments: { status: active_statuses })
       .where.not(registration_status: "cancelled")
       .includes(:tournament, :group)
       .order("tournaments.event_date DESC")
+
+    scope = scope.where(tournaments: { organization_id: organization.id }) if organization.present?
+    scope
   end
 
   def check_in!(admin: nil)
@@ -334,24 +337,33 @@ class Golfer < ApplicationRecord
 
     Stripe.api_key = stripe_secret
 
-    # Process the refund through Stripe
+    # Process the refund through Stripe OUTSIDE any DB transaction
     refund = Stripe::Refund.create({
       payment_intent: stripe_payment_intent_id,
       reason: "requested_by_customer"
     })
 
-    ActiveRecord::Base.transaction do
-      clear_group_assignment! if clear_group_assignment && group_id.present?
+    persist_refund = lambda do
+      ActiveRecord::Base.transaction(requires_new: true) do
+        clear_group_assignment! if clear_group_assignment && group_id.present?
 
-      update!(
-        registration_status: "cancelled",
-        payment_status: "refunded",
-        stripe_refund_id: refund.id,
-        refund_amount_cents: refund.amount,
-        refund_reason: reason,
-        refunded_at: Time.current,
-        refunded_by: admin
-      )
+        update!(
+          registration_status: "cancelled",
+          payment_status: "refunded",
+          stripe_refund_id: refund.id,
+          refund_amount_cents: refund.amount,
+          refund_reason: reason,
+          refunded_at: Time.current,
+          refunded_by: admin
+        )
+      end
+    end
+
+    org_id = tournament&.organization_id
+    if org_id.present?
+      TenantContext.with_organization(org_id, &persist_refund)
+    else
+      persist_refund.call
     end
 
     # Send refund notification email

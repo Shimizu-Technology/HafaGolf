@@ -6,12 +6,20 @@ module Api
 
       # GET /api/v1/payment_links/:token
       def show
-        golfer = Golfer.find_by(payment_token: params[:token])
+        golfer = TenantContext.with_platform_access do
+          Golfer.includes(tournament: :organization).find_by(payment_token: params[:token])
+        end
         
         unless golfer
           render json: { error: "Invalid or expired payment link" }, status: :not_found
           return
         end
+
+        return unless verify_tenant_match!(
+          golfer.tournament.organization_id,
+          status: :not_found,
+          message: "Invalid or expired payment link"
+        )
 
         if golfer.payment_status == "paid"
           render json: { 
@@ -52,12 +60,20 @@ module Api
 
       # POST /api/v1/payment_links/:token/checkout
       def create_checkout
-        golfer = Golfer.find_by(payment_token: params[:token])
+        golfer = TenantContext.with_platform_access do
+          Golfer.includes(tournament: :organization).find_by(payment_token: params[:token])
+        end
         
         unless golfer
           render json: { error: "Invalid or expired payment link" }, status: :not_found
           return
         end
+
+        return unless verify_tenant_match!(
+          golfer.tournament.organization_id,
+          status: :not_found,
+          message: "Invalid or expired payment link"
+        )
 
         if golfer.payment_status == "paid"
           render json: { error: "This payment has already been completed" }, status: :unprocessable_entity
@@ -83,7 +99,6 @@ module Api
         end
 
         Stripe.api_key = stripe_secret
-        frontend_url = ENV.fetch("FRONTEND_URL", "http://localhost:5173")
         entry_fee = tournament&.entry_fee || 12500
 
         begin
@@ -102,7 +117,7 @@ module Api
               quantity: 1,
             }],
             mode: "payment",
-            return_url: "#{frontend_url}/pay/#{params[:token]}/success?session_id={CHECKOUT_SESSION_ID}",
+            return_url: OrgUrlBuilder.public_url(tournament&.organization, "/pay/#{params[:token]}/success?session_id={CHECKOUT_SESSION_ID}"),
             customer_email: golfer.email,
             metadata: {
               golfer_id: golfer.id.to_s,
@@ -111,7 +126,9 @@ module Api
             }
           })
 
-          golfer.update!(stripe_checkout_session_id: session.id)
+          TenantContext.with_organization(tournament.organization_id) do
+            golfer.update!(stripe_checkout_session_id: session.id)
+          end
 
           render json: {
             client_secret: session.client_secret,
@@ -130,39 +147,47 @@ module Api
         test_session_id = "test_paylink_#{SecureRandom.hex(16)}"
         test_payment_intent_id = "test_pi_paylink_#{SecureRandom.hex(8)}"
         emails_sent = false
+        already_paid = false
 
-        ActiveRecord::Base.transaction do
-          golfer.lock!
-          
-          if golfer.payment_status == "paid"
-            render json: {
-              test_mode: true, success: true,
-              message: "Payment already completed", already_paid: true
-            }
-            return
-          end
+        TenantContext.with_organization(tournament.organization_id) do
+          ActiveRecord::Base.transaction(requires_new: true) do
+            golfer.lock!
 
-          golfer.update!(
-            golfer.paid_registration_attributes(
-              payment_status: "paid",
-              payment_type: "stripe",
-              stripe_checkout_session_id: test_session_id,
-              stripe_payment_intent_id: test_payment_intent_id,
-              payment_method: "stripe",
-              payment_amount_cents: entry_fee,
-              payment_notes: "Paid via payment link (test mode) on #{Time.current.in_time_zone('Pacific/Guam').strftime('%B %d, %Y at %I:%M %p')} (Guam Time)"
+            if golfer.payment_status == "paid"
+              already_paid = true
+              next
+            end
+
+            golfer.update!(
+              golfer.paid_registration_attributes(
+                payment_status: "paid",
+                payment_type: "stripe",
+                stripe_checkout_session_id: test_session_id,
+                stripe_payment_intent_id: test_payment_intent_id,
+                payment_method: "stripe",
+                payment_amount_cents: entry_fee,
+                payment_notes: "Paid via payment link (test mode) on #{Time.current.in_time_zone('Pacific/Guam').strftime('%B %d, %Y at %I:%M %p')} (Guam Time)"
+              )
             )
-          )
 
-          ActivityLog.log(
-            admin: nil,
-            action: 'payment_completed',
-            target: golfer,
-            details: "Payment of $#{format('%.2f', entry_fee / 100.0)} completed via payment link",
-            tournament: tournament
-          )
+            ActivityLog.log(
+              admin: nil,
+              action: 'payment_completed',
+              target: golfer,
+              details: "Payment of $#{format('%.2f', entry_fee / 100.0)} completed via payment link",
+              tournament: tournament
+            )
 
-          emails_sent = true
+            emails_sent = true
+          end
+        end
+
+        if already_paid
+          render json: {
+            test_mode: true, success: true,
+            message: "Payment already completed", already_paid: true
+          }
+          return
         end
 
         Rails.cache.write(test_session_id, { golfer_id: golfer.id, amount: entry_fee }, expires_in: 1.hour)

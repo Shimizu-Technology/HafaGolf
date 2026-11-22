@@ -3,7 +3,7 @@ require "test_helper"
 class Api::V1::SettingsControllerTest < ActionDispatch::IntegrationTest
   def setup
     super
-    @admin = admins(:admin_one)
+    @admin = users(:super_admin)
     @admin.update!(clerk_id: "test_clerk_#{@admin.id}") if @admin.clerk_id.nil?
     authenticate_as(@admin)
   end
