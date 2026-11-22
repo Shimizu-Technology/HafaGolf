@@ -834,6 +834,97 @@ class SettlementsAndPayoutsTest < ActionDispatch::IntegrationTest
     assert_equal 4, result.breakdown_json.dig("registrations", "charge_count")
   end
 
+  test "calculator uses authoritative Golfer state for bridged rows (pending registration + paid golfer, and golfer refund)" do
+    @tournament_a.update!(team_size: 1, allow_partial_teams: false, capacity_unit: "players", entry_fee: 15_000)
+
+    # 1. Golfer paid later via legacy golfer checkout while bridged registration stayed unpaid
+    paid_golfer = Golfer.create!(
+      tournament: @tournament_a,
+      name: "Imported Then Paid",
+      email: "paid-bridged@example.com",
+      phone: "671-555-0301",
+      team_category: "Co-Ed",
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 15_000,
+      stripe_fee_cents: 465,
+      stripe_payment_intent_id: "pi_bridged_paid_later",
+      stripe_account_origin: "platform_live",
+      registration_status: "confirmed",
+      waiver_accepted_at: Time.current,
+      paid_at: Time.current
+    )
+    @tournament_a.registrations.create!(
+      organization: @org_a,
+      golfer: paid_golfer,
+      team_name: "Imported Then Paid",
+      contact_name: "Imported Then Paid",
+      contact_email: "paid-bridged@example.com",
+      payment_type: "stripe",
+      payment_status: "unpaid",
+      payment_amount_cents: 0,
+      registration_status: "confirmed",
+      team_members_attributes: [
+        { organization: @org_a, tournament: @tournament_a, position: 1, is_captain: true, name: "Imported Then Paid" }
+      ]
+    )
+
+    # 2. Golfer refunded via legacy Golfer#process_refund! while bridged registration still reads paid
+    refunded_golfer = Golfer.create!(
+      tournament: @tournament_a,
+      name: "Imported Then Refunded",
+      email: "refunded-bridged@example.com",
+      phone: "671-555-0302",
+      team_category: "Co-Ed",
+      payment_type: "stripe",
+      payment_status: "refunded",
+      payment_method: "stripe",
+      payment_amount_cents: 15_000,
+      refund_amount_cents: 15_000,
+      stripe_fee_cents: 465,
+      stripe_payment_intent_id: "pi_bridged_refunded",
+      stripe_account_origin: "platform_live",
+      registration_status: "cancelled",
+      waiver_accepted_at: Time.current,
+      paid_at: 2.days.ago,
+      refunded_at: 1.day.ago
+    )
+    @tournament_a.registrations.create!(
+      organization: @org_a,
+      golfer: refunded_golfer,
+      team_name: "Imported Then Refunded",
+      contact_name: "Imported Then Refunded",
+      contact_email: "refunded-bridged@example.com",
+      payment_type: "stripe",
+      payment_status: "paid",
+      payment_method: "stripe",
+      payment_amount_cents: 15_000,
+      stripe_payment_intent_id: "pi_bridged_refunded",
+      stripe_account_origin: "platform_live",
+      registration_status: "confirmed",
+      paid_at: 2.days.ago,
+      team_members_attributes: [
+        { organization: @org_a, tournament: @tournament_a, position: 1, is_captain: true, name: "Imported Then Refunded" }
+      ]
+    )
+
+    result = Settlements::Calculator.call(@tournament_a)
+
+    # Both golfers accounted for once from authoritative Golfer rows:
+    # Gross = 15_000 + 15_000 = 30_000; Refunds = 15_000; Net = 15_000
+    assert_equal 30_000, result.gross_cents
+    assert_equal 15_000, result.refund_cents
+    assert_equal 15_000, result.net_cents
+    # Actual Stripe fees preserved from Golfer rows (465 + 465 = 930)
+    assert_equal 930, result.processing_fee_cents
+    assert_equal 2, result.breakdown_json.dig("processing_fees", "actual_fee_count")
+    assert_equal 0, result.breakdown_json.dig("processing_fees", "estimated_fee_count")
+    # Only the non-refunded golfer counts as a billable registrant
+    assert_equal 1, result.breakdown_json.dig("registrations", "billable_registrant_count")
+    assert_equal 2, result.breakdown_json.dig("registrations", "charge_count")
+  end
+
   private
 
   def auth_headers_for(user)

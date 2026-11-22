@@ -42,8 +42,8 @@ module Settlements
 
     def call
       registrations = @tournament.registrations.includes(:team_members).order(:id).to_a
-      bridged_golfer_ids = registrations.filter_map(&:golfer_id).to_set
       golfers = @tournament.golfers.order(:id).to_a
+      golfer_ids = golfers.map(&:id).to_set
       raffle_tickets = @tournament.raffle_tickets.order(:id).to_a
       sponsors = @tournament.sponsors.includes(:sponsor_tier).order(:id).to_a
       donations = @tournament.donations.order(:id).to_a
@@ -55,6 +55,9 @@ module Settlements
 
       registrations.each do |registration|
         next if registration.payment_type == "sponsor"
+        # Bridged registrations mirror a legacy Golfer row, which holds the authoritative
+        # payment status, actual Stripe fee, and refund state (e.g. Golfer#process_refund!).
+        next if registration.golfer_id.present? && golfer_ids.include?(registration.golfer_id)
 
         amount = registration_charge_cents(registration)
         refund = clamped_refund_cents(registration, amount)
@@ -110,7 +113,6 @@ module Settlements
 
       golfers.each do |golfer|
         next if golfer.payment_type == "sponsor"
-        next if bridged_golfer_ids.include?(golfer.id)
 
         amount = registration_charge_cents(golfer)
         refund = clamped_refund_cents(golfer, amount)

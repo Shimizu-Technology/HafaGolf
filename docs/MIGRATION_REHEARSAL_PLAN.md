@@ -15,7 +15,9 @@ This document defines the exact, repeatable rehearsal workflow for:
 2. **`EXPECTED_DB_NAME` guard:** Every HafaGolf migration/seed rake task refuses to execute unless `ENV["EXPECTED_DB_NAME"]` matches `ActiveRecord::Base.connection.current_database`, unconditionally blocks local development DBs (`api_development`, `hafagolf_development`), and refuses if `SOURCE_DATABASE_URL` points to the same database as the target.
 3. **Idempotent, non-destructive imports:** Imported records are keyed by `(legacy_source, legacy_id)` (or natural keys / legacy markers). Re-running an import or seeder twice on the same snapshot MUST produce **identical row counts**, **zero duplicate records**, and **never overwrite live admin edits** on already-created organizations, tournaments, payment configs, or memberships. *(Note: pre-cutover snapshot re-syncs intentionally refresh historical child rows like golfers, groups, sponsors, raffle rows, and message deliveries — never re-run the legacy importer after live post-cutover writes begin on HafaGolf.)*
    - For `team_members` derived from legacy 2-person `golfers` rows, `legacy_id` uses the composite key `"<golfer_id>:<position>"` (`"42:1"` for Player 1, `"42:2"` for Player 2).
-4. **Zero cross-account Stripe refund risk:** Every imported historical Stripe `payment_intent_id` is tagged with `stripe_account_origin` (`legacy_giaa` or `legacy_maw`) so `Golfer#process_refund!` refuses automated API refunds against a mismatched Stripe account.
+4. **Zero cross-account Stripe refund risk (default-blocked until Gate D account verification):** Every imported historical Stripe `payment_intent_id` is tagged with `stripe_account_origin` (`legacy_giaa` or `legacy_maw`) and blocked from automated API refunds by default.
+   - **GIAA fact (Leon, Nov 22, 2026):** GIAA has **no Stripe account of its own** — its current app already charges through Shimizu Technology's Stripe (so `platform_collect` matches today with no open decision). Keep `legacy_giaa` blocked by default; at **Gate D cutover**, perform a read-only check comparing the Stripe account ID behind GIAA's legacy charges with HafaGolf's production platform Stripe account. **Only if they match**, enable refunds of `legacy_giaa` charges through the platform adapter with a regression test. Do not touch GIAA's production systems or keys before Gate B/D.
+   - **MAW codebase audit (Nov 22, 2026, read-only):** Although MAW uses SwipeSimple for registration and defaults raffle POS to `swipe_simple`, `make-a-wish-guam` was forked from the GIAA codebase and retains Stripe columns (`golfers.stripe_payment_intent_id`, `raffle_tickets.stripe_payment_intent_id`, `settings.stripe_*`) and Stripe checkout endpoints. Never assume zero MAW Stripe charges: at **Gate B** (staging snapshot) and **Gate D** (cutover), run a read-only SQL check for any non-null `stripe_payment_intent_id` across `golfers` and `raffle_tickets` (and whether `settings.stripe_secret_key` was ever populated), and if any Stripe charges exist, run the same read-only Stripe account ID check before deciding whether `legacy_maw` remains blocked.
 5. **No plaintext legacy secrets migrated & no `super_admin` escalation:** Legacy `settings` rows are read once only for non-secret metadata if needed; plaintext Stripe keys are **never** copied into `organization_payment_configs`, and imported users are capped at `org_admin` / `tournament_admin` (never `super_admin`).
 6. **Admin Clerk relinking:** Deduplicate `users` by `LOWER(email)` and assign `clerk_id = "pending_<sha256(email)[0,32]>"` (32-char lowercase hex prefix) so each admin automatically links to the centralized `golf.shimizu-technology.com` Clerk app on first sign-in.
 
@@ -119,13 +121,17 @@ All 5 flows below MUST pass end-to-end browser QA (phone `390×844` + desktop `1
    - Synthesizes `giaa` organization (`memorial-formal` theme pack, `platform_collect` payment mode — zero legacy plaintext Stripe keys migrated!).
    - Maps each GIAA `golfer` → 1 `registration` (`legacy_id: "<id>"`, `team_size: 1`) + 1 `team_member` (`legacy_id: "<id>:1"`, `is_captain: true`).
    - Maps `employee_numbers` (`used_by_golfer_id` / `used_by_team_member_id` remapped via `"<id>:1"`).
-   - Tags historical Stripe charges with `stripe_account_origin: "legacy_giaa"` so cross-account refunds are blocked.
+   - Tags historical Stripe charges with `stripe_account_origin: "legacy_giaa"` so automated refunds remain blocked by default.
    - Uploads static brand assets via Active Storage to HafaGolf S3.
    - Outputs 100%-matching JSON verification report (row counts, financial sums in cents, zero orphans).
 3. **Functional QA:**
    - Verify `employee_pricing` (public validation, race-lock claim, bulk upload, release on cancel).
    - Verify `checkin_alpha_lanes` (A–J / K–Z tabs with live counts) and atomic **Promote + Pay + Check-In** on waitlisted golfers.
    - Verify `memorial-formal` visual QA against `docs/client-specs/AIRPORT_GIAA_BRANDING_SPEC.md`.
+4. **Gate D Cutover Step — Read-Only Legacy Stripe Account Verification:**
+   - GIAA has no Stripe account of its own (its current app already charges through Shimizu Technology's Stripe, so `platform_collect` matches today).
+   - Keep `stripe_account_origin: "legacy_giaa"` blocked from automated refunds **by default**.
+   - Only at **Gate D cutover** (do not touch GIAA's production systems or keys beforehand), compare read-only the Stripe account ID behind GIAA's legacy charges against HafaGolf's production platform Stripe account. **Only if they match**, allow refunds of `legacy_giaa` charges through the platform adapter, backed by a regression test.
 
 ---
 
