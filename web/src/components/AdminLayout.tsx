@@ -539,9 +539,9 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-7xl gap-6 px-4 py-4 lg:px-6 lg:py-6">
+      <div className="mx-auto flex max-w-7xl gap-6 px-4 py-4 lg:px-6 lg:py-6 print:max-w-none print:p-0">
         {mobileMenuOpen && (
-          <div className="fixed inset-0 z-30 bg-black/30 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
+          <div className="print:hidden fixed inset-0 z-30 bg-black/30 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
         )}
 
         <aside
@@ -691,7 +691,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         <main className="min-w-0 flex-1 overflow-x-clip">{children}</main>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-200 bg-white/95 backdrop-blur lg:hidden">
+      <nav className="print:hidden fixed inset-x-0 bottom-0 z-30 border-t border-neutral-200 bg-white/95 backdrop-blur lg:hidden">
         {(() => {
           const mobileItems = organizationNav.filter((item) => item.label !== 'Activity Log');
           const gridColsClass =

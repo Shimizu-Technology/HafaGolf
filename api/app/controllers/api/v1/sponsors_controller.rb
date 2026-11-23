@@ -6,7 +6,8 @@ module Api
       skip_before_action :authenticate_user!, only: [:index, :show, :by_hole]
       before_action :set_tournament
       before_action :authorize_public_tournament_access!, only: [:index, :show, :by_hole]
-      before_action :authorize_tournament_admin!, only: [:manage, :create, :update, :destroy, :reorder, :slots, :update_slot]
+      before_action :authorize_sponsors_read!, only: [:manage]
+      before_action :authorize_tournament_admin!, only: [:create, :update, :destroy, :reorder, :slots, :update_slot]
       before_action :authorize_org_admin!, only: [:portal_link, :send_portal_invite]
       before_action -> { require_feature!(:sponsors) }
       before_action :set_sponsor, only: [:show, :update, :destroy, :slots, :update_slot, :portal_link, :send_portal_invite]
@@ -256,6 +257,10 @@ module Api
         unless @tournament.public_listed?
           render json: { error: 'Tournament not found' }, status: :not_found
         end
+      end
+
+      def authorize_sponsors_read!
+        require_any_capability!(:manage_sponsors, :manage_groups, :view_reports, :check_in, tournament: @tournament)
       end
 
       def authorize_tournament_admin!

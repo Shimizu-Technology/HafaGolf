@@ -696,6 +696,7 @@ module Api
           :partner_name, :partner_email, :partner_phone,
           :team_name, :team_category, :registration_source, :group_id,
           :sponsor_id, :sponsor_name, :notes,
+          :waiver_accepted_at, :raffle_tickets_requested,
           :is_employee, :employee_number_record_id
         ]
         golfer_fields << :payment_amount_cents if can_view_finances
@@ -705,6 +706,7 @@ module Api
           golfers: golfers.map { |g|
             g.as_json(only: golfer_fields).merge(
               "last_name" => g.last_name,
+              "waiver_signed" => g.waiver_accepted_at.present?,
               "employee_number" => g.employee_number,
               "expected_entry_fee_cents" => g.expected_entry_fee_cents,
               "hole_position_label" => hole_labels[g.id],

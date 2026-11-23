@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
+  AlertTriangle,
   Award,
   Car,
   ClipboardCheck,
@@ -11,16 +12,19 @@ import {
 } from 'lucide-react';
 import { useOrganization } from '../components/OrganizationProvider';
 import { useAuthToken } from '../hooks/useAuthToken';
+import { useLatestRequest } from '../hooks/useLatestRequest';
+import { isFeatureEnabled } from '../utils/features';
 import {
+  buildAlphaCheckInRows,
   buildCartSigns,
   chunkCartSigns,
   getGroupHoleLabel,
   groupSponsorsForSignage,
-  sortGolfersAlphabetically,
   sortGroupsForShotgun,
   type PrintableGolfer,
   type PrintableGroup,
   type PrintableSponsor,
+  type PrintableSponsorTierDefinition,
 } from '../utils/printables';
 import { formatShortDate } from '../utils/dates';
 
@@ -34,6 +38,7 @@ interface TournamentSummaryMeta {
   location_name?: string | null;
   shotgun_time?: string | null;
   logo_url?: string | null;
+  features?: Record<string, boolean>;
 }
 
 const SHEET_TABS: Array<{
@@ -60,7 +65,7 @@ const SHEET_TABS: Array<{
   {
     id: 'alpha_checkin',
     label: 'Check-In Backup Sheet',
-    subtitle: 'A–Z by last name with Hole #, Paid, Waiver, Add-Ons & sign box',
+    subtitle: 'Confirmed players & partners A–Z with Hole #, Paid, Waiver & sign box',
     orientation: 'portrait',
     icon: ClipboardCheck,
   },
@@ -86,58 +91,88 @@ export const PrintablesPage: React.FC = () => {
   const [golfers, setGolfers] = useState<PrintableGolfer[]>([]);
   const [groups, setGroups] = useState<PrintableGroup[]>([]);
   const [sponsors, setSponsors] = useState<PrintableSponsor[]>([]);
+  const [tierDefinitions, setTierDefinitions] = useState<PrintableSponsorTierDefinition[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const getTokenRef = useRef(getToken);
   getTokenRef.current = getToken;
+  const orgSlug = organization?.slug;
+  const orgSponsorsEnabled = isFeatureEnabled(organization?.features, 'sponsors', true);
+  const startRequest = useLatestRequest(`${orgSlug}/${tournamentSlug}`);
 
   const loadData = useCallback(async () => {
-    if (!organization?.slug || !tournamentSlug) return;
+    if (!orgSlug || !tournamentSlug) return;
+    const isCurrent = startRequest();
     setLoading(true);
     setError(null);
+    setWarnings([]);
+
     try {
       const token = await getTokenRef.current();
+      if (!isCurrent()) return;
+
       const apiBase = import.meta.env.VITE_API_URL || '';
       const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
 
       const tourneyRes = await fetch(
-        `${apiBase}/api/v1/admin/organizations/${organization.slug}/tournaments/${tournamentSlug}`,
+        `${apiBase}/api/v1/admin/organizations/${orgSlug}/tournaments/${tournamentSlug}`,
         { headers }
       );
+      if (!isCurrent()) return;
       if (!tourneyRes.ok) {
         const body = await tourneyRes.json().catch(() => ({}));
         throw new Error(body.error || 'Could not load tournament data for printables');
       }
       const tourneyPayload = await tourneyRes.json();
+      if (!isCurrent()) return;
+
       const tMeta: TournamentSummaryMeta = tourneyPayload.tournament;
+      const sponsorsFeatureOn = isFeatureEnabled(tMeta.features, 'sponsors', orgSponsorsEnabled);
+
       setTournament(tMeta);
       setGolfers(Array.isArray(tourneyPayload.golfers) ? tourneyPayload.golfers : []);
 
-      const [groupsRes, sponsorsRes] = await Promise.all([
-        fetch(`${apiBase}/api/v1/groups?tournament_id=${tMeta.id}`, { headers }),
-        fetch(`${apiBase}/api/v1/organizations/${organization.slug}/tournaments/${tournamentSlug}/sponsors`).catch(() => null),
-      ]);
+      const nextWarnings: string[] = [];
 
-      if (groupsRes.ok) {
+      const [groupsRes, sponsorsRes] = await Promise.all([
+        fetch(`${apiBase}/api/v1/groups?tournament_id=${tMeta.id}`, { headers }).catch(() => null),
+        sponsorsFeatureOn
+          ? fetch(`${apiBase}/api/v1/tournaments/${tMeta.id}/sponsors/manage`, { headers }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      if (!isCurrent()) return;
+
+      if (groupsRes && groupsRes.ok) {
         const gData = await groupsRes.json();
         setGroups(Array.isArray(gData) ? gData : gData.groups || []);
       } else {
         setGroups([]);
+        nextWarnings.push('Could not load tournament hole assignments (groups). Cart Signs and Shotgun Sheet may be incomplete.');
       }
 
-      if (sponsorsRes && sponsorsRes.ok) {
+      if (!sponsorsFeatureOn) {
+        setSponsors([]);
+        setTierDefinitions([]);
+      } else if (sponsorsRes && sponsorsRes.ok) {
         const sData = await sponsorsRes.json();
         setSponsors(Array.isArray(sData) ? sData : sData.sponsors || []);
+        setTierDefinitions(Array.isArray(sData?.tier_definitions) ? sData.tier_definitions : []);
       } else {
         setSponsors([]);
+        setTierDefinitions([]);
+        nextWarnings.push('Could not load sponsors for signage or cart signs.');
       }
+
+      setWarnings(nextWarnings);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : 'Failed to load printables data');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [organization?.slug, tournamentSlug]);
+  }, [orgSlug, orgSponsorsEnabled, startRequest, tournamentSlug]);
 
   useEffect(() => {
     void loadData();
@@ -154,11 +189,24 @@ export const PrintablesPage: React.FC = () => {
     () => sortGroupsForShotgun(groups, includeUnassigned),
     [groups, includeUnassigned]
   );
-  const alphaGolfers = useMemo(() => sortGolfersAlphabetically(golfers), [golfers]);
-  const sponsorGroups = useMemo(() => groupSponsorsForSignage(sponsors), [sponsors]);
+  const alphaRows = useMemo(() => buildAlphaCheckInRows(golfers), [golfers]);
+  const sponsorGroups = useMemo(
+    () => groupSponsorsForSignage(sponsors, tierDefinitions),
+    [sponsors, tierDefinitions]
+  );
 
   const eventLogoUrl = tournament?.logo_url || organization?.logo_url || null;
   const formattedDate = tournament?.event_date ? formatShortDate(tournament.event_date) : '';
+
+  const handleTabKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, idx: number) => {
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      setActiveSheet(SHEET_TABS[(idx + 1) % SHEET_TABS.length].id);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      setActiveSheet(SHEET_TABS[(idx - 1 + SHEET_TABS.length) % SHEET_TABS.length].id);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -202,18 +250,36 @@ export const PrintablesPage: React.FC = () => {
           </div>
         </div>
 
+        {warnings.length > 0 && (
+          <div
+            role="alert"
+            data-testid="printables-warning-banner"
+            className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <ul className="space-y-0.5">
+              {warnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Sheet selector tabs */}
         <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4" role="tablist" aria-label="Printable sheets">
-          {SHEET_TABS.map((tab) => {
+          {SHEET_TABS.map((tab, idx) => {
             const Icon = tab.icon;
             const active = activeSheet === tab.id;
             return (
               <button
                 key={tab.id}
+                id={`print-tab-${tab.id}`}
                 type="button"
                 role="tab"
                 aria-selected={active}
+                aria-controls={`print-panel-${tab.id}`}
                 onClick={() => setActiveSheet(tab.id)}
+                onKeyDown={(e) => handleTabKeyDown(e, idx)}
                 className={`flex flex-col items-start gap-1 rounded-2xl border p-3.5 text-left transition ${
                   active
                     ? 'border-brand-600 bg-brand-50/70 text-brand-950 shadow-xs'
@@ -262,7 +328,7 @@ export const PrintablesPage: React.FC = () => {
           <span className="ml-auto text-slate-500">
             {activeSheet === 'cart_signs' && `${cartSignCards.length} cart signs (${cartSignPages.length} landscape page${cartSignPages.length === 1 ? '' : 's'})`}
             {activeSheet === 'shotgun_sheet' && `${shotgunGroups.length} groups`}
-            {activeSheet === 'alpha_checkin' && `${alphaGolfers.length} active players`}
+            {activeSheet === 'alpha_checkin' && `${alphaRows.length} confirmed player entries`}
             {activeSheet === 'sponsor_signage' && `${sponsors.filter((s) => s.active !== false).length} active sponsors`}
           </span>
         </div>
@@ -278,7 +344,13 @@ export const PrintablesPage: React.FC = () => {
           {error}
         </div>
       ) : (
-        <div data-testid="printable-preview-area" className="space-y-6">
+        <div
+          id={`print-panel-${activeSheet}`}
+          role="tabpanel"
+          aria-labelledby={`print-tab-${activeSheet}`}
+          data-testid="printable-preview-area"
+          className="space-y-6"
+        >
           {/* 1. CART SIGNS (2 per landscape page) */}
           {activeSheet === 'cart_signs' && (
             <div data-testid="sheet-cart-signs" className="space-y-6 print:space-y-0">
@@ -297,7 +369,6 @@ export const PrintablesPage: React.FC = () => {
                         key={card.groupId}
                         className="print-avoid-break flex min-h-[420px] flex-col justify-between rounded-2xl border-2 border-slate-900 bg-white p-6 shadow-xs print:min-h-[6.8in] print:rounded-lg print:shadow-none"
                       >
-                        {/* Header: Event & Org Logo */}
                         <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-4">
                           <div className="min-w-0">
                             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -316,7 +387,6 @@ export const PrintablesPage: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Giant Hole Heading */}
                         <div className="my-5 text-center">
                           <p className="text-xs font-bold uppercase tracking-[0.25em] text-slate-500">
                             Starting Assignment
@@ -329,7 +399,6 @@ export const PrintablesPage: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Players & Team */}
                         <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50/70 p-4 print:bg-slate-50">
                           {card.teamName && (
                             <p className="mb-2 text-center text-xs font-bold uppercase tracking-wider text-brand-700">
@@ -349,7 +418,6 @@ export const PrintablesPage: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Optional Sponsor + Clean Footer */}
                         <div className="mt-5 border-t border-slate-200 pt-3">
                           {card.sponsorName && (
                             <div className="mb-2 flex items-center justify-center gap-2.5">
@@ -413,7 +481,7 @@ export const PrintablesPage: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {shotgunGroups.map((group) => {
-                      const players = (group.golfers || []).filter((g) => g.registration_status !== 'cancelled');
+                      const players = (group.golfers || []).filter((g) => g.registration_status === 'confirmed');
                       const teamLabel =
                         players.find((g) => g.team_name)?.team_name ||
                         players.find((g) => g.sponsor_display_name)?.sponsor_display_name ||
@@ -465,13 +533,13 @@ export const PrintablesPage: React.FC = () => {
                 meta={[
                   formattedDate,
                   tournament?.location_name,
-                  `${alphaGolfers.length} Active Registrations`,
+                  `${alphaRows.length} Confirmed Player Entries`,
                 ]}
                 logoUrl={eventLogoUrl}
               />
 
-              {alphaGolfers.length === 0 ? (
-                <EmptyPrintable message="No active golfers registered yet." />
+              {alphaRows.length === 0 ? (
+                <EmptyPrintable message="No confirmed golfers registered yet." />
               ) : (
                 <table className="mt-4 w-full border-collapse text-left text-xs">
                   <thead>
@@ -486,42 +554,22 @@ export const PrintablesPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {alphaGolfers.map((g) => {
-                      const isPaid = g.payment_status === 'paid' || g.payment_type === 'sponsor';
-                      const waiverOk = Boolean(g.waiver_signed || g.waiver_accepted_at);
-                      const addOns =
-                        g.add_ons_summary ||
-                        (g.raffle_tickets_requested && g.raffle_tickets_requested > 0
-                          ? `${g.raffle_tickets_requested}× Raffle`
-                          : '—');
-
-                      return (
-                        <tr key={g.id} className="print-avoid-break">
-                          <td className="px-2 py-2">
-                            <p className="font-semibold text-slate-900">{g.name}</p>
-                            {(g.partner_name || g.team_name) && (
-                              <p className="text-[11px] text-slate-500">
-                                {[g.partner_name ? `Partner: ${g.partner_name}` : null, g.team_name].filter(Boolean).join(' · ')}
-                              </p>
-                            )}
-                          </td>
-                          {showPhones && <td className="px-2 py-2 text-slate-600">{g.phone || '—'}</td>}
-                          <td className="px-2 py-2 font-bold text-slate-900 whitespace-nowrap">
-                            {g.hole_position_label || 'TBD'}
-                          </td>
-                          <td className="px-2 py-2 text-center font-semibold">
-                            {isPaid ? 'PAID' : 'DUE'}
-                          </td>
-                          <td className="px-2 py-2 text-center">
-                            {waiverOk ? 'YES' : 'NEEDED'}
-                          </td>
-                          <td className="px-2 py-2 text-slate-700">{addOns}</td>
-                          <td className="px-2 py-2 text-center">
-                            <span className="inline-block h-5 w-20 rounded border border-slate-400" aria-label="Check-in box" />
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {alphaRows.map((row) => (
+                      <tr key={row.rowKey} className="print-avoid-break">
+                        <td className="px-2 py-2">
+                          <p className="font-semibold text-slate-900">{row.displayName}</p>
+                          {row.subLabel && <p className="text-[11px] text-slate-500">{row.subLabel}</p>}
+                        </td>
+                        {showPhones && <td className="px-2 py-2 text-slate-600">{row.phone || '—'}</td>}
+                        <td className="px-2 py-2 font-bold text-slate-900 whitespace-nowrap">{row.holeLabel}</td>
+                        <td className="px-2 py-2 text-center font-semibold">{row.isPaid ? 'PAID' : 'DUE'}</td>
+                        <td className="px-2 py-2 text-center">{row.waiverOk ? 'YES' : 'NEEDED'}</td>
+                        <td className="px-2 py-2 text-slate-700">{row.addOnsLabel}</td>
+                        <td className="px-2 py-2 text-center">
+                          <span aria-hidden="true" className="inline-block h-5 w-20 rounded border border-slate-400" />
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               )}
@@ -581,14 +629,18 @@ export const PrintablesPage: React.FC = () => {
                               <td className="px-2 py-2 font-semibold text-slate-900">{sp.name}</td>
                               <td className="px-2 py-2 text-slate-700">
                                 {[
-                                  sp.hole_number ? `Hole ${sp.hole_number}` : null,
+                                  sp.hole_number
+                                    ? sp.course_key
+                                      ? `${sp.course_key.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())} Hole ${sp.hole_number}`
+                                      : `Hole ${sp.hole_number}`
+                                    : null,
                                   sp.slot_count ? `${sp.slot_count} player slot${sp.slot_count === 1 ? '' : 's'}` : null,
                                 ]
                                   .filter(Boolean)
                                   .join(' · ') || 'General Banner / Clubhouse'}
                               </td>
                               <td className="px-2 py-2 text-center">
-                                <span className="inline-block h-4 w-4 rounded border-2 border-slate-500" aria-label="Placed checkbox" />
+                                <span aria-hidden="true" className="inline-block h-4 w-4 rounded border-2 border-slate-500" />
                               </td>
                             </tr>
                           ))}
