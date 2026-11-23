@@ -6,7 +6,8 @@ module Api
       skip_before_action :authenticate_user!, only: [:index, :show, :by_hole]
       before_action :set_tournament
       before_action :authorize_public_tournament_access!, only: [:index, :show, :by_hole]
-      before_action :authorize_tournament_admin!, only: [:manage, :create, :update, :destroy, :reorder, :slots, :update_slot, :portal_link, :send_portal_invite]
+      before_action :authorize_tournament_admin!, only: [:manage, :create, :update, :destroy, :reorder, :slots, :update_slot]
+      before_action :authorize_org_admin!, only: [:portal_link, :send_portal_invite]
       before_action -> { require_feature!(:sponsors) }
       before_action :set_sponsor, only: [:show, :update, :destroy, :slots, :update_slot, :portal_link, :send_portal_invite]
       before_action :require_portal_ready!, only: [:portal_link, :send_portal_invite]
@@ -195,6 +196,8 @@ module Api
       # Admin - update a sponsor slot (admins bypass deadline)
       def update_slot
         slot = @sponsor.sponsor_slots.find(params[:slot_id])
+        prev_tshirt = slot.tshirt_size
+        prev_handicap = slot.handicap
 
         attrs = {
           player_name: params[:player_name],
@@ -206,8 +209,12 @@ module Api
         attrs[:handicap] = params[:handicap].presence if params.key?(:handicap)
         slot.update!(attrs)
 
+        cleared_fields = []
+        cleared_fields << :tshirt_size if params.key?(:tshirt_size) && prev_tshirt.present? && slot.tshirt_size.nil?
+        cleared_fields << :handicap if params.key?(:handicap) && !prev_handicap.nil? && slot.handicap.nil?
+
         begin
-          SponsorSlotSyncer.new(@sponsor).sync_slot(slot)
+          SponsorSlotSyncer.new(@sponsor).sync_slot(slot, cleared_fields: cleared_fields)
         rescue ActiveRecord::RecordInvalid => e
           render json: { error: "Slot saved but player roster sync failed: #{e.message}" }, status: :unprocessable_entity
           return
@@ -247,7 +254,15 @@ module Api
       end
 
       def authorize_tournament_admin!
+        return unless verify_tenant_match!(@tournament.organization_id, status: :not_found, message: 'Tournament not found')
+
         require_tournament_admin!(@tournament)
+      end
+
+      def authorize_org_admin!
+        return unless verify_tenant_match!(@tournament.organization_id, status: :not_found, message: 'Tournament not found')
+
+        require_org_admin!(@tournament.organization)
       end
 
       def set_sponsor
@@ -255,7 +270,9 @@ module Api
       end
 
       def require_portal_ready!
-        if @sponsor.login_email.blank?
+        if @tournament.status == 'archived'
+          render json: { error: "This event is archived, so sponsor portal links cannot be shared." }, status: :unprocessable_entity
+        elsif @sponsor.login_email.blank?
           render json: { error: "Add a portal login email for this sponsor first." }, status: :unprocessable_entity
         elsif !@sponsor.active?
           render json: { error: "Turn this sponsor on (Active) before sharing the portal." }, status: :unprocessable_entity

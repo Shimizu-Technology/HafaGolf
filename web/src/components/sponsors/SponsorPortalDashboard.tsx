@@ -87,9 +87,23 @@ export const SponsorPortalDashboard: React.FC<{
 
   const teamSize = normalizeTeamSize(tournamentInfo.team_size);
   const deadline = tournamentInfo.sponsor_edit_deadline;
-  const locked = tournamentInfo.edit_deadline_passed ?? (deadline ? new Date(deadline) < new Date() : false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const deadlineMs = deadline ? new Date(deadline).getTime() : NaN;
+  const deadlinePassedByClock = !Number.isNaN(deadlineMs) && deadlineMs <= nowMs;
+  const locked = Boolean(tournamentInfo.edit_deadline_passed) || deadlinePassedByClock;
   const waiverEnabled = tournamentInfo.waiver_enabled !== false;
   const handicapRequired = !!tournamentInfo.handicap_required;
+
+  useEffect(() => {
+    if (locked || Number.isNaN(deadlineMs)) return;
+    const remaining = deadlineMs - Date.now();
+    if (remaining <= 0) {
+      setNowMs(Date.now());
+      return;
+    }
+    const timer = window.setTimeout(() => setNowMs(Date.now()), Math.min(remaining + 250, 2_147_483_647));
+    return () => window.clearTimeout(timer);
+  }, [deadlineMs, locked, nowMs]);
 
   const authHeaders = useMemo(() => ({ 'X-Sponsor-Session': sessionToken }), [sessionToken]);
 
@@ -422,31 +436,32 @@ export const SponsorPortalDashboard: React.FC<{
                   const draft = drafts[slot.id] || draftFor(slot);
                   const errors = slotErrors[slot.id];
                   const idBase = `slot-${slot.id}`;
+                  const fieldsDisabled = locked || savingTeam === team.teamNumber;
                   return (
                     <fieldset key={slot.id} className="space-y-3 p-4" aria-describedby={errors ? `${idBase}-errors` : undefined}>
                       <legend className="text-base font-semibold text-gray-800">Player {slot.slot_number}</legend>
                       <div>
                         <label htmlFor={`${idBase}-name`} className="mb-1 block text-sm font-medium text-gray-700">Full name</label>
                         <input id={`${idBase}-name`} type="text" autoComplete="off" placeholder="First and last name"
-                          value={draft.player_name} disabled={locked}
+                          value={draft.player_name} disabled={fieldsDisabled}
                           onChange={(e) => updateDraft(slot.id, 'player_name', e.target.value)} className={inputClass} />
                       </div>
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
                           <label htmlFor={`${idBase}-email`} className="mb-1 block text-sm font-medium text-gray-700">Email (optional)</label>
                           <input id={`${idBase}-email`} type="email" inputMode="email" autoComplete="off" placeholder="name@example.com"
-                            value={draft.player_email} disabled={locked}
+                            value={draft.player_email} disabled={fieldsDisabled}
                             onChange={(e) => updateDraft(slot.id, 'player_email', e.target.value)} className={inputClass} />
                         </div>
                         <div>
                           <label htmlFor={`${idBase}-phone`} className="mb-1 block text-sm font-medium text-gray-700">Phone (optional)</label>
                           <input id={`${idBase}-phone`} type="tel" inputMode="tel" autoComplete="off" placeholder="(671) 555-1234"
-                            value={draft.player_phone} disabled={locked}
+                            value={draft.player_phone} disabled={fieldsDisabled}
                             onChange={(e) => updateDraft(slot.id, 'player_phone', e.target.value)} className={inputClass} />
                         </div>
                         <div>
                           <label htmlFor={`${idBase}-shirt`} className="mb-1 block text-sm font-medium text-gray-700">Shirt size (optional)</label>
-                          <select id={`${idBase}-shirt`} value={draft.tshirt_size} disabled={locked}
+                          <select id={`${idBase}-shirt`} value={draft.tshirt_size} disabled={fieldsDisabled}
                             onChange={(e) => updateDraft(slot.id, 'tshirt_size', e.target.value)} className={inputClass}>
                             <option value="">Select size…</option>
                             {TSHIRT_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
@@ -456,7 +471,7 @@ export const SponsorPortalDashboard: React.FC<{
                           <div>
                             <label htmlFor={`${idBase}-handicap`} className="mb-1 block text-sm font-medium text-gray-700">Handicap (needed for this event)</label>
                             <input id={`${idBase}-handicap`} type="number" inputMode="decimal" step="0.1" min={-10} max={54} placeholder="e.g. 14.2"
-                              value={draft.handicap} disabled={locked}
+                              value={draft.handicap} disabled={fieldsDisabled}
                               onChange={(e) => updateDraft(slot.id, 'handicap', e.target.value)} className={inputClass} />
                           </div>
                         )}

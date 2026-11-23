@@ -28,6 +28,19 @@ describe('groupSlotsIntoTeams', () => {
     expect(groupSlotsIntoTeams(slots(3), 0)).toHaveLength(3);
     expect(groupSlotsIntoTeams(slots(3), null)).toHaveLength(3);
   });
+
+  it('keeps slot-number team boundaries when legacy slot numbers have a gap', () => {
+    const gapped = [
+      { id: 1, slot_number: 1 },
+      { id: 3, slot_number: 3 },
+      { id: 4, slot_number: 4 },
+    ];
+    const teams = groupSlotsIntoTeams(gapped, 2);
+    expect(teams).toEqual([
+      { teamNumber: 1, firstPlayer: 1, lastPlayer: 1, slots: [{ id: 1, slot_number: 1 }] },
+      { teamNumber: 2, firstPlayer: 3, lastPlayer: 4, slots: [{ id: 3, slot_number: 3 }, { id: 4, slot_number: 4 }] },
+    ]);
+  });
 });
 
 describe('describeSponsorSlots', () => {

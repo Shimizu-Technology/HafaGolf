@@ -169,7 +169,11 @@ export const SponsorManagementPage: React.FC = () => {
         return;
       }
       toast.success(data?.message || 'Portal invite sent');
-      replaceSponsor({ ...sponsor, has_active_portal_link: true, portal_link_issued_at: data?.portal_link_issued_at || sponsor.portal_link_issued_at });
+      setSponsors((prev) => prev.map((item) => (
+        item.id === sponsor.id
+          ? { ...item, has_active_portal_link: true, portal_link_issued_at: data?.portal_link_issued_at || item.portal_link_issued_at }
+          : item
+      )));
     } catch {
       toast.error('The invite could not be sent. Try Copy Portal Link instead.');
     }

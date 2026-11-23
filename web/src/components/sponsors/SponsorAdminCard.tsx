@@ -354,7 +354,11 @@ const SponsorPlayersPanel: React.FC<{
       const res = await fetch(`${API_URL}/api/v1/tournaments/${tournamentId}/sponsors/${sponsor.id}/slots`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok || latestSponsor.current !== sponsor.id) return;
+      if (latestSponsor.current !== sponsor.id) return;
+      if (!res.ok) {
+        toast.error('Could not load players.');
+        return;
+      }
       const data = await res.json();
       const loaded: AdminSponsorSlot[] = data.slots || [];
       setSlots(loaded);
@@ -396,9 +400,11 @@ const SponsorPlayersPanel: React.FC<{
         toast.error(data?.error?.details?.join?.(', ') || data?.error?.message || data?.error || 'Could not save this player.');
         return;
       }
-      const nextSlots = slots.map((slot) => (slot.id === slotId ? data.slot as AdminSponsorSlot : slot));
-      setSlots(nextSlots);
-      onSlotsFilledChange(sponsor.id, nextSlots.filter((slot) => !!slot.player_name?.trim()).length);
+      setSlots((prev) => {
+        const nextSlots = prev.map((slot) => (slot.id === slotId ? data.slot as AdminSponsorSlot : slot));
+        onSlotsFilledChange(sponsor.id, nextSlots.filter((slot) => !!slot.player_name?.trim()).length);
+        return nextSlots;
+      });
       toast.success('Player saved');
       setEditingSlotId(null);
     } catch {

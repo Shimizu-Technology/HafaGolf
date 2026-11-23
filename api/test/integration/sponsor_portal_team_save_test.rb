@@ -105,6 +105,24 @@ class SponsorPortalTeamSaveTest < ActionDispatch::IntegrationTest
     assert_response :not_found
 
     authenticate_as(@admin_a)
+    # Cross-tenant host mismatch must be rejected even for an otherwise authorized org admin.
+    post "/api/v1/tournaments/#{@tournament_a.id}/sponsors/#{@sponsor.id}/portal_link",
+         headers: auth_headers.merge("X-Tenant-Host" => "reef-portal.example.com")
+    assert_response :not_found
+    assert_nil @sponsor.reload.access_token
+
+    # A tournament_admin without org-admin membership cannot mint portal links.
+    tournament_helper = User.create!(
+      email: "t-helper-#{SecureRandom.hex(3)}@example.com", name: "Event Helper",
+      role: "tournament_admin", clerk_id: "clerk_th_#{SecureRandom.hex(4)}"
+    )
+    TournamentAssignment.create!(user: tournament_helper, tournament: @tournament_a)
+    authenticate_as(tournament_helper)
+    post "/api/v1/tournaments/#{@tournament_a.id}/sponsors/#{@sponsor.id}/portal_link", headers: auth_headers
+    assert_response :forbidden
+    assert_nil @sponsor.reload.access_token
+
+    authenticate_as(@admin_a)
     @sponsor.update!(login_email: nil)
     post "/api/v1/tournaments/#{@tournament_a.id}/sponsors/#{@sponsor.id}/portal_link", headers: auth_headers
     assert_response :unprocessable_entity
@@ -239,7 +257,7 @@ class SponsorPortalTeamSaveTest < ActionDispatch::IntegrationTest
     assert_nil foreign_slot.reload.player_name
 
     original = SponsorSlotSyncer.instance_method(:sync_slots)
-    SponsorSlotSyncer.define_method(:sync_slots) { |_slots| raise ActiveRecord::RecordInvalid, TeamMember.new }
+    SponsorSlotSyncer.define_method(:sync_slots) { |_slots, **_opts| raise ActiveRecord::RecordInvalid, TeamMember.new }
     begin
       patch "/api/v1/sponsor_slots/batch",
             params: { slots: [{ id: first.id, player_name: "Ana Cruz" }, { id: second.id, player_name: "Ben Santos" }] },
@@ -317,5 +335,150 @@ class SponsorPortalTeamSaveTest < ActionDispatch::IntegrationTest
 
     post "/api/v1/sponsor_access/switch", params: { sponsor_id: @sponsor_next.id }, headers: { "X-Sponsor-Session" => "forged" }
     assert_response :unauthorized
+  end
+
+  test "inactive sponsors and archived tournaments immediately lose portal access" do
+    token = @sponsor.issue_portal_access_token!
+    session = portal_session_for(@sponsor, host: "coral-portal.example.com")
+
+    @sponsor.update!(active: false)
+    get "/api/v1/sponsor_access/verify", params: { token: token }
+    assert_response :unauthorized
+    post "/api/v1/sponsor_access/confirm", params: { token: token, email: @shared_email }
+    assert_response :unauthorized
+    get "/api/v1/sponsor_slots", headers: { "X-Sponsor-Session" => session }
+    assert_response :unauthorized
+    get "/api/v1/sponsor_access/sponsorships", headers: { "X-Sponsor-Session" => session }
+    assert_response :unauthorized
+    post "/api/v1/sponsor_access/switch", params: { sponsor_id: @sponsor.id }, headers: { "X-Sponsor-Session" => session }
+    assert_response :unauthorized
+
+    @sponsor.update!(active: true)
+    @tournament_a.update!(status: "archived")
+    get "/api/v1/sponsor_slots", headers: { "X-Sponsor-Session" => session }
+    assert_response :unauthorized
+    post "/api/v1/sponsor_access/confirm", params: { token: token, email: @shared_email }
+    assert_response :unauthorized
+  end
+
+  test "switching preserves the original session expiry and request_link keeps an existing valid token" do
+    copied_token = @sponsor.issue_portal_access_token!
+    post "/api/v1/sponsor_access/request_link", params: { email: @shared_email }
+    assert_response :success
+    assert_equal copied_token, @sponsor.reload.access_token, "request_link must not invalidate a still-valid copied link"
+
+    session = portal_session_for(@sponsor, host: "coral-portal.example.com")
+    original_exp = Sponsor.verify_portal_session_token(session).last
+
+    travel 2.hours do
+      post "/api/v1/sponsor_access/switch",
+           params: { sponsor_id: @sponsor_next.id },
+           headers: { "X-Sponsor-Session" => session, "X-Tenant-Host" => "coral-portal.example.com" }
+      assert_response :success
+      switched_exp = Sponsor.verify_portal_session_token(response.parsed_body["session_token"]).last
+      assert_equal original_exp.to_i, switched_exp.to_i
+    end
+  end
+
+  test "roster sync preserves existing shirt/handicap and staff payment status, clears waiver on replacement, and protects checked-in players" do
+    session = portal_session_for(@sponsor)
+    first, second = slots_for(@sponsor)
+
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [
+            { id: first.id, player_name: "Ana Cruz", player_email: "ana@example.com", tshirt_size: "L", handicap: 14.5 },
+            { id: second.id, player_name: "Ben Santos", tshirt_size: "M", handicap: 10.0 }
+          ] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :success
+
+    registration = @tournament_a.registrations.find_by!(sponsor_id: @sponsor.id, team_name: "Harbor Bank - Team 1")
+    golfer = @tournament_a.golfers.find_by!(sponsor_id: @sponsor.id, team_name: "Harbor Bank - Team 1")
+    member_one = registration.team_members.find_by!(sponsor_slot_id: first.id)
+    member_two = registration.team_members.find_by!(sponsor_slot_id: second.id)
+
+    # Simulate pre-migration legacy slots with nil shirt/handicap while roster already has values, plus staff refund.
+    first.update_columns(tshirt_size: nil, handicap: nil)
+    second.update_columns(tshirt_size: nil, handicap: nil)
+    member_one.update_columns(waiver_accepted_at: Time.current, magic_link_token: "tok_old", magic_link_expires_at: 1.day.from_now)
+    registration.update_columns(payment_status: "refunded")
+    golfer.update_columns(payment_status: "refunded")
+
+    # Saving team without touching shirt/handicap preserves teammate's values and staff payment_status.
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [
+            { id: first.id, player_name: "Ana Cruz", player_email: "ana@example.com", player_phone: "671-555-9999", tshirt_size: nil, handicap: nil },
+            { id: second.id, player_name: "Ben Santos", player_email: nil, player_phone: nil, tshirt_size: nil, handicap: nil }
+          ] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :success
+    assert_equal "L", member_one.reload.tshirt_size
+    assert_equal BigDecimal("14.5"), member_one.handicap
+    assert_equal "M", member_two.reload.tshirt_size
+    assert_equal "L", golfer.reload.tshirt_size
+    assert_equal "M", golfer.partner_tshirt_size
+    assert_equal "refunded", registration.reload.payment_status
+    assert_equal "refunded", golfer.payment_status
+
+    # Replacing Ana Cruz with a different golfer clears the prior player's waiver and scoring credential.
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [
+            { id: first.id, player_name: "Dana Lee", player_email: "dana@example.com", tshirt_size: nil, handicap: nil },
+            { id: second.id, player_name: "Ben Santos", tshirt_size: nil, handicap: nil }
+          ] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :success
+    assert_equal "Dana Lee", member_one.reload.name
+    assert_nil member_one.waiver_accepted_at
+    assert_nil member_one.magic_link_token
+    assert_nil member_one.tshirt_size
+
+    # Once checked in, the portal cannot silently replace or remove that player.
+    member_one.check_in!
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [
+            { id: first.id, player_name: "Someone Else" },
+            { id: second.id, player_name: "Ben Santos" }
+          ] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :unprocessable_entity
+    assert_equal "Dana Lee", first.reload.player_name
+    assert_equal "Dana Lee", member_one.reload.name
+  end
+
+  test "lowering slot_count removes highest slots contiguously and reconciles the roster" do
+    session = portal_session_for(@sponsor)
+    s1, s2, s3, s4 = slots_for(@sponsor)
+
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [
+            { id: s1.id, player_name: "Team One A" },
+            { id: s2.id, player_name: "Team One B" },
+            { id: s3.id, player_name: "Team Two A" },
+            { id: s4.id, player_name: "Team Two B" }
+          ] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :success
+    assert_equal 2, @tournament_a.registrations.where(sponsor_id: @sponsor.id, registration_status: "confirmed").count
+
+    @sponsor.update!(slot_count: 2)
+    assert_equal [1, 2], @sponsor.sponsor_slots.order(:slot_number).pluck(:slot_number)
+    team_two_reg = @tournament_a.registrations.find_by!(sponsor_id: @sponsor.id, team_name: "Harbor Bank - Team 2")
+    assert_equal "cancelled", team_two_reg.registration_status
+  end
+
+  test "handicap_required is enforced on the API when saving filled sponsor slots" do
+    @tournament_a.update!(handicap_required: true)
+    session = portal_session_for(@sponsor)
+    first, second = slots_for(@sponsor)
+
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [
+            { id: first.id, player_name: "Ana Cruz", handicap: nil },
+            { id: second.id, player_name: nil, handicap: nil }
+          ] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :unprocessable_entity
+    assert response.parsed_body["slot_errors"].key?(first.id.to_s)
   end
 end

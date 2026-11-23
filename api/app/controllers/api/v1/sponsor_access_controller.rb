@@ -22,12 +22,15 @@ module Api
             Sponsor.active.includes(tournament: :organization)
                    .joins(:tournament)
                    .where(tournaments: { organization_id: Current.organization.id })
+                   .where.not(tournaments: { status: 'archived' })
                    .where("LOWER(login_email) = ?", email)
                    .to_a
           end
         else
           TenantContext.with_closed_access do
             Sponsor.active.includes(tournament: :organization)
+                   .joins(:tournament)
+                   .where.not(tournaments: { status: 'archived' })
                    .where("LOWER(login_email) = ?", email)
                    .to_a
           end
@@ -37,7 +40,8 @@ module Api
         # Always return the same generic 200 message when no enabled sponsors match
         # so request_link never acts as an email-enumeration oracle.
         enabled_sponsors = sponsors.select do |sponsor|
-          Features.for(sponsor.tournament&.organization, sponsor.tournament).enabled?(:sponsors)
+          sponsor.portal_eligible? &&
+            Features.for(sponsor.tournament&.organization, sponsor.tournament).enabled?(:sponsors)
         end
 
         if enabled_sponsors.empty?
@@ -48,7 +52,7 @@ module Api
         enabled_sponsors.each do |sponsor|
           begin
             token = TenantContext.with_organization(sponsor.tournament.organization_id) do
-              sponsor.generate_access_token!
+              sponsor.issue_portal_access_token!
             end
             # Send access links synchronously OUTSIDE DB transaction
             SponsorAccessEmailService.send_access_link(sponsor: sponsor, token: token)
@@ -67,7 +71,7 @@ module Api
         token = params[:token]
         sponsor = TenantContext.with_platform_access { Sponsor.includes(:tournament).find_by_access_token(token) }
 
-        unless sponsor && (Current.organization.blank? || sponsor.tournament.organization_id == Current.organization.id)
+        unless sponsor&.portal_eligible? && (Current.organization.blank? || sponsor.tournament.organization_id == Current.organization.id)
           render json: { error: "Invalid or expired access link" }, status: :unauthorized
           return
         end
@@ -89,7 +93,7 @@ module Api
 
         sponsor = TenantContext.with_platform_access { Sponsor.includes(tournament: :organization).find_by_access_token(token) }
 
-        unless sponsor && (Current.organization.blank? || sponsor.tournament.organization_id == Current.organization.id)
+        unless sponsor&.portal_eligible? && (Current.organization.blank? || sponsor.tournament.organization_id == Current.organization.id)
           render json: { error: "Invalid or expired access link" }, status: :unauthorized
           return
         end
@@ -135,7 +139,7 @@ module Api
 
       # POST /api/v1/sponsor_access/switch { sponsor_id }
       # Mints a portal session for another sponsorship that shares the verified
-      # email within the same organization.
+      # email within the same organization, preserving the original session expiry.
       def switch
         target = sibling_sponsorships(@sponsor).find { |sponsor| sponsor.id == params[:sponsor_id].to_i }
 
@@ -144,14 +148,14 @@ module Api
           return
         end
 
-        render json: portal_payload(target, @sponsor.login_email.to_s.downcase)
+        render json: portal_payload(target, @sponsor.login_email.to_s.downcase, expires_at: @sponsor_session_expires_at)
       end
 
       private
 
-      def portal_payload(sponsor, email)
+      def portal_payload(sponsor, email, expires_at: nil)
         session_token = TenantContext.with_organization(sponsor.tournament.organization_id) do
-          sponsor.generate_portal_session_token!(verified_email: email)
+          sponsor.generate_portal_session_token!(verified_email: email, expires_at: expires_at)
         end
         tournament = sponsor.tournament
         org = tournament&.organization
@@ -198,10 +202,10 @@ module Api
                           .where("LOWER(sponsors.login_email) = ?", email)
                           .to_a
         siblings = siblings.select do |candidate|
-          candidate.tournament.organization_id == org.id &&
+          candidate.portal_eligible? &&
+            candidate.tournament.organization_id == org.id &&
             Features.for(org, candidate.tournament).enabled?(:sponsors)
         end
-        siblings << sponsor unless siblings.any? { |candidate| candidate.id == sponsor.id }
         siblings.sort_by { |candidate| [-candidate.tournament.year.to_i, candidate.tournament.name.to_s, candidate.name.to_s] }
       end
     end

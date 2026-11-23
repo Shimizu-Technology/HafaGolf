@@ -7,6 +7,8 @@ class SponsorSlotSyncer
   #    Portal updates that exact TeamMember idempotently).
   # 2. Legacy `Golfer` records (grouped by 2) so existing legacy callers and tests remain unbroken.
 
+  PORTAL_CANCEL_REASON = "Team cancelled via sponsor portal"
+
   def initialize(sponsor)
     @sponsor = sponsor
     @tournament = sponsor.tournament
@@ -16,29 +18,37 @@ class SponsorSlotSyncer
     ActiveRecord::Base.transaction(requires_new: true) do
       @sponsor.lock!
       slots = @sponsor.sponsor_slots.reload.order(:slot_number).to_a
+      by_number = slots.index_by(&:slot_number)
 
-      # Legacy Golfer sync (pairs) — capture synced golfers by slot_id so Registrations bridge cleanly
-      # Note: complimentary raffle tickets are created once on Registration (not duplicated on Golfer).
+      # Legacy Golfer sync (pairs by slot_number) — capture synced golfers by slot_id
       golfer_by_slot_id = {}
-      slots.each_slice(2).with_index do |(captain_slot, partner_slot), team_idx|
-        synced_golfer = sync_team(captain_slot, partner_slot, team_idx + 1)
+      pair_numbers = slots.map { |s| ((s.slot_number - 1) / 2) + 1 }.uniq.sort
+      pair_numbers.each do |pair_number|
+        pair_start = (pair_number - 1) * 2 + 1
+        captain_slot = by_number[pair_start]
+        partner_slot = by_number[pair_start + 1]
+        synced_golfer = sync_team(captain_slot, partner_slot, pair_number)
         next unless synced_golfer
 
         golfer_by_slot_id[captain_slot.id] = synced_golfer if captain_slot
         golfer_by_slot_id[partner_slot.id] = synced_golfer if partner_slot
       end
 
-      # Real teams Registration + TeamMember sync (1, 2, or 4 per team_size)
+      # Real teams Registration + TeamMember sync (grouped by slot_number)
       team_size = effective_team_size
-      slots.each_slice(team_size).with_index do |team_slots, team_idx|
+      team_numbers = slots.map { |s| ((s.slot_number - 1) / team_size) + 1 }.uniq.sort
+      team_numbers.each do |team_number|
+        range_start = (team_number - 1) * team_size + 1
+        team_slots = (range_start...(range_start + team_size)).filter_map { |n| by_number[n] }
         bridged_golfer = team_slots.filter_map { |s| golfer_by_slot_id[s.id] }.first
-        sync_registration_team(team_slots, team_idx + 1, bridged_golfer: bridged_golfer)
+        sync_registration_team(team_slots, team_number, bridged_golfer: bridged_golfer)
       end
     end
   end
 
   # Returns true on success, raises on failure so callers can surface the error.
-  def sync_slot(slot)
+  def sync_slot(slot, cleared_fields: [])
+    cleared_map = cleared_fields.present? ? { slot.id => Array(cleared_fields).map(&:to_sym) } : {}
     ActiveRecord::Base.transaction(requires_new: true) do
       @sponsor.lock!
       fresh_slot = @sponsor.sponsor_slots.find(slot.id)
@@ -48,7 +58,7 @@ class SponsorSlotSyncer
       pair_start = (legacy_team_number - 1) * 2 + 1
       captain_slot = @sponsor.sponsor_slots.find_by(slot_number: pair_start)
       partner_slot = @sponsor.sponsor_slots.find_by(slot_number: pair_start + 1)
-      synced_golfer = sync_team(captain_slot, partner_slot, legacy_team_number)
+      synced_golfer = sync_team(captain_slot, partner_slot, legacy_team_number, cleared_fields_by_slot_id: cleared_map)
 
       # 2. Real teams Registration + TeamMember sync
       team_size = effective_team_size
@@ -56,7 +66,12 @@ class SponsorSlotSyncer
       range_start = (reg_team_number - 1) * team_size + 1
       range_end = range_start + team_size - 1
       team_slots = @sponsor.sponsor_slots.where(slot_number: range_start..range_end).order(:slot_number).to_a
-      sync_registration_team(team_slots, reg_team_number, bridged_golfer: synced_golfer)
+      sync_registration_team(
+        team_slots,
+        reg_team_number,
+        bridged_golfer: synced_golfer,
+        cleared_fields_by_slot_id: cleared_map
+      )
     end
 
     true
@@ -64,7 +79,7 @@ class SponsorSlotSyncer
 
   # Syncs every team touched by a batch save exactly once (one legacy pair sync per
   # pair and one Registration sync per real team) inside a single transaction.
-  def sync_slots(slots)
+  def sync_slots(slots, cleared_fields_by_slot_id: {})
     slot_numbers = Array(slots).map(&:slot_number).uniq
     return true if slot_numbers.empty?
 
@@ -76,7 +91,12 @@ class SponsorSlotSyncer
       golfer_by_pair = {}
       slot_numbers.map { |n| ((n - 1) / 2) + 1 }.uniq.sort.each do |pair_number|
         pair_start = (pair_number - 1) * 2 + 1
-        golfer_by_pair[pair_number] = sync_team(by_number[pair_start], by_number[pair_start + 1], pair_number)
+        golfer_by_pair[pair_number] = sync_team(
+          by_number[pair_start],
+          by_number[pair_start + 1],
+          pair_number,
+          cleared_fields_by_slot_id: cleared_fields_by_slot_id
+        )
       end
 
       team_size = effective_team_size
@@ -84,7 +104,12 @@ class SponsorSlotSyncer
         range_start = (team_number - 1) * team_size + 1
         team_slots = (range_start...(range_start + team_size)).filter_map { |n| by_number[n] }
         bridged_golfer = team_slots.filter_map { |s| golfer_by_pair[((s.slot_number - 1) / 2) + 1] }.first
-        sync_registration_team(team_slots, team_number, bridged_golfer: bridged_golfer)
+        sync_registration_team(
+          team_slots,
+          team_number,
+          bridged_golfer: bridged_golfer,
+          cleared_fields_by_slot_id: cleared_fields_by_slot_id
+        )
       end
     end
 
@@ -97,11 +122,21 @@ class SponsorSlotSyncer
     [@tournament.team_size.to_i, 1].max
   end
 
+  def normalized_name(value)
+    value.to_s.strip.downcase
+  end
+
+  def portal_auto_cancelled?(record)
+    record.registration_status == "cancelled" &&
+      record.payment_status != "refunded" &&
+      record.notes.to_s.include?(PORTAL_CANCEL_REASON)
+  end
+
   # =========================================================================
   # Real Teams Sync (Registration + TeamMember with 1:1 sponsor_slot_id)
   # =========================================================================
 
-  def sync_registration_team(team_slots, team_number, bridged_golfer: nil)
+  def sync_registration_team(team_slots, team_number, bridged_golfer: nil, cleared_fields_by_slot_id: {})
     slots = Array(team_slots).compact.sort_by(&:slot_number)
     return if slots.empty?
 
@@ -111,8 +146,14 @@ class SponsorSlotSyncer
 
     if filled_slots.empty?
       if registration && !registration.cancelled?
+        protected_member = registration.team_members.find { |m| m.checked_in? || m.scores.exists? }
+        if protected_member || registration.scores.exists?
+          registration.errors.add(:base, "#{protected_member&.name || registration.display_team_name} has already checked in or recorded scores and cannot be removed here.")
+          raise ActiveRecord::RecordInvalid, registration
+        end
+
         Registration.transaction(requires_new: true) do
-          registration.cancel!(reason: "Team cancelled via sponsor portal")
+          registration.cancel!(reason: PORTAL_CANCEL_REASON)
         end
         append_audit(registration, "Team cancelled — all sponsor slots cleared via sponsor portal")
       end
@@ -134,45 +175,84 @@ class SponsorSlotSyncer
           contact_name: captain_slot.player_name.strip,
           contact_email: contact_email,
           contact_phone: contact_phone,
-          company: @sponsor.name,
-          payment_type: "sponsor",
-          payment_status: "paid",
-          registration_source: "sponsor",
-          registration_status: "confirmed"
+          company: @sponsor.name
         }
+        reg_update[:registration_status] = "confirmed" if portal_auto_cancelled?(registration)
         reg_update[:golfer_id] = bridge_golfer_id if bridge_golfer_id.present?
         registration.update!(reg_update)
 
-        # Remove team_members for slots that were cleared
+        # Remove team_members for slots that were cleared (unless checked in or scored)
         cleared_slot_ids = (slots - filled_slots).map(&:id)
         if cleared_slot_ids.any?
-          registration.team_members.where(sponsor_slot_id: cleared_slot_ids).destroy_all
+          registration.team_members.where(sponsor_slot_id: cleared_slot_ids).each do |member|
+            if member.checked_in? || member.scores.exists?
+              member.errors.add(:base, "#{member.name} has already checked in or recorded scores and cannot be removed here.")
+              raise ActiveRecord::RecordInvalid, member
+            end
+            member.destroy!
+          end
         end
 
         # Upsert 1:1 TeamMember per filled SponsorSlot
         filled_slots.each do |slot|
           pos = ((slot.slot_number - 1) % team_size) + 1
           is_cap = (slot.id == captain_slot.id)
-          member_attrs = {
-            organization_id: @tournament.organization_id,
-            tournament_id: @tournament.id,
-            sponsor_slot_id: slot.id,
-            position: pos,
-            is_captain: is_cap,
-            name: slot.player_name.strip,
-            email: slot.player_email&.strip&.downcase.presence,
-            phone: slot.player_phone&.strip.presence,
-            tshirt_size: slot.tshirt_size.presence,
-            handicap: slot.handicap,
-            company: @sponsor.name
-          }
-
+          cleared = Array(cleared_fields_by_slot_id[slot.id]).map(&:to_sym)
           existing_member = registration.team_members.find_by(sponsor_slot_id: slot.id) ||
                             registration.team_members.find_by(position: pos)
+
           if existing_member
+            identity_changed = normalized_name(existing_member.name) != normalized_name(slot.player_name)
+            if identity_changed && (existing_member.checked_in? || existing_member.scores.exists?)
+              existing_member.errors.add(:base, "#{existing_member.name} has already checked in or recorded scores and cannot be replaced here.")
+              raise ActiveRecord::RecordInvalid, existing_member
+            end
+
+            tshirt = if identity_changed || slot.tshirt_size.present? || cleared.include?(:tshirt_size)
+                       slot.tshirt_size.presence
+                     else
+                       existing_member.tshirt_size
+                     end
+            hcp = if identity_changed || !slot.handicap.nil? || cleared.include?(:handicap)
+                    slot.handicap
+                  else
+                    existing_member.handicap
+                  end
+
+            member_attrs = {
+              organization_id: @tournament.organization_id,
+              tournament_id: @tournament.id,
+              sponsor_slot_id: slot.id,
+              position: pos,
+              is_captain: is_cap,
+              name: slot.player_name.strip,
+              email: slot.player_email&.strip&.downcase.presence,
+              phone: slot.player_phone&.strip.presence,
+              tshirt_size: tshirt,
+              handicap: hcp,
+              company: @sponsor.name
+            }
+            if identity_changed
+              member_attrs[:waiver_accepted_at] = nil
+              member_attrs[:magic_link_token] = nil
+              member_attrs[:magic_link_expires_at] = nil
+            end
+
             existing_member.update!(member_attrs)
           else
-            registration.team_members.create!(member_attrs)
+            registration.team_members.create!(
+              organization_id: @tournament.organization_id,
+              tournament_id: @tournament.id,
+              sponsor_slot_id: slot.id,
+              position: pos,
+              is_captain: is_cap,
+              name: slot.player_name.strip,
+              email: slot.player_email&.strip&.downcase.presence,
+              phone: slot.player_phone&.strip.presence,
+              tshirt_size: slot.tshirt_size.presence,
+              handicap: slot.handicap,
+              company: @sponsor.name
+            )
           end
         end
       else
@@ -243,7 +323,7 @@ class SponsorSlotSyncer
   # Legacy Golfer Sync (kept intact for backwards compatibility)
   # =========================================================================
 
-  def sync_team(captain_slot, partner_slot, team_number)
+  def sync_team(captain_slot, partner_slot, team_number, cleared_fields_by_slot_id: {})
     captain_name = captain_slot&.player_name&.strip.presence
     expected_team_name = "#{@sponsor.name} - Team #{team_number}"
     email = captain_email_for(captain_slot, team_number)
@@ -252,42 +332,91 @@ class SponsorSlotSyncer
 
     if captain_name.nil?
       if golfer && golfer.registration_status != 'cancelled'
+        if golfer.checked_in_at.present? || golfer.scores.exists?
+          golfer.errors.add(:base, "#{golfer.name} has already checked in or recorded scores and cannot be removed here.")
+          raise ActiveRecord::RecordInvalid, golfer
+        end
+
         Golfer.transaction do
           golfer.clear_group_assignment! if golfer.group.present?
-          golfer.cancel!(reason: "Team cancelled via sponsor portal")
+          golfer.cancel!(reason: PORTAL_CANCEL_REASON)
         end
         append_audit(golfer, "Team cancelled — captain slot cleared via sponsor portal")
       end
       return
     end
 
-    attrs = {
-      name: captain_name,
-      email: email,
-      phone: captain_slot&.player_phone.presence || 'N/A',
-      partner_name: partner_slot&.player_name&.strip.presence,
-      partner_email: partner_slot&.player_email&.strip.presence,
-      partner_phone: partner_slot&.player_phone&.strip.presence,
-      tshirt_size: captain_slot&.tshirt_size.presence,
-      partner_tshirt_size: partner_slot&.tshirt_size.presence,
-      sponsor_id: @sponsor.id,
-      sponsor_name: @sponsor.name,
-      payment_type: 'sponsor',
-      payment_status: 'paid',
-      registration_status: 'confirmed',
-      is_team_captain: true,
-      team_name: expected_team_name,
-      company: @sponsor.name,
-      paid_at: Time.current,
-    }
+    new_partner_name = partner_slot&.player_name&.strip.presence
 
     if golfer
-      update_attrs = attrs.except(:paid_at)
+      captain_cleared = captain_slot ? Array(cleared_fields_by_slot_id[captain_slot.id]).map(&:to_sym) : []
+      partner_cleared = partner_slot ? Array(cleared_fields_by_slot_id[partner_slot.id]).map(&:to_sym) : []
+      captain_changed = normalized_name(golfer.name) != normalized_name(captain_name)
+      partner_changed = normalized_name(golfer.partner_name) != normalized_name(new_partner_name)
+
+      if captain_changed && (golfer.checked_in_at.present? || golfer.scores.exists?)
+        golfer.errors.add(:base, "#{golfer.name} has already checked in or recorded scores and cannot be replaced here.")
+        raise ActiveRecord::RecordInvalid, golfer
+      end
+
+      captain_tshirt = if captain_changed || captain_slot&.tshirt_size.present? || captain_cleared.include?(:tshirt_size)
+                         captain_slot&.tshirt_size.presence
+                       else
+                         golfer.tshirt_size
+                       end
+      partner_tshirt = if partner_changed || partner_slot&.tshirt_size.present? || partner_cleared.include?(:tshirt_size)
+                         partner_slot&.tshirt_size.presence
+                       else
+                         golfer.partner_tshirt_size
+                       end
+
+      update_attrs = {
+        name: captain_name,
+        email: email,
+        phone: captain_slot&.player_phone.presence || 'N/A',
+        partner_name: new_partner_name,
+        partner_email: partner_slot&.player_email&.strip.presence,
+        partner_phone: partner_slot&.player_phone&.strip.presence,
+        tshirt_size: captain_tshirt,
+        partner_tshirt_size: partner_tshirt,
+        sponsor_id: @sponsor.id,
+        sponsor_name: @sponsor.name,
+        is_team_captain: true,
+        team_name: expected_team_name,
+        company: @sponsor.name
+      }
+      update_attrs[:registration_status] = 'confirmed' if portal_auto_cancelled?(golfer)
+      if captain_changed
+        update_attrs[:waiver_accepted_at] = nil
+        update_attrs[:magic_link_token] = nil
+        update_attrs[:magic_link_expires_at] = nil
+      end
+      update_attrs[:partner_waiver_accepted_at] = nil if partner_changed
+
       changes = detect_changes(golfer, update_attrs)
       golfer.update!(update_attrs)
       append_audit(golfer, "Updated via sponsor portal: #{changes}") if changes.present?
       golfer
     else
+      attrs = {
+        name: captain_name,
+        email: email,
+        phone: captain_slot&.player_phone.presence || 'N/A',
+        partner_name: new_partner_name,
+        partner_email: partner_slot&.player_email&.strip.presence,
+        partner_phone: partner_slot&.player_phone&.strip.presence,
+        tshirt_size: captain_slot&.tshirt_size.presence,
+        partner_tshirt_size: partner_slot&.tshirt_size.presence,
+        sponsor_id: @sponsor.id,
+        sponsor_name: @sponsor.name,
+        payment_type: 'sponsor',
+        payment_status: 'paid',
+        registration_status: 'confirmed',
+        is_team_captain: true,
+        team_name: expected_team_name,
+        company: @sponsor.name,
+        paid_at: Time.current
+      }
       new_golfer = @tournament.golfers.create!(attrs)
       append_audit(new_golfer, "Created via sponsor portal by #{@sponsor.name}")
       new_golfer

@@ -15,24 +15,33 @@ export function normalizeTeamSize(teamSize: number | null | undefined): number {
   return size >= 1 ? size : 1;
 }
 
-/** Groups slots (ordered by slot_number) into teams of `teamSize`. */
+/**
+ * Groups slots by their `slot_number` using the same team-number bucket as
+ * `SponsorSlotSyncer` (`Math.floor((slot_number - 1) / teamSize) + 1`), so a
+ * gap in slot numbers never mixes two different teams into one card.
+ */
 export function groupSlotsIntoTeams<T extends { slot_number: number }>(
   slots: T[],
   teamSize: number | null | undefined
 ): SlotTeam<T>[] {
   const size = normalizeTeamSize(teamSize);
   const ordered = [...slots].sort((a, b) => a.slot_number - b.slot_number);
-  const teams: SlotTeam<T>[] = [];
-  for (let i = 0; i < ordered.length; i += size) {
-    const chunk = ordered.slice(i, i + size);
-    teams.push({
-      teamNumber: teams.length + 1,
-      firstPlayer: chunk[0].slot_number,
-      lastPlayer: chunk[chunk.length - 1].slot_number,
-      slots: chunk,
-    });
+  const byTeam = new Map<number, T[]>();
+  for (const slot of ordered) {
+    const teamNumber = Math.floor(Math.max(0, slot.slot_number - 1) / size) + 1;
+    const bucket = byTeam.get(teamNumber);
+    if (bucket) bucket.push(slot);
+    else byTeam.set(teamNumber, [slot]);
   }
-  return teams;
+
+  return Array.from(byTeam.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([teamNumber, teamSlots]) => ({
+      teamNumber,
+      firstPlayer: teamSlots[0].slot_number,
+      lastPlayer: teamSlots[teamSlots.length - 1].slot_number,
+      slots: teamSlots,
+    }));
 }
 
 /** "Team 1 — Players 1–2", or "Team 3 — Player 5" for a single leftover slot. */

@@ -26,11 +26,17 @@ module Api
       # PATCH /api/v1/sponsor_slots/:id
       def update
         slot = @sponsor.sponsor_slots.find(params[:id])
+        prev_tshirt = slot.tshirt_size
+        prev_handicap = slot.handicap
 
         slot.update!(slot_attributes(params).merge(confirmed_at: Time.current))
 
+        cleared_fields = []
+        cleared_fields << :tshirt_size if params.key?(:tshirt_size) && prev_tshirt.present? && slot.tshirt_size.nil?
+        cleared_fields << :handicap if params.key?(:handicap) && !prev_handicap.nil? && slot.handicap.nil?
+
         begin
-          SponsorSlotSyncer.new(@sponsor).sync_slot(slot)
+          SponsorSlotSyncer.new(@sponsor).sync_slot(slot, cleared_fields: cleared_fields)
         rescue ActiveRecord::RecordInvalid => e
           render json: { error: "Slot saved but player roster sync failed: #{e.message}" }, status: :unprocessable_entity
           return
@@ -50,7 +56,18 @@ module Api
           return
         end
 
-        ids = entries.map { |entry| entry[:id].to_i }
+        ids = entries.map do |entry|
+          raw_id = entry[:id]
+          if raw_id.is_a?(Integer)
+            raw_id
+          elsif raw_id.is_a?(String)
+            Integer(raw_id, 10, exception: false)
+          end
+        end
+        if ids.any?(&:nil?) || ids.any? { |id| id <= 0 }
+          render json: { error: "Each player entry must include a valid slot ID." }, status: :unprocessable_entity
+          return
+        end
         if ids.uniq.length != ids.length
           render json: { error: "Each player can only be saved once per request." }, status: :unprocessable_entity
           return
@@ -63,7 +80,17 @@ module Api
         end
 
         now = Time.current
-        entries.each { |entry| slots_by_id[entry[:id].to_i].assign_attributes(slot_attributes(entry).merge(confirmed_at: now)) }
+        cleared_fields_by_slot_id = {}
+        entries.each do |entry|
+          slot = slots_by_id[entry[:id].to_i]
+          prev_tshirt = slot.tshirt_size
+          prev_handicap = slot.handicap
+          slot.assign_attributes(slot_attributes(entry).merge(confirmed_at: now))
+          cleared = []
+          cleared << :tshirt_size if entry.key?(:tshirt_size) && prev_tshirt.present? && slot.tshirt_size.nil?
+          cleared << :handicap if entry.key?(:handicap) && !prev_handicap.nil? && slot.handicap.nil?
+          cleared_fields_by_slot_id[slot.id] = cleared if cleared.any?
+        end
 
         invalid = slots_by_id.values.reject(&:valid?)
         if invalid.any?
@@ -78,7 +105,10 @@ module Api
         # savepoint is what makes a failed roster sync roll back these slot writes.
         ActiveRecord::Base.transaction(requires_new: true) do
           slots_by_id.each_value(&:save!)
-          SponsorSlotSyncer.new(@sponsor).sync_slots(slots_by_id.values)
+          SponsorSlotSyncer.new(@sponsor).sync_slots(
+            slots_by_id.values,
+            cleared_fields_by_slot_id: cleared_fields_by_slot_id
+          )
         end
 
         all_slots = @sponsor.sponsor_slots.reload.order(:slot_number).to_a

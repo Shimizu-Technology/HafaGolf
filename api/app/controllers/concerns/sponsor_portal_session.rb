@@ -10,10 +10,13 @@ module SponsorPortalSession
 
   def authenticate_sponsor!
     session_token = request.headers["X-Sponsor-Session"] || params[:session_token]
-    @sponsor = TenantContext.with_platform_access { Sponsor.includes(tournament: :organization).find_by_portal_session_token(session_token) }
+    @sponsor, @sponsor_session_expires_at = TenantContext.with_platform_access do
+      Sponsor.includes(tournament: :organization).verify_portal_session_token(session_token)
+    end
 
-    unless @sponsor && (Current.organization.blank? || @sponsor.tournament.organization_id == Current.organization.id)
+    unless @sponsor&.portal_eligible? && (Current.organization.blank? || @sponsor.tournament.organization_id == Current.organization.id)
       @sponsor = nil
+      @sponsor_session_expires_at = nil
       render json: { error: "Invalid or expired sponsor session" }, status: :unauthorized
     end
   end
