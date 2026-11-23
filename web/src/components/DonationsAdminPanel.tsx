@@ -1,3 +1,4 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Banknote,
@@ -37,13 +38,19 @@ export const DonationsAdminPanel: React.FC<DonationsAdminPanelProps> = ({
   const [featureDisabled, setFeatureDisabled] = useState(false);
   const [showModal, setShowModal] = useState(false);
 
+  const startRefresh = useLatestRequest(String(tournamentId));
+
   const loadDonations = useCallback(async () => {
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
     setLoading(true);
     setFeatureDisabled(false);
     try {
       const res = await api.getAdminDonations(tournamentId);
+      if (!isCurrent()) return;
       setData(res);
     } catch (err) {
+      if (!isCurrent()) return;
       const msg = err instanceof Error ? err.message : 'Failed to load donations';
       if (msg.toLowerCase().includes('disabled') || msg.includes('403')) {
         setFeatureDisabled(true);
@@ -51,9 +58,9 @@ export const DonationsAdminPanel: React.FC<DonationsAdminPanelProps> = ({
         toast.error(msg);
       }
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [tournamentId]);
+  }, [startRefresh, tournamentId]);
 
   useEffect(() => {
     loadDonations();

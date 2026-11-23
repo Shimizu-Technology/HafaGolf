@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import { api, Tournament } from '../services/api';
 
 interface TournamentContextType {
@@ -24,19 +25,24 @@ export function TournamentProvider({ children, orgSlug }: TournamentProviderProp
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchTournaments = async (): Promise<Tournament[]> => {
+  const startRefresh = useLatestRequest(orgSlug);
+
+  const fetchTournaments = useCallback(async (): Promise<Tournament[]> => {
     if (orgSlug) {
       return api.getAdminOrganizationTournaments(orgSlug);
     }
 
     return api.getTournaments();
-  };
+  }, [orgSlug]);
 
   const refreshTournaments = async () => {
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
     try {
       setIsLoading(true);
       setError(null);
       const data = await fetchTournaments();
+      if (!isCurrent()) return;
       setTournaments(data);
 
       if (currentTournament) {
@@ -58,13 +64,13 @@ export function TournamentProvider({ children, orgSlug }: TournamentProviderProp
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load tournaments');
+      if (isCurrent()) setError(err instanceof Error ? err.message : 'Failed to load tournaments');
     } finally {
-      setIsLoading(false);
+      if (isCurrent()) setIsLoading(false);
     }
   };
 
-  const setCurrentTournament = (tournament: Tournament | null) => {
+  const setCurrentTournament = useCallback((tournament: Tournament | null) => {
     setCurrentTournamentState(tournament);
     api.setCurrentTournament(tournament?.id || null);
     
@@ -74,11 +80,11 @@ export function TournamentProvider({ children, orgSlug }: TournamentProviderProp
     } else {
       localStorage.removeItem('currentTournamentId');
     }
-  };
+  }, []);
 
   // Load tournaments on mount or organization switch
   useEffect(() => {
-    let cancelled = false;
+    const isCurrent = startRefresh();
 
     const loadInitialTournaments = async () => {
       if (!orgSlug) {
@@ -93,7 +99,7 @@ export function TournamentProvider({ children, orgSlug }: TournamentProviderProp
         setIsLoading(true);
         setError(null);
         const data = await fetchTournaments();
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setTournaments(data);
 
         if (data.length === 0) {
@@ -125,11 +131,11 @@ export function TournamentProvider({ children, orgSlug }: TournamentProviderProp
           api.setCurrentTournament(mostRecent.id);
         }
       } catch (err) {
-        if (!cancelled) {
+        if (isCurrent()) {
           setError(err instanceof Error ? err.message : 'Failed to load tournaments');
         }
       } finally {
-        if (!cancelled) {
+        if (isCurrent()) {
           setIsLoading(false);
         }
       }
@@ -137,10 +143,7 @@ export function TournamentProvider({ children, orgSlug }: TournamentProviderProp
 
     loadInitialTournaments();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [orgSlug]);
+  }, [fetchTournaments, orgSlug, startRefresh]);
 
   return (
     <TournamentContext.Provider

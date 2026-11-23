@@ -1,3 +1,4 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
@@ -69,11 +70,16 @@ export function ReportsPage() {
   const [paymentChannelFilter, setPaymentChannelFilter] = useState<string>('all');
   const [sortAscending, setSortAscending] = useState(true);
 
+  const startRefresh = useLatestRequest(`${activeTournament?.id}/${tournamentSlug}/${tournamentsLoading}`);
+
   const fetchData = useCallback(async () => {
     if (tournamentSlug && tournamentsLoading) return;
 
     setLoading(true);
     setPaymentReport(null);
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
+
     try {
       const tournamentId = activeTournament?.id;
       if (tournamentSlug && !tournamentId) {
@@ -89,16 +95,18 @@ export function ReportsPage() {
         api.getGolferStats(tournamentId),
         api.getPaymentReport(tournamentId),
       ]);
+      if (!isCurrent()) return;
       setGolfers(golfersRes.golfers);
       setGroups(groupsData);
       setStats(statsData);
       setPaymentReport(paymentReportData);
     } catch (err) {
+      if (!isCurrent()) return;
       console.error('Failed to load reports data:', err);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [activeTournament?.id, tournamentSlug, tournamentsLoading]);
+  }, [activeTournament?.id, tournamentSlug, tournamentsLoading, startRefresh]);
 
   useEffect(() => {
     fetchData();

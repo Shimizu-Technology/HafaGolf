@@ -27,7 +27,7 @@ export function CheckInWaiver({ name, acceptedAt, onSign }: CheckInWaiverProps) 
             type="button"
             disabled={saving}
             aria-label={`Mark Waiver Signed for ${name}`}
-            className="min-h-11 rounded-lg border border-amber-300 bg-white px-3 text-xs font-semibold text-amber-950 hover:bg-amber-50 disabled:opacity-60"
+            className="min-h-[48px] rounded-lg border border-amber-300 bg-white px-3 text-xs font-semibold text-amber-950 hover:bg-amber-50 disabled:opacity-60"
             onClick={async (event) => {
               event.stopPropagation();
               setSaving(true);

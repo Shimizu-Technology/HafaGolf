@@ -365,6 +365,7 @@ export interface Tournament {
   raffle_auto_draw?: boolean;
   sponsor_edit_deadline?: string | null;
   raffle_ticket_price_cents?: number;
+  raffle_hold_winner_on_screen?: boolean;
   raffle_include_with_registration?: boolean;
   raffle_bundles?: { quantity: number; price_cents: number; label: string }[];
   course_configs?: CourseConfig[];

@@ -42,7 +42,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useUser();
-  const { organization, accessibleOrganizations, setOrganization } = useOrganization();
+  const { organization, accessibleOrganizations } = useOrganization();
   const { tournaments, currentTournament, setCurrentTournament, isLoading } = useTournament();
   const { isVolunteer, isSuperAdmin } = useAdmin();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -54,11 +54,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     const nextOrg = accessibleOrganizations.find((org) => org.slug === orgSlugValue);
     if (!nextOrg || nextOrg.slug === organization?.slug) return;
 
-    setOrganization(nextOrg);
-    setCurrentTournament(null);
-    if (isEventWorkspaceRoute) {
-      navigate(adminOrgRoutes.dashboard);
-    }
+    navigate({
+      pathname: isEventWorkspaceRoute ? adminOrgRoutes.dashboard : location.pathname,
+      search: new URLSearchParams({ org: nextOrg.slug }).toString(),
+    });
     setMobileMenuOpen(false);
   };
 
@@ -88,7 +87,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   useEffect(() => {
     if (!routeTournamentSlug || isLoading) return;
-    if (activeTournament) return;
+    if (activeTournament) {
+      if (activeTournament.id !== currentTournament?.id) setCurrentTournament(activeTournament);
+      return;
+    }
 
     const fallbackTournament = currentTournament || tournaments[0] || null;
     if (!fallbackTournament) {
@@ -104,6 +106,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     navigate,
     routeSection,
     routeTournamentSlug,
+    setCurrentTournament,
     tournaments,
   ]);
 
@@ -251,10 +254,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     const nextTournament = tournaments.find((tournament) => tournament.id === Number(tournamentId));
     if (!nextTournament) return;
 
-    setCurrentTournament(nextTournament);
-
-    if (isEventWorkspaceRoute && routeSection) {
-      navigate(adminEventPath(nextTournament.slug, routeSection));
+    if (isEventWorkspaceRoute || location.pathname === adminOrgRoutes.settings) {
+      navigate(adminEventPath(nextTournament.slug, isEventWorkspaceRoute ? routeSection : 'settings'));
+    } else {
+      setCurrentTournament(nextTournament);
     }
 
     setMobileMenuOpen(false);
@@ -292,7 +295,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-100">
+    <div data-static-flow data-admin-ui className="min-h-screen bg-neutral-100">
       <header className="sticky top-0 z-40 border-b border-brand-800/10 bg-brand-600 text-brand-foreground shadow-sm">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 lg:px-6">
           <div className="flex items-center gap-3">
@@ -333,6 +336,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 <p className="text-[11px] uppercase tracking-[0.18em] text-brand-200">Current event</p>
                 <select
                   value={activeTournament?.id ?? ''}
+                  aria-label="Choose event"
                   onChange={(event) => handleTournamentSelect(event.target.value)}
                   className="w-full bg-transparent text-sm font-medium text-white outline-none"
                 >
@@ -501,6 +505,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 <div className="mt-3">
                   <select
                     value={activeTournament?.id ?? ''}
+                    aria-label="Choose event"
                     onChange={(event) => handleTournamentSelect(event.target.value)}
                     className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-brand-400"
                   >
@@ -541,7 +546,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           )}
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
+        <main className="min-w-0 flex-1 overflow-x-clip">{children}</main>
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-200 bg-white/95 backdrop-blur lg:hidden">

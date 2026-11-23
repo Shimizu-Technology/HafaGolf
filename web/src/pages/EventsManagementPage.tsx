@@ -1,3 +1,4 @@
+import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import React, { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -21,7 +22,6 @@ import toast from 'react-hot-toast';
 import { useAdmin, useTournament } from '../contexts';
 import { useOrganization } from '../components/OrganizationProvider';
 import { CloneTournamentModal } from '../components/CloneTournamentModal';
-import { useOrganizationStore } from '../stores/organizationStore';
 import { adminEventPath, adminOrgRoutes } from '../utils/adminRoutes';
 import { formatShortDate } from '../utils/dates';
 import {
@@ -39,10 +39,10 @@ interface PostCloneNotice {
 }
 
 export const EventsManagementPage: React.FC = () => {
+  const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const navigate = useNavigate();
   const { isSuperAdmin } = useAdmin();
   const { organization } = useOrganization();
-  const setOrganization = useOrganizationStore((state) => state.setOrganization);
   const { tournaments, currentTournament, isLoading, error, refreshTournaments } = useTournament();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [cloneTarget, setCloneTarget] = useState<Tournament | null>(null);
@@ -115,24 +115,37 @@ export const EventsManagementPage: React.FC = () => {
   ) => {
     const actionCopy = {
       open: {
-        confirm: `Open registration for "${tournament.name}"? This will make the public registration page available.`,
+        title: 'Open registration?',
+        description: `Players will be able to register for “${tournament.name}”.`,
+        confirmLabel: 'Open registration',
         success: 'Registration opened',
       },
       close: {
-        confirm: `Close registration for "${tournament.name}"? This shuts off online and walk-in registration.`,
+        title: 'Close registration?',
+        description: `Players will no longer be able to register online or as walk-ins for “${tournament.name}”.`,
+        confirmLabel: 'Close registration',
         success: 'Registration closed',
       },
       complete: {
-        confirm: `Mark "${tournament.name}" complete? This shuts off registration and keeps the event available for review.`,
+        title: 'Mark event complete?',
+        description: `Registration for “${tournament.name}” will close. You can still review the event afterward.`,
+        confirmLabel: 'Mark complete',
         success: 'Event marked complete',
       },
       archive: {
-        confirm: `Archive "${tournament.name}"? It will move to historical events but remain available for reference.`,
+        title: 'Archive event?',
+        description: `“${tournament.name}” will move to the archived events list.`,
+        confirmLabel: 'Archive event',
         success: 'Event archived',
       },
     }[action];
 
-    if (!confirm(actionCopy.confirm)) return;
+    if (!await requestConfirmation({
+      title: actionCopy.title,
+      description: actionCopy.description,
+      confirmLabel: actionCopy.confirmLabel,
+      tone: action === 'open' ? 'default' : 'danger',
+    })) return;
 
     setActionLoading(`${action}-${tournament.id}`);
     try {
@@ -184,11 +197,12 @@ export const EventsManagementPage: React.FC = () => {
   };
 
   const handleOpenClonedTournament = (notice: PostCloneNotice) => {
-    if (notice.isCrossOrg && notice.targetOrganization) {
-      setOrganization(notice.targetOrganization);
-    }
     setPostCloneNotice(null);
-    navigate(adminEventPath(notice.tournament.slug, 'settings'));
+    const org = notice.isCrossOrg ? notice.targetOrganization?.slug : undefined;
+    navigate({
+      pathname: adminEventPath(notice.tournament.slug, 'settings'),
+      search: org ? new URLSearchParams({ org }).toString() : '',
+    });
   };
 
   if (isLoading) {
@@ -210,6 +224,7 @@ export const EventsManagementPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      {confirmationDialog}
       {postCloneNotice && (
         <section
           role="status"

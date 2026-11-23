@@ -1,8 +1,8 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '@clerk/react';
 import { useOrganization } from '../components/OrganizationProvider';
-import { getDefaultOrgSlug } from '../utils/tenant';
 import {
   DndContext,
   DragEndEvent,
@@ -357,7 +357,7 @@ export const GroupManagementPage: React.FC = () => {
   const [overId, setOverId] = useState<string | null>(null);
   const [collapsedCourseKeys, setCollapsedCourseKeys] = useState<string[]>([]);
 
-  const orgSlug = organization?.slug || getDefaultOrgSlug();
+  const orgSlug = organization?.slug;
   const multiCourseSetup = courseConfigs.length > 1;
 
   const sensors = useSensors(
@@ -370,12 +370,18 @@ export const GroupManagementPage: React.FC = () => {
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   }, [getToken]);
 
+  const startRefresh = useLatestRequest(`${orgSlug}/${tournamentSlug}`);
+
   const fetchData = useCallback(async (showLoader = true) => {
     if (!orgSlug || !tournamentSlug) return;
+
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
 
     try {
       if (showLoader) setLoading(true);
       const headers = await authHeaders();
+      if (!isCurrent()) return;
 
       const tournamentResponse = await fetch(
         `${API}/api/v1/admin/organizations/${orgSlug}/tournaments/${tournamentSlug}`,
@@ -384,6 +390,7 @@ export const GroupManagementPage: React.FC = () => {
       if (!tournamentResponse.ok) throw new Error('Failed to load tournament');
 
       const tournamentPayload = await tournamentResponse.json();
+      if (!isCurrent()) return;
       const tournament = tournamentPayload.tournament || tournamentPayload;
       const nextTournamentId = tournament.id;
 
@@ -401,16 +408,18 @@ export const GroupManagementPage: React.FC = () => {
       if (!groupsResponse.ok) throw new Error('Failed to load groups');
 
       const groupPayload = await groupsResponse.json();
+      if (!isCurrent()) return;
       setGroups(Array.isArray(groupPayload) ? groupPayload : groupPayload.groups || []);
 
       const golfers: TournamentGolfer[] = tournamentPayload.golfers || [];
       setUnassigned(golfers.filter(isEligibleForHoleAssignment));
     } catch (error) {
+      if (!isCurrent()) return;
       toast.error(error instanceof Error ? error.message : 'Failed to load data');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [authHeaders, orgSlug, tournamentSlug]);
+  }, [authHeaders, orgSlug, tournamentSlug, startRefresh]);
 
   useEffect(() => {
     fetchData();

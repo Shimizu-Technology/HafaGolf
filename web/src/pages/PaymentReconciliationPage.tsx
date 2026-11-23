@@ -1,3 +1,4 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuthToken } from '../hooks/useAuthToken';
@@ -278,11 +279,17 @@ export const PaymentReconciliationPage: React.FC = () => {
   const [markingPaid, setMarkingPaid] = useState<Golfer | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('pending');
 
+  const startRefresh = useLatestRequest(`${organization?.slug}/${tournamentSlug}`);
+
   const fetchData = useCallback(async () => {
     if (!organization || !tournamentSlug) return;
 
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
+
     try {
       const token = await getToken();
+      if (!isCurrent()) return;
       if (!token) throw new Error('Not authenticated');
 
       const response = await fetch(
@@ -293,6 +300,7 @@ export const PaymentReconciliationPage: React.FC = () => {
       if (!response.ok) throw new Error('Failed to fetch data');
 
       const data = await response.json();
+      if (!isCurrent()) return;
       const t = data.tournament || data;
       setTournamentName(t.name || '');
       setEntryFee(t.entry_fee || 0);
@@ -303,11 +311,12 @@ export const PaymentReconciliationPage: React.FC = () => {
       setGolfers(confirmed);
       setError(null);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [organization, tournamentSlug, getToken]);
+  }, [organization, tournamentSlug, getToken, startRefresh]);
 
   useEffect(() => {
     fetchData();

@@ -23,6 +23,9 @@ import {
 
 interface OrgFeaturesPanelProps {
   organizationSlug: string;
+  title?: string;
+  featureKeys?: readonly FeatureKey[];
+  eventId?: number;
   onFeaturesUpdated?: (data: OrganizationFeaturesResponse) => void;
 }
 
@@ -35,13 +38,16 @@ const CATEGORY_ICONS: Record<FeatureCategory, React.ComponentType<{ className?: 
 
 export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
   organizationSlug,
+  title = 'Platform Features',
+  featureKeys,
+  eventId,
   onFeaturesUpdated,
 }) => {
   const [data, setData] = useState<OrganizationFeaturesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
-  const [scopeTab, setScopeTab] = useState<'organization' | 'tournament'>('organization');
+  const [scopeTab, setScopeTab] = useState<'organization' | 'tournament'>(eventId ? 'tournament' : 'organization');
   const [selectedTournamentId, setSelectedTournamentId] = useState<number | null>(null);
 
   const fetchFeatures = useCallback(async () => {
@@ -52,6 +58,7 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
       const payload = await api.getOrganizationFeatures(organizationSlug);
       setData(payload);
       setSelectedTournamentId((prev) => {
+        if (eventId && payload.tournaments.some((t) => t.id === eventId)) return eventId;
         if (prev && payload.tournaments.some((t) => t.id === prev)) return prev;
         const active = payload.tournaments.find((t) => t.status !== 'archived') || payload.tournaments[0];
         return active ? active.id : null;
@@ -61,15 +68,15 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [organizationSlug]);
+  }, [eventId, organizationSlug]);
 
   useEffect(() => {
     fetchFeatures();
   }, [fetchFeatures]);
 
   const groupedCatalog = useMemo(
-    () => (data ? groupCatalogByCategory(data.catalog) : []),
-    [data]
+    () => (data ? groupCatalogByCategory(data.catalog.filter((feature) => !featureKeys || featureKeys.includes(feature.key))) : []),
+    [data, featureKeys]
   );
 
   const selectedTournament = useMemo(
@@ -169,9 +176,9 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
             <Sliders className="w-5 h-5 text-brand-600" />
           </div>
           <div>
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Platform Features</h2>
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900">{title}</h2>
             <p className="text-xs sm:text-sm text-gray-500">
-              Control which modules are enabled for your organization and customize overrides per event. Changes save immediately.
+              Choose what’s available for all events or change it for one event. These choices save immediately.
             </p>
           </div>
         </div>
@@ -181,24 +188,24 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
             <button
               type="button"
               onClick={() => setScopeTab('organization')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+              className={`min-h-[48px] px-3 rounded-lg text-xs font-medium transition ${
                 scopeTab === 'organization'
                   ? 'bg-white text-gray-900 shadow-sm'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              Org Defaults
+              All events
             </button>
             <button
               type="button"
               onClick={() => setScopeTab('tournament')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+              className={`min-h-[48px] px-3 rounded-lg text-xs font-medium transition ${
                 scopeTab === 'tournament'
                   ? 'bg-white text-gray-900 shadow-sm'
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              Event Overrides
+              One event
             </button>
           </div>
         )}
@@ -239,7 +246,7 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
                 aria-label="Select event for feature overrides"
                 value={selectedTournament.id}
                 onChange={(e) => setSelectedTournamentId(Number(e.target.value))}
-                className="px-3 py-2 border border-gray-300 rounded-xl bg-white text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="min-h-[48px] px-3 py-2 border border-gray-300 rounded-xl bg-white text-base font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
                 {data.tournaments.map((t) => (
                   <option key={t.id} value={t.id}>
@@ -321,7 +328,7 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
                                 onClick={() => handleOrgReset(feature.key)}
                                 disabled={Boolean(savingKey)}
                                 title="Reset to platform default"
-                                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition disabled:opacity-50"
+                                className="min-h-[48px] min-w-[48px] text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition disabled:opacity-50"
                               >
                                 <RotateCcw className="w-3.5 h-3.5" />
                               </button>
@@ -333,7 +340,7 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
                               aria-label={`Toggle ${feature.label}`}
                               disabled={Boolean(savingKey) || unmetDeps.length > 0}
                               onClick={() => handleOrgToggle(feature.key, !effective)}
-                              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+                              className={`relative inline-flex h-[48px] w-[48px] items-center flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
                                 effective ? 'bg-brand-600' : 'bg-gray-200'
                               }`}
                             >
@@ -342,7 +349,7 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
                               ) : (
                                 <span
                                   className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ${
-                                    effective ? 'translate-x-5' : 'translate-x-0'
+                                    effective ? 'translate-x-6' : 'translate-x-0'
                                   }`}
                                 />
                               )}
@@ -431,7 +438,7 @@ export const OrgFeaturesPanel: React.FC<OrgFeaturesPanelProps> = ({
                                     type="button"
                                     disabled={Boolean(savingKey) || (mode === 'on' && unmetDeps.length > 0)}
                                     onClick={() => handleTournamentOverride(feature.key, targetVal)}
-                                    className={`px-2.5 py-1 rounded-md text-xs font-medium capitalize transition disabled:opacity-50 ${
+                                    className={`min-h-[48px] px-2.5 rounded-md text-sm font-medium capitalize transition disabled:opacity-50 ${
                                       isSelected
                                         ? mode === 'on'
                                           ? 'bg-brand-600 text-white shadow-sm'

@@ -1,3 +1,4 @@
+import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import React, { useEffect, useState } from 'react';
 import {
   CreditCard,
@@ -23,6 +24,7 @@ import {
 
 interface OrgPaymentConfigPanelProps {
   organizationSlug: string;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 const MODE_OPTIONS: Array<{ value: OrgPaymentMode; label: string; description: string }> = [
@@ -34,7 +36,7 @@ const MODE_OPTIONS: Array<{ value: OrgPaymentMode; label: string; description: s
   {
     value: 'platform_collect',
     label: 'Platform Collect (Shimizu Stripe)',
-    description: 'Collect card payments online through the platform Stripe account and settle via payout ledger.',
+    description: 'Collect card payments through the platform. Payouts are tracked for you.',
   },
   {
     value: 'client_processor',
@@ -56,7 +58,8 @@ const PROVIDER_OPTIONS: Array<{ value: PaymentProcessorProvider; label: string }
   { value: 'none', label: 'None' },
 ];
 
-export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ organizationSlug }) => {
+export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ organizationSlug, onDirtyChange }) => {
+  const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rotating, setRotating] = useState(false);
@@ -126,6 +129,22 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
     };
   }, [organizationSlug]);
 
+  const dirty = Boolean(config && (
+    config.payment_mode !== paymentMode || config.processor_provider !== provider || config.test_mode !== testMode ||
+    (config.external_checkout_url || '') !== externalCheckoutUrl ||
+    (config.external_walkin_url || '') !== externalWalkinUrl ||
+    (config.external_donation_url || '') !== externalDonationUrl ||
+    (config.payout_payee_name || '') !== payoutPayeeName ||
+    (config.payout_bank_name || '') !== payoutBankName ||
+    (config.payout_notes || '') !== payoutNotes ||
+    (config.platform_fee_flat_cents / 100).toFixed(2) !== feeFlatDollars ||
+    (config.platform_fee_per_registrant_cents / 100).toFixed(2) !== feePerRegDollars ||
+    (config.platform_fee_cap_cents === null ? '' : (config.platform_fee_cap_cents / 100).toFixed(2)) !== feeCapDollars ||
+    publicKey || secretKey || webhookSecret
+  ));
+
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+
   const handleModeChange = (nextMode: OrgPaymentMode) => {
     setPaymentMode(nextMode);
     if (nextMode === 'platform_collect' || nextMode === 'client_processor') {
@@ -144,9 +163,12 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
       paymentMode !== 'client_processor' &&
       (config.has_secret_key || config.has_webhook_secret || config.has_public_key)
     ) {
-      const confirmed = window.confirm(
-        'Switching away from Client Processor will permanently delete stored Stripe keys and disable the client webhook URL. Continue?'
-      );
+      const confirmed = await requestConfirmation({
+        title: 'Change payment mode?',
+        description: 'This will permanently delete your saved Stripe keys and disable your Stripe webhook URL.',
+        confirmLabel: 'Change payment mode',
+        tone: 'danger',
+      });
       if (!confirmed) return;
     }
 
@@ -194,9 +216,12 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
   };
 
   const handleRotateWebhook = async () => {
-    const confirmed = window.confirm(
-      'Rotating the webhook token immediately invalidates the current Stripe webhook URL until updated in Stripe. Continue?'
-    );
+    const confirmed = await requestConfirmation({
+      title: 'Replace Stripe webhook URL?',
+      description: 'The current URL will stop working immediately. Update the URL in your Stripe dashboard to resume receiving payment updates.',
+      confirmLabel: 'Replace URL',
+      tone: 'danger',
+    });
     if (!confirmed) return;
 
     setRotating(true);
@@ -231,6 +256,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
 
   return (
     <form onSubmit={handleSave} className="bg-white rounded-xl shadow-sm border border-neutral-200 overflow-hidden">
+      {confirmationDialog}
       <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-brand-50 text-brand-700">
@@ -239,7 +265,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
           <div>
             <h2 className="text-base font-semibold text-neutral-900">Payments &amp; Processor Mode</h2>
             <p className="text-xs text-neutral-500">
-              Per-organization checkout mode, encrypted processor credentials, and payout details.
+              Choose how to collect payments and where to send payouts. Use Save Payment Settings for changes in this section.
             </p>
           </div>
         </div>
@@ -296,7 +322,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
             <select
               value={provider}
               onChange={(e) => setProvider(e.target.value as PaymentProcessorProvider)}
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-900 focus:border-brand-600 focus:outline-none"
+              className="w-full rounded-lg border border-neutral-300 min-h-[48px] px-3 py-2 text-base text-neutral-900 focus:border-brand-600 focus:outline-none"
             >
               {PROVIDER_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -335,7 +361,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                   value={externalCheckoutUrl}
                   onChange={(e) => setExternalCheckoutUrl(e.target.value)}
                   placeholder="https://swipesimple.com/links/..."
-                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-neutral-300 bg-white min-h-[48px] px-3 py-2 text-base"
                 />
               </div>
               <div>
@@ -345,7 +371,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                   value={externalWalkinUrl}
                   onChange={(e) => setExternalWalkinUrl(e.target.value)}
                   placeholder="https://swipesimple.com/links/..."
-                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-neutral-300 bg-white min-h-[48px] px-3 py-2 text-base"
                 />
               </div>
               <div>
@@ -355,7 +381,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                   value={externalDonationUrl}
                   onChange={(e) => setExternalDonationUrl(e.target.value)}
                   placeholder="https://..."
-                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-neutral-300 bg-white min-h-[48px] px-3 py-2 text-base"
                 />
               </div>
             </div>
@@ -382,7 +408,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                   value={publicKey}
                   onChange={(e) => setPublicKey(e.target.value)}
                   placeholder={config?.has_public_key ? 'Leave blank to keep stored key' : 'pk_live_...'}
-                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-mono"
+                  className="w-full rounded-lg border border-neutral-300 bg-white min-h-[48px] px-3 py-2 text-base font-mono"
                 />
               </div>
               <div>
@@ -395,7 +421,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                   value={secretKey}
                   onChange={(e) => setSecretKey(e.target.value)}
                   placeholder={config?.has_secret_key ? '•••••••• (saved)' : 'rk_live_... or sk_live_...'}
-                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-mono"
+                  className="w-full rounded-lg border border-neutral-300 bg-white min-h-[48px] px-3 py-2 text-base font-mono"
                 />
               </div>
               <div>
@@ -408,7 +434,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                   value={webhookSecret}
                   onChange={(e) => setWebhookSecret(e.target.value)}
                   placeholder={config?.has_webhook_secret ? '•••••••• (saved)' : 'whsec_...'}
-                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-mono"
+                  className="w-full rounded-lg border border-neutral-300 bg-white min-h-[48px] px-3 py-2 text-base font-mono"
                 />
               </div>
             </div>
@@ -459,7 +485,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                 value={payoutPayeeName}
                 onChange={(e) => setPayoutPayeeName(e.target.value)}
                 placeholder="Organization legal name for checks/transfers"
-                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-neutral-300 min-h-[48px] px-3 py-2 text-base"
               />
             </div>
             <div>
@@ -469,7 +495,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                 value={payoutBankName}
                 onChange={(e) => setPayoutBankName(e.target.value)}
                 placeholder="e.g. Bank of Guam"
-                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-neutral-300 min-h-[48px] px-3 py-2 text-base"
               />
             </div>
             <div>
@@ -479,7 +505,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                 value={payoutNotes}
                 onChange={(e) => setPayoutNotes(e.target.value)}
                 placeholder="Check mailing address or memo instructions"
-                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-neutral-300 min-h-[48px] px-3 py-2 text-base"
               />
             </div>
           </div>
@@ -501,7 +527,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                   disabled={!canEditFees}
                   value={feeFlatDollars}
                   onChange={(e) => setFeeFlatDollars(e.target.value)}
-                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+                  className="w-full rounded-lg border border-neutral-300 min-h-[48px] px-3 py-2 text-base disabled:bg-neutral-50 disabled:text-neutral-500"
                 />
               </div>
               <div>
@@ -513,7 +539,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                   disabled={!canEditFees}
                   value={feePerRegDollars}
                   onChange={(e) => setFeePerRegDollars(e.target.value)}
-                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+                  className="w-full rounded-lg border border-neutral-300 min-h-[48px] px-3 py-2 text-base disabled:bg-neutral-50 disabled:text-neutral-500"
                 />
               </div>
               <div>
@@ -526,7 +552,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
                   value={feeCapDollars}
                   onChange={(e) => setFeeCapDollars(e.target.value)}
                   placeholder="None"
-                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
+                  className="w-full rounded-lg border border-neutral-300 min-h-[48px] px-3 py-2 text-base disabled:bg-neutral-50 disabled:text-neutral-500"
                 />
               </div>
             </div>
@@ -537,7 +563,7 @@ export const OrgPaymentConfigPanel: React.FC<OrgPaymentConfigPanelProps> = ({ or
           <button
             type="submit"
             disabled={saving}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+            className="inline-flex items-center gap-2 min-h-[48px] rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             <span>{saving ? 'Saving…' : 'Save Payment Settings'}</span>
