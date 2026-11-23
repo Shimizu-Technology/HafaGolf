@@ -131,10 +131,16 @@ class User < ApplicationRecord
     return Tournament.all if super_admin?
 
     memberships = organization_memberships.where(role: OrganizationMembership::STAFF_ROLES).to_a
+    all_member_org_ids = organization_memberships.pluck(:organization_id)
     unscoped_org_ids = memberships.select { |m| m.admin? || m.scoped_tournament_ids.blank? }.map(&:organization_id)
     scoped_ids = memberships.reject { |m| m.admin? || m.scoped_tournament_ids.blank? }.flat_map(&:scoped_tournament_ids)
-    assigned_ids = tournament_assignments.pluck(:tournament_id)
-    explicit_ids = (scoped_ids + assigned_ids).uniq
+
+    # Legacy tournament_assignments only apply when no explicit org membership governs that org
+    legacy_assigned_ids = Tournament.joins(:tournament_assignments)
+                                    .where(tournament_assignments: { user_id: id })
+                                    .where.not(organization_id: all_member_org_ids)
+                                    .pluck(:id)
+    explicit_ids = (scoped_ids + legacy_assigned_ids).uniq
 
     Tournament.where(organization_id: unscoped_org_ids).or(Tournament.where(id: explicit_ids))
   end

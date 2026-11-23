@@ -282,11 +282,58 @@ class RbacAndSecurityHardeningTest < ActionDispatch::IntegrationTest
          as: :json
     assert_response :unprocessable_entity
 
-    # Self-mutation forbidden for non-super-admin
+    # Self-mutation AND self-removal forbidden for non-super-admin (even when another admin exists)
+    second_admin = User.create!(clerk_id: "clerk_rbac_admin2", email: "admin2@rbac.example.com", role: "org_admin")
+    @org.organization_memberships.create!(user: second_admin, role: "org_admin")
+
     patch "/api/v1/admin/organizations/#{@org.slug}/members/#{@org_admin_membership.id}",
           params: { role: "coordinator" },
           headers: headers_for(@org_admin),
           as: :json
+    assert_response :forbidden
+
+    delete "/api/v1/admin/organizations/#{@org.slug}/members/#{@org_admin_membership.id}",
+           headers: headers_for(@org_admin)
+    assert_response :forbidden
+
+    # Explicit null scoped_tournament_ids rejected (never silently widened to [])
+    post "/api/v1/admin/organizations/#{@org.slug}/members",
+         params: {
+           email: "nullscope@rbac.example.com",
+           role: "checkin_volunteer",
+           scoped_tournament_ids: nil
+         },
+         headers: headers_for(@org_admin),
+         as: :json
+    assert_response :unprocessable_entity
+
+    # Direct model validation rejects nil scoped_tournament_ids and non-admin manage_team
+    bad_null_scope = OrganizationMembership.new(user: @marshal, organization: @other_org, role: "checkin_volunteer", scoped_tournament_ids: nil)
+    assert_not bad_null_scope.valid?
+    bad_escalation = OrganizationMembership.new(user: @marshal, organization: @other_org, role: "checkin_volunteer", permissions: { "manage_team" => true })
+    assert_not bad_escalation.valid?
+
+    # Legacy TournamentAssignment cannot bypass explicit OrganizationMembership scope
+    TournamentAssignment.create!(user: @checkin_vol, tournament: @t2)
+    assert_not_includes @checkin_vol.accessible_tournaments.pluck(:id), @t2.id
+    post "/api/v1/golfers/#{@t2_golfer.id}/check_in", headers: headers_for(@checkin_vol)
+    assert_response :forbidden
+
+    # Cross-org ActivityLogs isolation: org_admin of @org who is only a checkin_volunteer in @other_org
+    # cannot see @other_org tournament logs on default or all_tournaments=true
+    other_t = @other_org.tournaments.create!(name: "Other Event", slug: "other-event", year: 2026, status: "open")
+    @other_org.organization_memberships.create!(user: @org_admin, role: "checkin_volunteer")
+    ActivityLog.log(admin: second_admin, action: "golfer_checked_in", tournament: other_t, organization: @other_org, details: "Secret other-org log")
+
+    get "/api/v1/activity_logs", params: { all_tournaments: "true" }, headers: headers_for(@org_admin)
+    assert_response :success
+    returned_tids = JSON.parse(response.body)["activity_logs"].map { |l| l["tournament_id"] }
+    assert_not_includes returned_tids, other_t.id
+
+    # Scoring marshal can list groups for scoped @t1 (needed for ScorecardPage group picker) but not @t2
+    get "/api/v1/groups", params: { tournament_id: @t1.id }, headers: headers_for(@marshal)
+    assert_response :success
+    get "/api/v1/groups", params: { tournament_id: @t2.id }, headers: headers_for(@marshal)
     assert_response :forbidden
 
     # Valid invite & update logged and visible to org_admin in activity_logs?all_tournaments=true

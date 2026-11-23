@@ -87,13 +87,14 @@ export const ScorecardPage: React.FC = () => {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
   const orgSlug = organization?.slug || getDefaultOrgSlug();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const groupId = searchParams.get('group');
   const tournamentIdParam = searchParams.get('tournament'); // For golfer flow
   const { getToken, isGolferAuth } = useAuthToken();
   const { tournament: golferTournament } = useGolferAuth();
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [availableGroups, setAvailableGroups] = useState<Array<{ id: number; group_number: number; hole_position_label?: string | null; golfers?: Array<{ id: number; name: string }> }>>([]);
   const [scorecard, setScorecard] = useState<ScorecardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -110,41 +111,49 @@ export const ScorecardPage: React.FC = () => {
   const isTeamScoring = tournament?.tournament_format === 'scramble';
 
   const fetchData = useCallback(async () => {
-    if (!groupId) {
-      setError('No group selected');
-      setLoading(false);
-      return;
-    }
-
+    setLoading(true);
+    setError(null);
     try {
       const token = await getToken();
-      
+      const apiBase = import.meta.env.VITE_API_URL || '';
+
       let tournamentId: string | number;
       
       // Get tournament - support both admin flow (org/slug) and golfer flow (ID param)
       if (tournamentIdParam) {
-        // Golfer flow - tournament ID in query param
         tournamentId = tournamentIdParam;
-        // We'll get tournament details from scorecard response
       } else if (orgSlug && tournamentSlug) {
-        // Admin flow - look up by org slug and tournament slug
         const tournamentRes = await fetch(
-          `${import.meta.env.VITE_API_URL}/api/v1/organizations/${orgSlug}/tournaments/${tournamentSlug}`
+          `${apiBase}/api/v1/organizations/${orgSlug}/tournaments/${tournamentSlug}`
         );
         if (!tournamentRes.ok) throw new Error('Tournament not found');
         const tournamentData = await tournamentRes.json();
-        const tournament = tournamentData.tournament || tournamentData;
-        setTournament(tournament);
-        tournamentId = tournament.id;
+        const loadedTournament = tournamentData.tournament || tournamentData;
+        setTournament(loadedTournament);
+        tournamentId = loadedTournament.id;
       } else {
         setError('Tournament not specified');
         setLoading(false);
         return;
       }
 
+      if (!groupId) {
+        setScorecard(null);
+        const groupsRes = await fetch(`${apiBase}/api/v1/groups?tournament_id=${tournamentId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!groupsRes.ok) {
+          throw new Error('Could not load tournament groups');
+        }
+        const groupsData = await groupsRes.json();
+        setAvailableGroups(Array.isArray(groupsData) ? groupsData : groupsData.groups || []);
+        setLoading(false);
+        return;
+      }
+
       // Get scorecard
       const scorecardRes = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournamentId}/scores/scorecard?group_id=${groupId}`,
+        `${apiBase}/api/v1/tournaments/${tournamentId}/scores/scorecard?group_id=${groupId}`,
         {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         }
@@ -309,6 +318,55 @@ export const ScorecardPage: React.FC = () => {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-green-600" />
+      </div>
+    );
+  }
+
+  if (!groupId && tournament && !error) {
+    return (
+      <div data-testid="scoring-group-picker" className="mx-auto max-w-3xl space-y-5 p-4 sm:p-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+          <p className="text-xs font-semibold uppercase tracking-wider text-brand-600">Scoring Station</p>
+          <h1 className="mt-1 text-xl font-bold text-slate-900">{tournament.name}</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            Select a foursome or pairing below to open its hole-by-hole scorecard.
+          </p>
+        </div>
+
+        {availableGroups.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+            No groups have been created for this tournament yet.
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {availableGroups.map((grp) => (
+              <button
+                key={grp.id}
+                type="button"
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.set('group', String(grp.id));
+                  setSearchParams(next);
+                }}
+                className="flex flex-col items-start gap-1.5 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-xs transition hover:border-brand-500 hover:bg-brand-50/40"
+              >
+                <div className="flex w-full items-center justify-between gap-2">
+                  <span className="text-base font-bold text-slate-900">Group {grp.group_number}</span>
+                  {grp.hole_position_label && (
+                    <span className="rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-700">
+                      Hole {grp.hole_position_label}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-600">
+                  {grp.golfers && grp.golfers.length > 0
+                    ? grp.golfers.map((g) => g.name).join(' · ')
+                    : 'No players assigned'}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

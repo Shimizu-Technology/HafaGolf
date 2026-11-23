@@ -7,7 +7,7 @@ module Api
 
       # GET /api/v1/activity_logs
       def index
-        accessible_tournaments = current_user.accessible_tournaments
+        accessible_tournaments = activity_log_tournaments
         logs = ActivityLog.recent.includes(:user, :tournament)
 
         if params[:tournament_id].present?
@@ -117,12 +117,12 @@ module Api
       def summary
         tournament = if params[:tournament_id].present?
           found = Tournament.find(params[:tournament_id])
-          require_tournament_admin!(found)
+          require_any_capability!(:view_reports, :manage_settings, :manage_golfers, tournament: found)
           return if performed?
 
           found
         else
-          current_user.accessible_tournaments.recent.first
+          activity_log_tournaments.recent.first
         end
 
         base_scope = tournament ? ActivityLog.for_tournament(tournament.id) : ActivityLog.none
@@ -159,6 +159,17 @@ module Api
       end
 
       private
+
+      def activity_log_tournaments
+        return Tournament.all if current_user.super_admin?
+
+        allowed_ids = current_user.accessible_tournaments.includes(:organization).select do |t|
+          current_user.can?(:view_reports, organization: t.organization, tournament: t) ||
+            current_user.can?(:manage_settings, organization: t.organization, tournament: t) ||
+            current_user.can?(:manage_golfers, organization: t.organization, tournament: t)
+        end.map(&:id)
+        Tournament.where(id: allowed_ids)
+      end
 
       def require_activity_log_admin!
         return if current_user&.super_admin?

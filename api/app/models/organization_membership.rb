@@ -217,7 +217,7 @@ class OrganizationMembership < ApplicationRecord
 
   def validate_scoped_tournament_ids
     if scoped_tournament_ids.nil?
-      self.scoped_tournament_ids = []
+      errors.add(:scoped_tournament_ids, "must be an array of positive tournament IDs")
       return
     end
 

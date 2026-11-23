@@ -1205,6 +1205,10 @@ module Api
 
         membership = org.organization_memberships.find(params[:member_id])
 
+        if membership.user_id == current_user.id && !current_user.super_admin?
+          return render json: { error: "Forbidden: Cannot remove yourself" }, status: :forbidden
+        end
+
         # Don't let the last admin remove themselves
         if membership.admin? && org.organization_memberships.admins.count <= 1
           return render json: { error: "Cannot remove the last admin" }, status: :unprocessable_entity
@@ -1256,7 +1260,6 @@ module Api
       end
 
       def parse_scoped_tournament_ids(raw)
-        return [] if raw.nil?
         return :invalid unless raw.is_a?(Array)
 
         parsed = []
