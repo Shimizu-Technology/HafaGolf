@@ -28,6 +28,7 @@ import {
   type PlatformFeatureCatalogItem,
   type WizardOrganizationPayload,
 } from '../components/platform/NewOrganizationWizard';
+import { ConfirmDialog, type Confirmation } from '../components/ConfirmDialog';
 
 interface PlatformDomain {
   id: string;
@@ -94,6 +95,7 @@ interface PlatformOverviewResponse {
     active_tournaments: number;
     total_confirmed_golfers: number;
     pending_payouts_cents: number;
+    estimated_pending_payouts_cents?: number;
     platform_collect_org_count: number;
   };
   feature_catalog: PlatformFeatureCatalogItem[];
@@ -126,10 +128,12 @@ export const PlatformConsolePage: React.FC = () => {
   const [savingOrg, setSavingOrg] = useState(false);
   const [newDomainHost, setNewDomainHost] = useState('');
   const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [pendingConfirm, setPendingConfirm] = useState<(Confirmation & { onConfirm: () => Promise<void> | void }) | null>(null);
 
   const apiBase = import.meta.env.VITE_API_URL || '';
   const getTokenRef = useRef(getToken);
   getTokenRef.current = getToken;
+  const hasLoadedOnceRef = useRef(false);
 
   const authedFetch = useCallback(
     async <T,>(path: string, init?: RequestInit): Promise<T> => {
@@ -153,9 +157,10 @@ export const PlatformConsolePage: React.FC = () => {
 
   const loadOverview = useCallback(async () => {
     try {
-      setLoading(true);
+      if (!hasLoadedOnceRef.current) setLoading(true);
       const data = await authedFetch<PlatformOverviewResponse>('/api/v1/admin/platform/overview');
       setOverview(data);
+      hasLoadedOnceRef.current = true;
       // Keep sidebar org switcher in sync
       const orgList = await api.getAdminOrganizations().catch(() => null);
       if (orgList) setAccessibleOrganizations(orgList);
@@ -354,9 +359,14 @@ export const PlatformConsolePage: React.FC = () => {
           />
           <SummaryCard
             icon={DollarSign}
-            label="Pending Payouts"
+            label="Pending Payouts (Finalized)"
             value={fmtUsd(summary.pending_payouts_cents)}
-            sub={`${summary.platform_collect_org_count} platform-collect org${summary.platform_collect_org_count === 1 ? '' : 's'}`}
+            sub={
+              summary.estimated_pending_payouts_cents &&
+              summary.estimated_pending_payouts_cents > summary.pending_payouts_cents
+                ? `${fmtUsd(summary.estimated_pending_payouts_cents)} est. incl. draft/uncalculated`
+                : `${summary.platform_collect_org_count} platform-collect org${summary.platform_collect_org_count === 1 ? '' : 's'}`
+            }
           />
         </div>
       )}
@@ -517,7 +527,21 @@ export const PlatformConsolePage: React.FC = () => {
                         key={st}
                         type="button"
                         disabled={savingOrg}
-                        onClick={() => handlePatchOrg(selectedOrg.slug, { status: st }, `${selectedOrg.name} marked ${st}`)}
+                        onClick={() => {
+                          if (st === 'archived' && selectedOrg.status !== 'archived') {
+                            setPendingConfirm({
+                              title: `Archive ${selectedOrg.name}?`,
+                              description:
+                                'Archiving marks this organization canceled and disables public tenant site resolution until reactivated.',
+                              confirmLabel: 'Archive Organization',
+                              tone: 'danger',
+                              onConfirm: () =>
+                                handlePatchOrg(selectedOrg.slug, { status: 'archived' }, `${selectedOrg.name} archived`),
+                            });
+                            return;
+                          }
+                          void handlePatchOrg(selectedOrg.slug, { status: st }, `${selectedOrg.name} marked ${st}`);
+                        }}
                         className={`rounded-lg border px-2.5 py-2 text-xs font-semibold capitalize transition ${
                           selectedOrg.status === st
                             ? 'border-brand-600 bg-brand-50 text-brand-800'
@@ -615,7 +639,17 @@ export const PlatformConsolePage: React.FC = () => {
                           )}
                           <button
                             type="button"
-                            onClick={() => void handleDeleteDomain(selectedOrg, d.id, d.hostname)}
+                            onClick={() =>
+                              setPendingConfirm({
+                                title: `Remove ${d.hostname}?`,
+                                description: d.is_primary
+                                  ? `${d.hostname} is the primary domain for ${selectedOrg.name}. Removing it will stop resolving that hostname.`
+                                  : `Remove custom domain ${d.hostname} from ${selectedOrg.name}?`,
+                                confirmLabel: 'Remove Domain',
+                                tone: 'danger',
+                                onConfirm: () => handleDeleteDomain(selectedOrg, d.id, d.hostname),
+                              })
+                            }
                             aria-label={`Delete ${d.hostname}`}
                             className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
                           >
@@ -652,7 +686,15 @@ export const PlatformConsolePage: React.FC = () => {
                         <span className="truncate text-slate-800">{m.email}</span>
                         <button
                           type="button"
-                          onClick={() => void handleRemoveOrgAdmin(selectedOrg, m.id, m.email)}
+                          onClick={() =>
+                            setPendingConfirm({
+                              title: `Remove ${m.email}?`,
+                              description: `${m.email} will lose Org Admin access to ${selectedOrg.name}.`,
+                              confirmLabel: 'Remove Admin',
+                              tone: 'danger',
+                              onConfirm: () => handleRemoveOrgAdmin(selectedOrg, m.id, m.email),
+                            })
+                          }
                           aria-label={`Remove ${m.email}`}
                           className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
                         >
@@ -759,6 +801,21 @@ export const PlatformConsolePage: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          description={pendingConfirm.description}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onCancel={() => setPendingConfirm(null)}
+          onConfirm={() => {
+            const action = pendingConfirm.onConfirm;
+            setPendingConfirm(null);
+            void action();
+          }}
+        />
       )}
     </div>
   );

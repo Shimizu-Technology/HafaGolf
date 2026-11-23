@@ -38,6 +38,7 @@ class ActivityLog < ApplicationRecord
     team_member_unchecked
     waiver_signed
     settings_updated
+    organization_created
     admin_created
     admin_deleted
     tournament_created

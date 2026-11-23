@@ -332,10 +332,7 @@ module Api
           attrs["encrypted_webhook_secret"] = raw[:webhook_secret].to_s.strip if raw[:webhook_secret].present?
         else
           # Clear client credentials & webhook token when leaving client_processor mode
-          attrs["encrypted_public_key"] = nil
-          attrs["encrypted_secret_key"] = nil
-          attrs["encrypted_webhook_secret"] = nil
-          attrs["webhook_endpoint_token"] = nil
+          attrs.merge!(OrganizationPaymentConfig.clear_client_credentials_attrs)
         end
 
         if config.update(attrs)

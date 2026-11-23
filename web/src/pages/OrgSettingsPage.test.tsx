@@ -150,4 +150,18 @@ describe('OrgSettingsPage', () => {
     expect(router.state.location.pathname).toBe('/admin');
     expect(mount.textContent).toContain('Dashboard');
   });
+
+  it('opens the requested tab directly when ?tab=look is provided in the URL', async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    router.dispose();
+    router = createMemoryRouter([
+      { path: '/admin/events/:tournamentSlug/settings', element: <OrgSettingsPage /> },
+    ], { initialEntries: [`${path}?tab=look`] });
+    root = createRoot(mount);
+    await act(async () => root.render(<RouterProvider router={router} />));
+    expect(buttons()[1].textContent).toBe('Look & Photos');
+    expect(buttons()[1].getAttribute('aria-selected')).toBe('true');
+  });
 });

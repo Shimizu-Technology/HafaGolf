@@ -134,7 +134,7 @@ export default function AdminRoutesApp() {
           <Route element={<AdminShellPage />}>
             <Route index element={<OrgAdminDashboard />} />
             <Route path="platform" element={<AdminOnlyRoute><PlatformConsolePage /></AdminOnlyRoute>} />
-            <Route path="organizations" element={<AdminOnlyRoute><PlatformConsolePage /></AdminOnlyRoute>} />
+            <Route path="organizations" element={<Navigate to="/admin/platform" replace />} />
             <Route path="events" element={<AdminOnlyRoute><EventsManagementPage /></AdminOnlyRoute>} />
             <Route path="events/new" element={<AdminOnlyRoute><CreateTournamentPage /></AdminOnlyRoute>} />
             <Route path="events/:tournamentSlug" element={<AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute>} />

@@ -64,6 +64,15 @@ class OrganizationPaymentConfig < ApplicationRecord
     end
   end
 
+  def self.clear_client_credentials_attrs
+    {
+      "encrypted_public_key" => nil,
+      "encrypted_secret_key" => nil,
+      "encrypted_webhook_secret" => nil,
+      "webhook_endpoint_token" => nil
+    }
+  end
+
   def rotate_webhook_endpoint_token!
     update!(webhook_endpoint_token: generate_unique_webhook_token)
     webhook_endpoint_token

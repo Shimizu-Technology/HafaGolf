@@ -48,7 +48,7 @@ export interface WizardOrganizationPayload {
   payment_config: {
     payment_mode: 'platform_collect' | 'client_processor' | 'external_link' | 'offline';
     processor_provider: 'stripe' | 'swipesimple' | 'none';
-    platform_fee_per_registrant_cents: number;
+    platform_fee_per_registrant_cents?: number;
     payout_payee_name?: string;
   };
   admin_emails: string[];
@@ -107,14 +107,19 @@ export function NewOrganizationWizard({
   const [adminEmailsText, setAdminEmailsText] = useState('');
 
   const selectedArchetypeMeta = HOMEPAGE_ARCHETYPES_BY_ID[archetype];
+  const dnsTarget = import.meta.env.VITE_CUSTOM_DOMAIN_CNAME || 'hafagolf.netlify.app';
+  const normalizedHost = primaryDomain.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+  const isApexDomain = normalizedHost.length > 0 && normalizedHost.split('.').length === 2;
+  const dnsRecordType = isApexDomain ? 'ALIAS / ANAME' : 'CNAME';
 
   const handleCopyDns = async () => {
-    const record = `${primaryDomain.trim() || 'events.yourorg.org'} CNAME hafagolf.netlify.app`;
+    const hostLabel = normalizedHost || 'events.yourorg.org';
+    const record = `${hostLabel} ${isApexDomain ? 'ALIAS' : 'CNAME'} ${dnsTarget}`;
     try {
       await navigator.clipboard.writeText(record);
-      toast.success('Copied DNS CNAME record');
+      toast.success(`Copied DNS ${dnsRecordType} record`);
     } catch {
-      toast.error('Copy failed — select the CNAME manually');
+      toast.error('Copy failed — select the DNS record manually');
     }
   };
 
@@ -141,10 +146,18 @@ export function NewOrganizationWizard({
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
 
+    // Send only overrides that differ from catalog defaults so future catalog updates flow through
+    const featureOverrides: Record<string, boolean> = {};
+    for (const item of featureCatalog) {
+      if (features[item.key] !== item.default) {
+        featureOverrides[item.key] = Boolean(features[item.key]);
+      }
+    }
+
     const payload: WizardOrganizationPayload = {
       name: name.trim(),
       slug: slug.trim() || undefined,
-      primary_domain: primaryDomain.trim() || undefined,
+      primary_domain: normalizedHost || undefined,
       primary_color: primaryColor,
       accent_color: accentColor,
       logo_url: logoUrl.trim() || undefined,
@@ -157,11 +170,13 @@ export function NewOrganizationWizard({
         artwork_display: selectedArchetypeMeta.defaults.artwork_display,
         logo_display: 'auto',
       },
-      features,
+      features: featureOverrides,
       payment_config: {
         payment_mode: paymentMode,
         processor_provider: provider,
-        platform_fee_per_registrant_cents: Math.max(0, Math.round((parseFloat(feePerRegistrantDollars) || 0) * 100)),
+        ...(paymentMode === 'platform_collect'
+          ? { platform_fee_per_registrant_cents: Math.max(0, Math.round((parseFloat(feePerRegistrantDollars) || 0) * 100)) }
+          : {}),
         payout_payee_name: payoutPayeeName.trim() || undefined,
       },
       admin_emails: adminEmails,
@@ -170,6 +185,8 @@ export function NewOrganizationWizard({
     try {
       setSubmitting(true);
       await onSubmit(payload);
+    } catch {
+      // Error toast is already displayed by onSubmit handler; avoid unhandled rejection
     } finally {
       setSubmitting(false);
     }
@@ -282,10 +299,17 @@ export function NewOrganizationWizard({
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
               <div>
-                <p className="font-semibold text-slate-800">DNS Setup Instructions</p>
-                <p className="mt-0.5 font-mono">
-                  {primaryDomain.trim() || 'events.yourorg.org'} → CNAME → hafagolf.netlify.app
+                <p className="font-semibold text-slate-800">
+                  DNS Setup Instructions {isApexDomain ? '(Apex Domain)' : '(Subdomain)'}
                 </p>
+                <p className="mt-0.5 font-mono">
+                  {normalizedHost || 'events.yourorg.org'} → {dnsRecordType} → {dnsTarget}
+                </p>
+                {isApexDomain && (
+                  <p className="mt-1 text-[11px] text-amber-700">
+                    Apex domains require ALIAS/ANAME (or CNAME flattening) — or use a subdomain like <span className="font-mono">golf.{normalizedHost}</span>.
+                  </p>
+                )}
               </div>
               <button
                 type="button"
@@ -293,7 +317,7 @@ export function NewOrganizationWizard({
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
               >
                 <Copy className="h-3.5 w-3.5" />
-                Copy CNAME
+                Copy DNS
               </button>
             </div>
           </div>
