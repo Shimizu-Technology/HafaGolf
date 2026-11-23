@@ -58,7 +58,7 @@ export function TournamentDayFlow({ motionOk }: { motionOk: boolean }) {
     panelRefs.current.forEach((panel, index) => {
       if (!panel) return;
       const distance = position - index;
-      panel.style.opacity = clamp((0.5 - Math.abs(distance)) / 0.2, 0, 1).toFixed(3);
+      panel.style.opacity = clamp((0.6 - Math.abs(distance)) / 0.2, 0, 1).toFixed(3);
       panel.style.transform = `translateY(${(-distance * 28).toFixed(1)}px)`;
     });
     const nextActive = Math.round(position);
@@ -128,7 +128,7 @@ export function TournamentDayFlow({ motionOk }: { motionOk: boolean }) {
       className="relative bg-[var(--ph-evergreen)]"
       style={{ height: '250vh' }}
     >
-      <div className="sticky top-0 flex h-screen items-center overflow-hidden">
+      <div className="sticky top-0 flex min-h-screen items-center overflow-x-clip overflow-y-auto py-8">
         <div className="mx-auto grid w-full max-w-6xl grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] items-center gap-12 px-8">
           <div>
             {heading}

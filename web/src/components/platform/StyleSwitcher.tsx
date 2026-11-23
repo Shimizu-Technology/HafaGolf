@@ -27,9 +27,7 @@ export function StyleSwitcher({ motionOk }: { motionOk: boolean }) {
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const moves: Record<string, number> = {
       ArrowRight: activeIndex + 1,
-      ArrowDown: activeIndex + 1,
       ArrowLeft: activeIndex - 1,
-      ArrowUp: activeIndex - 1,
       Home: 0,
       End: SAMPLE_STYLES.length - 1,
     };
@@ -83,8 +81,9 @@ export function StyleSwitcher({ motionOk }: { motionOk: boolean }) {
       <div
         id="ph-style-panel"
         role="tabpanel"
+        tabIndex={0}
         aria-labelledby={`ph-style-tab-${active.id}`}
-        className="ph-tilt-stage mt-5"
+        className="ph-tilt-stage mt-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ph-evergreen)] focus-visible:ring-offset-4 rounded-2xl"
         data-tilt={tiltEnabled ? 'on' : 'off'}
         {...tilt}
       >

@@ -96,7 +96,13 @@ export function isPlatformHomeUrl(
   defaultOrgOverride: string | null | undefined = import.meta.env.VITE_DEFAULT_ORG_SLUG as string | undefined,
   configuredOrigin?: string | null
 ): boolean {
-  const path = pathname.replace(/\/+$/, '').toLowerCase() || '/';
+  let decodedPath = pathname;
+  try {
+    decodedPath = decodeURIComponent(pathname);
+  } catch {
+    // Keep raw pathname when percent-encoding is malformed.
+  }
+  const path = decodedPath.replace(/\/+$/, '').toLowerCase() || '/';
   if (path === '/platform' || path === '/about') return true;
   return path === '/' && shouldRenderPlatformHome(hostname, search, defaultOrgOverride, configuredOrigin);
 }

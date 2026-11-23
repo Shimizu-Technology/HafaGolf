@@ -11,6 +11,7 @@ import { useOrganizationStore } from './stores/organizationStore';
 import {
   buildAdminRedirectUrl,
   isAdminHost,
+  isLocalDevHost,
   shouldRenderPlatformHome,
 } from './utils/adminHost';
 
@@ -27,20 +28,29 @@ import { ScorecardPage } from './pages/ScorecardPage';
 import { OrgTournamentPage } from './pages/OrgTournamentPage';
 import { OrgRegistrationPage } from './pages/OrgRegistrationPage';
 import { OrgRegistrationSuccessPage } from './pages/OrgRegistrationSuccessPage';
-import { LeaderboardPage } from './pages/LeaderboardPage';
 import { RaffleBoardPage } from './pages/RaffleBoardPage';
 import { SponsorCheckoutPage } from './pages/SponsorCheckoutPage';
 import { DonationsPage } from './pages/DonationsPage';
 
 const LazyAdminRoutesApp = lazy(() => import('./admin/AdminRoutesApp'));
+const LazyLeaderboardPage = lazy(() =>
+  import('./pages/LeaderboardPage').then((module) => ({ default: module.LeaderboardPage }))
+);
 // The platform homepage (and its editorial motion) loads only where it renders, so tenant sites never fetch it.
 const LazyPlatformHomePage = lazy(() =>
   import('./pages/PlatformHomePage').then((module) => ({ default: module.PlatformHomePage }))
 );
 
 function TenantPublicWrapper({ children }: { children: React.ReactNode }) {
+  const { search } = useLocation();
+  const localOrgOverride = isLocalDevHost(window.location.hostname)
+    ? (new URLSearchParams(search).get('org')?.trim() ||
+        (import.meta.env.VITE_DEFAULT_ORG_SLUG as string | undefined)?.trim() ||
+        undefined)
+    : undefined;
+
   return (
-    <OrganizationProvider isPublicRoute fallbackPath="">
+    <OrganizationProvider isPublicRoute fallbackPath="" orgSlug={localOrgOverride}>
       {children}
     </OrganizationProvider>
   );
@@ -213,7 +223,16 @@ export const appRoutes = createRoutesFromElements(
     <Route path="/:tournamentSlug" element={<TenantPublicWrapper><OrgTournamentPage /></TenantPublicWrapper>} />
     <Route path="/:tournamentSlug/register" element={<TenantPublicWrapper><OrgRegistrationPage /></TenantPublicWrapper>} />
     <Route path="/:tournamentSlug/success" element={<TenantPublicWrapper><OrgRegistrationSuccessPage /></TenantPublicWrapper>} />
-    <Route path="/:tournamentSlug/leaderboard" element={<TenantPublicWrapper><LeaderboardPage /></TenantPublicWrapper>} />
+    <Route
+      path="/:tournamentSlug/leaderboard"
+      element={
+        <TenantPublicWrapper>
+          <Suspense fallback={<div className="min-h-screen bg-neutral-50" />}>
+            <LazyLeaderboardPage />
+          </Suspense>
+        </TenantPublicWrapper>
+      }
+    />
     <Route path="/:tournamentSlug/raffle" element={<TenantPublicWrapper><RaffleBoardPage /></TenantPublicWrapper>} />
 
     <Route path="*" element={<Navigate to="/" replace />} />

@@ -125,7 +125,7 @@ function StatusToggle({
       aria-pressed={pressed}
       aria-label={label}
       onClick={onClick}
-      className={`inline-flex min-h-[48px] flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 text-sm font-semibold transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] sm:flex-none ${
+      className={`inline-flex min-h-[48px] flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 text-sm font-semibold transition-colors duration-150 motion-safe:transition-[color,background-color,border-color,transform] motion-safe:active:scale-[0.97] sm:flex-none ${
         pressed ? onClass : 'border-[var(--ph-line)] bg-white text-[var(--ph-ink)] hover:border-[#cfc6b2]'
       }`}
     >
