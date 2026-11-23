@@ -1,3 +1,5 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
+import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuthToken } from '../hooks/useAuthToken';
@@ -131,6 +133,7 @@ const VerifyPaymentModal: React.FC<{
 };
 
 export const OrgTournamentAdmin: React.FC = () => {
+  const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization, isLoading: orgLoading } = useOrganization();
   const { getToken } = useAuthToken();
@@ -191,12 +194,18 @@ export const OrgTournamentAdmin: React.FC = () => {
     }
   }, [fetchActivityLogs, selectedGolfer]);
 
+  const startRefresh = useLatestRequest(`${organization?.slug}/${tournamentSlug}`);
+
   const fetchData = useCallback(async () => {
     if (!organization || !tournamentSlug) return;
+
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
 
     try {
       setLoading(true);
       const token = await getToken();
+      if (!isCurrent()) return;
       if (!token) throw new Error('Not authenticated');
       
       const response = await fetch(
@@ -207,15 +216,17 @@ export const OrgTournamentAdmin: React.FC = () => {
       if (!response.ok) throw new Error('Failed to fetch tournament data');
 
       const data = await response.json();
+      if (!isCurrent()) return;
       setTournament(data.tournament);
       setGolfers(data.golfers || []);
       setStats(data.stats || null);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [getToken, organization, tournamentSlug]);
+  }, [getToken, organization, tournamentSlug, startRefresh]);
 
   useEffect(() => {
     fetchData();
@@ -353,7 +364,12 @@ export const OrgTournamentAdmin: React.FC = () => {
   };
 
   const handleCancelRegistration = async (golfer: Golfer) => {
-    if (!confirm(`Cancel registration for ${golfer.name}? This cannot be undone.`)) return;
+    if (!await requestConfirmation({
+      title: 'Cancel registration?',
+      description: `Cancel ${golfer.name}’s registration. This cannot be undone.`,
+      confirmLabel: 'Cancel registration',
+      tone: 'danger',
+    })) return;
 
     setActionLoading(`cancel-${golfer.id}`);
     try {
@@ -384,7 +400,12 @@ export const OrgTournamentAdmin: React.FC = () => {
   };
 
   const handleRefund = async (golfer: Golfer) => {
-    if (!confirm(`Refund ${golfer.name}? This will mark the payment as refunded and cancel the registration.`)) return;
+    if (!await requestConfirmation({
+      title: 'Refund registration?',
+      description: `This will mark ${golfer.name}’s payment as refunded and cancel the registration.`,
+      confirmLabel: 'Refund registration',
+      tone: 'danger',
+    })) return;
 
     setActionLoading(`refund-${golfer.id}`);
     try {
@@ -490,6 +511,7 @@ export const OrgTournamentAdmin: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      {confirmationDialog}
       {/* Hero */}
       <section className="rounded-[28px] bg-brand-600 px-6 py-5 text-white shadow-sm sm:px-8">
         <div className="max-w-7xl mx-auto">

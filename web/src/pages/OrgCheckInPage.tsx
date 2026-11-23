@@ -1,3 +1,5 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
+import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuthToken } from '../hooks/useAuthToken';
@@ -61,7 +63,19 @@ const startingPositionSummary = (golfer: Pick<ApiGolfer, 'hole_position_label' |
   };
 };
 
+// Signing is one-way. A snapshot fetched before the write may still contain
+// null, so preserve a signature already confirmed by the server.
+function keepSignedWaivers(golfer: ApiGolfer, current?: ApiGolfer): ApiGolfer {
+  return {
+    ...golfer,
+    waiver_accepted_at: golfer.waiver_accepted_at ?? current?.waiver_accepted_at ?? null,
+    waiver_signed: golfer.waiver_signed || Boolean(current?.waiver_signed),
+    partner_waiver_accepted_at: golfer.partner_waiver_accepted_at ?? current?.partner_waiver_accepted_at,
+  };
+}
+
 export const OrgCheckInPage: React.FC = () => {
+  const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
   const { getToken } = useAuthToken();
@@ -116,7 +130,7 @@ export const OrgCheckInPage: React.FC = () => {
       setGolfers(prev => {
         const exists = prev.some(g => g.id === updatedGolfer.id);
         if (!exists) return [...prev, updatedGolfer];
-        return prev.map(g => (g.id === updatedGolfer.id ? { ...g, ...updatedGolfer } : g));
+        return prev.map(g => (g.id === updatedGolfer.id ? keepSignedWaivers({ ...g, ...updatedGolfer }, g) : g));
       });
     },
     onGolferCreated: (newGolfer) => {
@@ -132,11 +146,17 @@ export const OrgCheckInPage: React.FC = () => {
     },
   });
 
+  const startRefresh = useLatestRequest(`${organization?.slug}/${tournamentSlug}`);
+
   const fetchData = useCallback(async () => {
     if (!organization || !tournamentSlug) return;
 
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
+
     try {
       const token = await getToken();
+      if (!isCurrent()) return;
       if (!token) return;
 
       const response = await fetch(
@@ -147,6 +167,7 @@ export const OrgCheckInPage: React.FC = () => {
       if (!response.ok) throw new Error('Failed to fetch data');
 
       const data = await response.json();
+      if (!isCurrent()) return;
       setTournament(data.tournament || null);
       setTournamentName(data.tournament?.name || '');
       
@@ -154,13 +175,17 @@ export const OrgCheckInPage: React.FC = () => {
         setRevenue(data.stats.revenue);
       }
 
-      const active = (data.golfers || []).filter(
+      const active: ApiGolfer[] = (data.golfers || []).filter(
         (g: ApiGolfer) => g.registration_status === 'confirmed' || g.registration_status === 'waitlist'
       );
-      setGolfers(active);
-      setSelectedGolfer((current) => (
-        current ? active.find((g: ApiGolfer) => g.id === current.id) || null : current
-      ));
+      setGolfers((current) => {
+        const byId = new Map(current.map((golfer) => [golfer.id, golfer]));
+        return active.map((golfer) => keepSignedWaivers(golfer, byId.get(golfer.id)));
+      });
+      setSelectedGolfer((current) => {
+        const refreshed = current && active.find((golfer) => golfer.id === current.id);
+        return refreshed ? keepSignedWaivers(refreshed, current) : null;
+      });
 
       if (data.tournament?.id) {
         try {
@@ -174,23 +199,41 @@ export const OrgCheckInPage: React.FC = () => {
             );
             if (!regRes.ok) break;
             const regData = await regRes.json();
+            if (!isCurrent()) return;
             if (Array.isArray(regData.registrations)) {
               allRegistrations.push(...regData.registrations);
             }
             totalPages = Number(regData.meta?.total_pages) || 1;
             page += 1;
           }
-          setRegistrations(allRegistrations);
+          if (!isCurrent()) return;
+          setRegistrations((current) => {
+            const membersById = new Map(current.flatMap((registration) =>
+              registration.team_members.map((member) => [member.id, member] as const)
+            ));
+            return allRegistrations.map((registration) => ({
+              ...registration,
+              team_members: registration.team_members.map((member) => {
+                const signed = membersById.get(member.id);
+                return {
+                  ...member,
+                  waiver_accepted_at: member.waiver_accepted_at ?? signed?.waiver_accepted_at ?? null,
+                  waiver_signed: member.waiver_signed || Boolean(signed?.waiver_signed),
+                };
+              }),
+            }));
+          });
         } catch {
           // Non-fatal: legacy golfer check-in remains available
         }
       }
     } catch {
+      if (!isCurrent()) return;
       toast.error('Failed to load golfers');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [organization, tournamentSlug, getToken]);
+  }, [organization, tournamentSlug, getToken, startRefresh]);
 
   useEffect(() => {
     fetchData();
@@ -587,7 +630,12 @@ export const OrgCheckInPage: React.FC = () => {
 
   const handleUndoCheckIn = async (golfer: ApiGolfer) => {
     if (!golfer.checked_in_at) return;
-    if (!confirm(`Undo check-in for ${golfer.name}?`)) return;
+    if (!await requestConfirmation({
+      title: 'Undo check-in?',
+      description: `${golfer.name} will return to the line of players who still need to check in.`,
+      confirmLabel: 'Undo check-in',
+      tone: 'danger',
+    })) return;
 
     setCheckingIn(golfer.id);
     try {
@@ -667,6 +715,7 @@ export const OrgCheckInPage: React.FC = () => {
 
   return (
     <div className="space-y-4 pb-20 lg:pb-0 text-gray-900 overflow-x-hidden" data-static-flow>
+      {confirmationDialog}
       {/* Hero Header */}
       <section className="overflow-hidden rounded-[28px] shadow-sm">
         <div className="bg-brand-600 px-4 py-6">

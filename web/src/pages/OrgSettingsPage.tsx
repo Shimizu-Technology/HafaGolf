@@ -1,2237 +1,316 @@
-import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useBlocker, useParams, type BlockerFunction } from 'react-router-dom';
+import { ArrowLeft, Save } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useOrganization } from '../components/OrganizationProvider';
 import { OrgFeaturesPanel } from '../components/OrgFeaturesPanel';
-import { OrgPaymentConfigPanel } from '../components/OrgPaymentConfigPanel';
-import { BrandingMediaPanel, type OrganizationMedia, type TournamentMedia } from '../components/BrandingMediaPanel';
-import { ThemePackPicker } from '../components/ThemePackPicker';
-import { Skeleton } from '../components/LoadingStates';
+import type { StoryPhotoDraft } from '../components/BrandingMediaPanel';
+import { EventInfoTab } from '../components/settings/EventInfoTab';
+import { LookAndPhotosTab } from '../components/settings/LookAndPhotosTab';
+import { PaymentsAndPayoutsTab } from '../components/settings/PaymentsAndPayoutsTab';
+import { RaffleTab } from '../components/settings/RaffleTab';
+import { RegistrationAndWaiverTab } from '../components/settings/RegistrationAndWaiverTab';
+import { SettingsTabs, type SettingsTab } from '../components/settings/SettingsTabs';
+import { SponsorsAndPortalTab } from '../components/settings/SponsorsAndPortalTab';
+import { TeamAccessPanel } from '../components/settings/TeamAccessPanel';
+import {
+  changedFields, loadEventSettings, organizationDraft, organizationPayload, tournamentPayload,
+  type OrganizationDraft, type TournamentSettings,
+} from '../components/settings/settingsForm';
 import { useTournament } from '../contexts';
-import { useOrganizationStore } from '../stores/organizationStore';
-import type { OrganizationSettings as OrganizationContentSettings } from '../stores/organizationStore';
 import { useAuthToken } from '../hooks/useAuthToken';
-import { resolveThemePackId } from '../utils/themePacks';
-import type { StoryPhoto } from '../services/api';
-import {
-  ArrowLeft,
-  Loader2,
-  Save,
-  Mail,
-  Phone,
-  Globe,
-  Settings,
-  Users,
-  UserPlus,
-  Shield,
-  Trash2,
-  Crown,
-  Calendar,
-  Gift,
-  Send,
-  Clock,
-  ToggleLeft,
-  ToggleRight,
-  Home,
-  Plus,
-  X,
-  GripVertical,
-  Building2,
-  Palette,
-} from 'lucide-react';
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  TouchSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-  useSortable,
-  arrayMove,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import toast, { Toaster } from 'react-hot-toast';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useLatestRequest } from '../hooks/useLatestRequest';
+import { useOrganizationStore, type Organization } from '../stores/organizationStore';
+import type { FeatureKey, OrganizationFeaturesResponse } from '../utils/features';
 
-interface OrgMember {
-  id: string;
-  user_id: number;
-  name: string;
-  email: string;
-  role: string;
-  invitation_pending?: boolean;
-  created_at: string;
+const eventFeatures = ['offseason_mode', 'live_scoring'] as const;
+const registrationFeatures = ['employee_pricing', 'checkin_alpha_lanes', 'walkin_registration', 'waitlist'] as const;
+const sponsorFeatures = ['sponsors', 'sponsor_checkout'] as const;
+const paymentFeatures = ['donations', 'tax_receipts'] as const;
+const raffleFeatures = ['raffle'] as const;
+const validColor = /^#[0-9a-f]{6}$/i;
+const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const validUrl = /^https?:\/\/[^\s]+$/i;
+
+export function OrgSettingsPage() {
+  const { organization } = useOrganization();
+  const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
+  if (!organization) {
+    return <p className="p-6 text-gray-700">Choose an organization to open its settings.</p>;
+  }
+
+  return <SettingsWorkspace key={`${organization.id}/${tournamentSlug ?? ''}`}
+    organization={organization} tournamentSlug={tournamentSlug} />;
 }
 
-interface HomepageStat {
-  value: string;
-  label: string;
-}
+function SettingsWorkspace({ organization, tournamentSlug }: { organization: Organization; tournamentSlug?: string }) {
+  const { refreshTournaments } = useTournament();
+  const { getToken } = useAuthToken();
+  const [initialOrgSlug] = useState(organization.slug);
+  const [draft, setDraft] = useState(() => organizationDraft(organization));
+  const [savedDraft, setSavedDraft] = useState(draft);
+  const [eventDraft, setEventDraft] = useState<TournamentSettings | null>(null);
+  const [savedEvent, setSavedEvent] = useState<TournamentSettings | null>(null);
+  const [eventDetails, setEventDetails] = useState<Awaited<ReturnType<typeof loadEventSettings>>>(null);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('event');
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [paymentsDirty, setPaymentsDirty] = useState(false);
+  const [pendingUploads, setPendingUploads] = useState(0);
+  const uploadsRef = useRef(0);
+  const saveRef = useRef(false);
+  const loadedEvent = useRef(false);
+  const startSave = useLatestRequest();
+  const uploadsPending = pendingUploads > 0;
+  const dirty = Object.keys(changedFields(draft, savedDraft)).length > 0
+    || Boolean(eventDraft && savedEvent && Object.keys(changedFields(eventDraft, savedEvent)).length);
+  const protectEdits = dirty || uploadsPending || paymentsDirty;
 
-interface FormData extends OrganizationMedia {
-  show_homepage_sponsors: boolean;
-  name: string;
-  slug: string;
-  contact_email: string;
-  contact_phone: string;
-  website_url: string;
-  homepage_tagline: string;
-  homepage_mission: string;
-  homepage_stats: HomepageStat[];
-}
+  const request = useCallback(async <T,>(path: string, options?: RequestInit): Promise<T> => {
+    const token = await getToken();
+    options?.signal?.throwIfAborted();
+    if (!token) throw new Error('Please sign in to manage settings.');
+    const response = await fetch(`${import.meta.env.VITE_API_URL}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(options?.body ? { 'Content-Type': 'application/json' } : {}),
+      },
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.errors?.join(', ') || data.error || 'Could not complete this request.');
+    }
+    return response.status === 204 ? undefined as T : response.json();
+  }, [getToken]);
 
-type RegistrationMode = 'regular' | 'walkin' | 'closed';
+  useEffect(() => {
+    if (loadedEvent.current) return;
+    const load = new AbortController();
+    setLoadError('');
+    void loadEventSettings((path, options) => request(path, { ...options, signal: load.signal }), initialOrgSlug, tournamentSlug)
+      .then((result) => {
+        if (load.signal.aborted) return;
+        loadedEvent.current = true;
+        setEventDetails(result);
+        setEventDraft(result?.draft ?? null);
+        setSavedEvent(result?.draft ?? null);
+      })
+      .catch(() => {
+        if (!load.signal.aborted) setLoadError('Could not load event settings. Reload the page to try again.');
+      })
+      .finally(() => { if (!load.signal.aborted) setLoading(false); });
+    return () => load.abort();
+  }, [initialOrgSlug, request, tournamentSlug]);
 
-interface SponsorTierDef {
-  key: string;
-  label: string;
-  sort_order: number;
-}
+  const blocker = useBlocker(useCallback<BlockerFunction>(({ currentLocation, nextLocation }) =>
+    protectEdits && (currentLocation.pathname !== nextLocation.pathname || currentLocation.search !== nextLocation.search),
+  [protectEdits]));
 
-interface RaffleBundleDef {
-  quantity: number;
-  price_cents: number;
-  label: string;
-}
+  useEffect(() => {
+    if (blocker.state === 'blocked' && !saving && !protectEdits) blocker.proceed();
+  }, [blocker, protectEdits, saving]);
 
-interface CourseConfigDef {
-  key: string;
-  name: string;
-  hole_count: number;
-}
+  useEffect(() => {
+    if (!protectEdits) return;
+    const handleUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = true;
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
+  }, [protectEdits]);
 
-interface AdminTournamentListItem {
-  slug: string;
-  status?: string;
-}
+  const onUploadStateChange = useCallback((uploading: boolean) => {
+    uploadsRef.current += uploading ? 1 : -1;
+    setPendingUploads(uploadsRef.current);
+  }, []);
 
-interface AdminTournamentListResponse {
-  tournaments?: AdminTournamentListItem[];
-}
+  function updateOrganization(patch: Partial<OrganizationDraft>) {
+    setDraft((current) => ({ ...current, ...patch }));
+    setSaveError('');
+  }
 
-const MAX_COURSE_HOLES = 18;
+  function updateEvent(patch: Partial<TournamentSettings>) {
+    setEventDraft((current) => current && { ...current, ...patch });
+    setSaveError('');
+  }
 
-const DEFAULT_RAFFLE_BUNDLES: RaffleBundleDef[] = [
-  { quantity: 4,  price_cents: 2000,  label: '$20 for 4 tickets' },
-  { quantity: 12, price_cents: 5000,  label: '$50 for 12 tickets' },
-  { quantity: 25, price_cents: 10000, label: '$100 for 25 tickets' },
-];
+  function handleTournamentChange<K extends keyof TournamentSettings>(field: K, value: TournamentSettings[K]) {
+    updateEvent({
+      [field]: value,
+      ...(field === 'registration_mode' && value === 'closed' ? { waitlist_enabled: false } : {}),
+      ...(field === 'team_size' && value === '1' ? { allow_partial_teams: false } : {}),
+    });
+  }
 
-const formatMoney = (cents: number, digits = 2) => `$${(cents / 100).toFixed(digits)}`;
-const effectiveBundlePriceCents = (bundle: RaffleBundleDef) =>
-  bundle.quantity > 0 ? bundle.price_cents / bundle.quantity : 0;
+  function updateStoryPhotos(update: (photos: StoryPhotoDraft[]) => StoryPhotoDraft[]) {
+    setEventDraft((current) => current && { ...current, story_photos: update(current.story_photos) });
+  }
 
-const DEFAULT_COURSE_CONFIGS: CourseConfigDef[] = [
-  { key: 'course-1', name: 'Course', hole_count: 18 },
-];
+  function onFeaturesUpdated(response: OrganizationFeaturesResponse) {
+    const updated = response.tournaments.find((event) => event.id === eventDraft?.id);
+    if (updated && savedEvent?.raffle_enabled === eventDraft?.raffle_enabled) {
+      setEventDraft((current) => current && { ...current, raffle_enabled: updated.raffle_enabled });
+      setSavedEvent((current) => current && { ...current, raffle_enabled: updated.raffle_enabled });
+    }
+    void refreshTournaments();
+  }
 
-function createCourseConfig(seed?: number): CourseConfigDef {
-  const suffix = seed ?? Date.now();
-  return {
-    key: `course-${suffix}-${Math.random().toString(36).slice(2, 8)}`,
-    name: 'New Course',
-    hole_count: 9,
-  };
-}
+  async function handleSave() {
+    if (saveRef.current || uploadsRef.current || !dirty) return;
+    const validation = validateDraft(draft, eventDraft);
+    if (validation) {
+      setActiveTab(validation.tab);
+      setSaveError(validation.message);
+      return;
+    }
+    const isCurrent = startSave();
+    saveRef.current = true;
+    setSaving(true);
+    setSaveError('');
 
-function clampCourseHoleCount(value: number): number {
-  return Math.min(MAX_COURSE_HOLES, Math.max(1, value));
-}
+    try {
+      const orgPayload = organizationPayload(draft);
+      const savedOrgPayload = organizationPayload(savedDraft);
+      const { settings, ...orgChanges } = changedFields(orgPayload, savedOrgPayload);
+      const settingsChanges = settings ? changedFields(settings, savedOrgPayload.settings) : null;
+      if (settingsChanges || Object.keys(orgChanges).length) {
+        const { organization: latestOrganization } = useOrganizationStore.getState();
+        const updated = await request<Organization>(`/api/v1/admin/organizations/${organization.slug}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ organization: {
+            ...orgChanges,
+            ...(settingsChanges ? { settings: { ...(latestOrganization?.settings ?? organization.settings), ...settingsChanges } } : {}),
+          } }),
+        });
+        if (!isCurrent()) return;
+        const store = useOrganizationStore.getState();
+        store.setOrganization(updated);
+        store.setAccessibleOrganizations(store.accessibleOrganizations.map((item) => item.id === updated.id ? updated : item));
+      }
+      setSavedDraft(draft);
 
-interface TournamentSettings extends TournamentMedia {
-  id: string;
-  name: string;
-  event_date: string;
-  location_name: string;
-  location_address: string;
-  format_name: string;
-  tournament_format: string;
-  team_size: string;
-  capacity_unit: 'players' | 'teams';
-  allow_partial_teams: boolean;
-  teams_per_start_position: string;
-  start_positions_per_hole: string;
-  registration_mode: RegistrationMode;
-  registration_deadline: string;
-  entry_fee_display: string;
-  walkin_fee: string;
-  walkin_fee_display: string;
-  max_capacity: string;
-  swipe_simple_url: string;
-  walkin_swipe_simple_url: string;
-  contact_name: string;
-  contact_phone: string;
-  contact_email: string;
-  waitlist_enabled: boolean;
-  waitlist_max: string;
-  waiver_enabled: boolean;
-  waiver_text: string;
-  show_public_sponsors: boolean;
-  sponsor_wall_title: string;
-  theme_preset: string;
-  raffle_enabled: boolean;
-  raffle_description: string;
-  raffle_draw_time: string;
-  raffle_ticket_price_cents: string;
-  raffle_include_with_registration: boolean;
-  raffle_bundles: RaffleBundleDef[];
-  course_configs: CourseConfigDef[];
-  sponsor_edit_deadline: string;
-  sponsor_tiers: SponsorTierDef[];
-  event_schedule: string;
-  payment_instructions: string;
-  check_in_time: string;
-  start_time: string;
-  fee_includes: string;
-  tournament_info: string;
-  tax_receipt_enabled: boolean;
-  tax_org_name: string;
-  tax_org_ein: string;
-  fmv_per_player_dollars: string;
-  tax_receipt_disclaimer: string;
-}
+      if (eventDraft && savedEvent) {
+        const eventChanges = changedFields(tournamentPayload(eventDraft), tournamentPayload(savedEvent));
+        if (Object.keys(eventChanges).length) {
+          await request(`/api/v1/tournaments/${eventDraft.id}`, {
+            method: 'PATCH', body: JSON.stringify({ tournament: eventChanges }),
+          });
+          if (!isCurrent()) return;
+          void refreshTournaments();
+        }
+        setSavedEvent(eventDraft);
+      }
+      toast.success('Settings saved');
+    } catch (error) {
+      if (isCurrent()) setSaveError(error instanceof Error ? error.message : 'Could not save settings.');
+    } finally {
+      if (isCurrent()) {
+        saveRef.current = false;
+        setSaving(false);
+      }
+    }
+  }
 
-function deriveRegistrationMode(registration_open: boolean, walkin_registration_open: boolean): RegistrationMode {
-  if (registration_open) return 'regular';
-  if (walkin_registration_open) return 'walkin';
-  return 'closed';
-}
-
-// ---------------------------------------------------------------------------
-// Sortable Tier Item (dnd-kit)
-// ---------------------------------------------------------------------------
-const SortableTierItem: React.FC<{
-  tier: SponsorTierDef;
-  canDelete: boolean;
-  onLabelChange: (key: string, label: string) => void;
-  onDelete: (key: string) => void;
-}> = ({ tier, canDelete, onLabelChange, onDelete }) => {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: tier.key });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 10 : undefined,
-  };
+  const event = eventDraft && { tournamentSettings: eventDraft, handleTournamentChange };
+  const featurePanel = (title: string, keys: readonly FeatureKey[], forEvent = true) => (
+    <OrgFeaturesPanel organizationSlug={organization.slug} featureKeys={keys}
+      title={title} eventId={forEvent ? eventDraft?.id : undefined} onFeaturesUpdated={onFeaturesUpdated} />
+  );
+  const noEvent = <p className="rounded-xl bg-white p-4 text-gray-600">{loadError || 'Create or select an event to edit these settings.'}</p>;
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`flex items-center gap-2 bg-gray-50 rounded-xl p-2.5 sm:p-3 ${isDragging ? 'shadow-lg ring-2 ring-brand-300' : ''}`}
-    >
-      <button
-        type="button"
-        className="touch-none p-1 text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing flex-shrink-0"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical className="w-4 h-4" />
-      </button>
-      <input
-        type="text"
-        value={tier.label}
-        onChange={(e) => onLabelChange(tier.key, e.target.value)}
-        className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-      />
-      <span className="hidden sm:block text-[10px] text-gray-400 font-mono flex-shrink-0">{tier.key}</span>
-      {canDelete && (
-        <button
-          type="button"
-          onClick={() => onDelete(tier.key)}
-          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition flex-shrink-0"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+    <div data-static-flow className="mx-auto mb-16 min-w-0 max-w-5xl lg:mb-0">
+      {blocker.state === 'blocked' && !saving && protectEdits && (
+        <ConfirmDialog title="Leave settings?"
+          description={uploadsPending
+            ? 'An image is still uploading. Leaving will cancel the upload and discard your unsaved changes.'
+            : 'Your unsaved changes will be lost if you leave this page.'}
+          confirmLabel="Discard and leave" tone="danger" onConfirm={blocker.proceed} onCancel={blocker.reset} />
+      )}
+      <header className="mb-5 rounded-2xl bg-white p-4 shadow-sm sm:p-6">
+        <Link to="/admin" className="inline-flex min-h-[48px] items-center gap-2 text-sm font-medium text-brand-700 hover:underline">
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back to dashboard
+        </Link>
+        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+        <p className="mt-1 text-gray-600">{organization.name}{eventDraft && ` · ${eventDraft.name}`}</p>
+      </header>
+      {loading ? (
+        <p role="status" className="rounded-xl bg-white p-4 text-gray-700">Loading settings…</p>
+      ) : (
+        <>
+          {loadError && <p role="alert" className="mb-4 rounded-xl bg-red-50 p-4 text-red-800">{loadError}</p>}
+          <fieldset disabled={saving} className="min-w-0 pb-5">
+            <legend className="sr-only">Edit settings</legend>
+            <SettingsTabs active={activeTab} onChange={setActiveTab} panels={{
+              event: <>
+                <EventInfoTab draft={draft} update={updateOrganization} event={event} />
+                <TeamAccessPanel request={request} organizationSlug={organization.slug} />
+                {featurePanel('Event features', eventFeatures, false)}
+              </>,
+              look: <LookAndPhotosTab draft={draft} update={updateOrganization} event={event}
+                updateEvent={updateEvent} updateStoryPhotos={updateStoryPhotos}
+                getToken={getToken} onUploadStateChange={onUploadStateChange} uploadsPending={uploadsPending} />,
+              registration: <>
+                {event && eventDetails ? <RegistrationAndWaiverTab {...event} organizationName={draft.name}
+                  sponsorReservedTeams={eventDetails.sponsorReservedTeams} sponsorReservedSlots={eventDetails.sponsorReservedSlots} /> : noEvent}
+                {featurePanel('Registration and check-in options', registrationFeatures)}
+              </>,
+              sponsors: <>
+                <SponsorsAndPortalTab draft={draft} update={updateOrganization} organizationSlug={organization.slug} event={event} />
+                {featurePanel('Sponsor options', sponsorFeatures)}
+              </>,
+              payments: <>
+                <PaymentsAndPayoutsTab organizationSlug={organization.slug} event={event} onPaymentDirtyChange={setPaymentsDirty} />
+                {featurePanel('Donation and receipt options', paymentFeatures)}
+              </>,
+              raffle: <>{event ? <RaffleTab {...event} /> : noEvent}{featurePanel('Raffle availability', raffleFeatures)}</>,
+            }} />
+          </fieldset>
+          <div className="sticky bottom-16 z-20 rounded-t-xl border border-gray-200 bg-white p-3 shadow-lg sm:p-4 lg:bottom-0">
+            {saveError && <p role="alert" className="mb-2 text-sm font-medium text-red-700">{saveError}</p>}
+            <div className="flex items-center justify-between gap-3">
+              <p role="status" className="text-sm font-medium text-gray-700">
+                {saving ? 'Saving settings…' : uploadsPending ? 'Uploading images…' : dirty ? 'Unsaved changes'
+                  : paymentsDirty ? 'Use Save Payment Settings for your payment changes.' : 'All changes saved'}
+              </p>
+              <button type="button" onClick={() => void handleSave()} disabled={saving || uploadsPending || !dirty}
+                className="inline-flex min-h-[48px] shrink-0 items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 text-base font-semibold text-brand-foreground hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-600">
+                <Save className="h-4 w-4" aria-hidden="true" /> Save changes
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
-};
-
-// ---------------------------------------------------------------------------
-// Sponsor Tier Editor (with dnd-kit drag & drop)
-// ---------------------------------------------------------------------------
-const SponsorTierEditor: React.FC<{
-  tiers: SponsorTierDef[];
-  onChange: (tiers: SponsorTierDef[]) => void;
-}> = ({ tiers, onChange }) => {
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } })
-  );
-
-  const sorted = [...tiers].sort((a, b) => a.sort_order - b.sort_order);
-  const tierKeys = sorted.map(t => t.key);
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = sorted.findIndex(t => t.key === active.id);
-    const newIndex = sorted.findIndex(t => t.key === over.id);
-    const reordered = arrayMove(sorted, oldIndex, newIndex).map((t, i) => ({
-      ...t,
-      sort_order: i,
-    }));
-    onChange(reordered);
-  };
-
-  const handleLabelChange = (key: string, label: string) => {
-    onChange(tiers.map(t => (t.key === key ? { ...t, label } : t)));
-  };
-
-  const handleDelete = (key: string) => {
-    onChange(tiers.filter(t => t.key !== key));
-  };
-
-  const handleAdd = () => {
-    const maxOrder = Math.max(...tiers.map(t => t.sort_order), -1);
-    const existingKeys = tiers.map(t => t.key);
-    let newKey = 'custom';
-    let suffix = 1;
-    while (existingKeys.includes(newKey)) {
-      newKey = `custom_${suffix++}`;
-    }
-    onChange([...tiers, { key: newKey, label: 'New Tier', sort_order: maxOrder + 1 }]);
-  };
-
-  return (
-    <div className="pt-4 border-t border-gray-200">
-      <label className="block text-sm font-medium text-gray-700 mb-1">
-        Sponsor Tiers
-      </label>
-      <p className="text-xs text-gray-500 mb-3">
-        Customize the tier names and order. Drag the handle to reorder.
-      </p>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={tierKeys} strategy={verticalListSortingStrategy}>
-          <div className="space-y-2">
-            {sorted.map(tier => (
-              <SortableTierItem
-                key={tier.key}
-                tier={tier}
-                canDelete={tiers.length > 2}
-                onLabelChange={handleLabelChange}
-                onDelete={handleDelete}
-              />
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
-      <button
-        type="button"
-        onClick={handleAdd}
-        className="mt-3 flex items-center gap-1.5 text-sm text-brand-600 hover:text-brand-700 font-medium"
-      >
-        <Plus className="w-4 h-4" />
-        Add tier
-      </button>
-    </div>
-  );
-};
-
-function SettingsSectionSkeleton({
-  titleWidth = 'w-40',
-  fieldRows = 3,
-}: {
-  titleWidth?: string;
-  fieldRows?: number;
-}) {
-  return (
-    <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-      <div className="flex items-center gap-3 mb-4">
-        <Skeleton className="h-10 w-10 rounded-xl" />
-        <div className="space-y-2">
-          <Skeleton className={`h-5 ${titleWidth}`} />
-          <Skeleton className="h-4 w-48" />
-        </div>
-      </div>
-      <div className="space-y-4">
-        {Array.from({ length: fieldRows }).map((_, index) => (
-          <div key={index} className="space-y-2">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-11 w-full rounded-xl" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
-function SettingsPageSkeleton({ organizationName }: { organizationName?: string }) {
-  return (
-    <div className="min-h-screen bg-gray-100 overflow-x-hidden" data-static-flow>
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-          <Skeleton className="h-4 w-32 mb-4" />
-          <div className="flex items-center gap-4">
-            <Skeleton className="h-14 w-14 rounded-xl flex-shrink-0" />
-            <div className="space-y-2 min-w-0 flex-1">
-              <Skeleton className="h-8 w-64" />
-              <Skeleton className={`h-4 ${organizationName ? 'w-48' : 'w-32'}`} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
-        <SettingsSectionSkeleton titleWidth="w-44" fieldRows={4} />
-        <SettingsSectionSkeleton titleWidth="w-36" fieldRows={3} />
-        <SettingsSectionSkeleton titleWidth="w-40" fieldRows={5} />
-        <SettingsSectionSkeleton titleWidth="w-32" fieldRows={3} />
-      </div>
-    </div>
-  );
-}
-
-export const OrgSettingsPage: React.FC = () => {
-  const { organization } = useOrganization();
-  const { refreshTournaments } = useTournament();
-  const { getToken } = useAuthToken();
-  const [formData, setFormData] = useState<FormData | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
-  const [members, setMembers] = useState<OrgMember[]>([]);
-  const [newMemberEmail, setNewMemberEmail] = useState('');
-  const [newMemberRole, setNewMemberRole] = useState<'admin' | 'volunteer'>('admin');
-  const [addingMember, setAddingMember] = useState(false);
-  const [tournamentSettings, setTournamentSettings] = useState<TournamentSettings | null>(null);
-  const [sponsorReservedTeams, setSponsorReservedTeams] = useState(0);
-  const [sponsorReservedSlots, setSponsorReservedSlots] = useState(0);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
-
-  useEffect(() => {
-    if (organization) {
-      const settings: OrganizationContentSettings = organization.settings || {};
-      setFormData({
-        name: organization.name || '',
-        logo_url: organization.logo_url || '',
-        reversed_logo_url: organization.reversed_logo_url || '',
-        show_homepage_sponsors: organization.show_homepage_sponsors ?? false,
-        slug: organization.slug || '',
-        contact_email: organization.contact_email || '',
-        contact_phone: organization.contact_phone || '',
-        website_url: organization.website_url || '',
-        homepage_tagline: settings.homepage_tagline || '',
-        homepage_mission: settings.homepage_mission || '',
-        homepage_stats: settings.homepage_stats || [
-          { value: '', label: '' },
-          { value: '', label: '' },
-          { value: '', label: '' },
-        ],
-      });
-    }
-  }, [organization]);
-
-  const fetchMembers = async (): Promise<OrgMember[]> => {
-    if (!organization?.slug) return [];
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}/members`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        return data.members || [];
-      }
-    } catch (err) {
-      console.error('Failed to fetch members:', err);
-    }
-    return [];
-  };
-
-  const fetchTournamentSettings = async (): Promise<{
-    settings: TournamentSettings | null;
-    sponsorReservedTeams: number;
-    sponsorReservedSlots: number;
-  }> => {
-    if (!organization?.slug) {
-      return { settings: null, sponsorReservedTeams: 0, sponsorReservedSlots: 0 };
-    }
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}/tournaments`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (res.ok) {
-        const data: AdminTournamentListResponse = await res.json();
-        const tournaments = data.tournaments || [];
-        const active = tournaments.find((t) => t.status !== 'archived') || tournaments[0];
-        if (active) {
-          const detailRes = await fetch(
-            `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}/tournaments/${active.slug}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          if (detailRes.ok) {
-            const detail = await detailRes.json();
-            const t = detail.tournament || detail;
-            return {
-              sponsorReservedTeams: t.sponsor_reserved_teams || 0,
-              sponsorReservedSlots: t.capacity_summary?.sponsor_reserved_slots ?? ((t.sponsor_reserved_teams || 0) * (t.team_size || 2)),
-              settings: {
-                id: t.id?.toString() || '',
-                name: t.name || '',
-                event_date: t.event_date || '',
-                location_name: t.location_name || '',
-                location_address: t.location_address || '',
-                format_name: t.format_name || '',
-                tournament_format: t.tournament_format || '',
-                team_size: t.team_size?.toString() || '2',
-                capacity_unit: t.capacity_unit === 'players' ? 'players' : 'teams',
-                allow_partial_teams: t.allow_partial_teams ?? false,
-                teams_per_start_position: t.teams_per_start_position?.toString() || '1',
-                start_positions_per_hole: t.start_positions_per_hole?.toString() || '',
-                registration_mode: deriveRegistrationMode(t.registration_open ?? false, t.walkin_registration_open ?? false),
-                registration_deadline: t.registration_deadline || '',
-                entry_fee_display: t.entry_fee_display || '',
-                walkin_fee: t.walkin_fee != null ? (t.walkin_fee / 100).toString() : '',
-                walkin_fee_display: t.walkin_fee != null ? `$${(t.walkin_fee / 100).toFixed(0)}/team` : '',
-                max_capacity: t.max_capacity?.toString() || '',
-                waitlist_enabled: t.waitlist_enabled ?? false,
-                waitlist_max: t.waitlist_max?.toString() || '',
-                banner_url_override: t.banner_url_override || '',
-                signature_image_url_override: t.signature_image_url_override || '',
-                commemorative_banner_url: t.commemorative_banner_url || '',
-                tribute_title: t.tribute_title || '',
-                tribute_subtitle: t.tribute_subtitle || '',
-                story_photos: (t.story_photos || []).map((photo: StoryPhoto) => ({ ...photo, draftId: crypto.randomUUID() })),
-                waiver_enabled: t.waiver_enabled ?? true,
-                waiver_text: t.waiver_text || '',
-                show_public_sponsors: t.show_public_sponsors ?? true,
-                sponsor_wall_title: t.sponsor_wall_title || '',
-                theme_preset: t.theme_preset || 'default-clean',
-                swipe_simple_url: t.swipe_simple_url || '',
-                walkin_swipe_simple_url: t.walkin_swipe_simple_url || '',
-                contact_name: t.contact_name || '',
-                contact_phone: t.contact_phone || '',
-                contact_email: t.contact_email || '',
-                raffle_enabled: t.raffle_enabled ?? false,
-                raffle_description: t.raffle_description || '',
-                raffle_draw_time: t.raffle_draw_time || '',
-                raffle_ticket_price_cents: t.raffle_ticket_price_cents?.toString() || '500',
-                raffle_include_with_registration: t.raffle_include_with_registration ?? false,
-                raffle_bundles: t.raffle_bundles || DEFAULT_RAFFLE_BUNDLES,
-                course_configs: t.course_configs?.length ? t.course_configs : DEFAULT_COURSE_CONFIGS,
-                sponsor_edit_deadline: t.sponsor_edit_deadline || '',
-                sponsor_tiers: t.sponsor_tiers || [
-                  { key: 'title', label: 'Title Sponsor', sort_order: 0 },
-                  { key: 'platinum', label: 'Platinum', sort_order: 1 },
-                  { key: 'gold', label: 'Gold', sort_order: 2 },
-                  { key: 'silver', label: 'Silver', sort_order: 3 },
-                  { key: 'bronze', label: 'Bronze', sort_order: 4 },
-                  { key: 'hole', label: 'Hole Sponsor', sort_order: 5 },
-                ],
-                event_schedule: t.event_schedule || '',
-                tournament_info: t.tournament_info || '',
-                payment_instructions: t.payment_instructions || '',
-                check_in_time: t.check_in_time || '',
-                start_time: t.start_time || '',
-                fee_includes: t.fee_includes || '',
-                tax_receipt_enabled: t.tax_receipt_enabled ?? false,
-                tax_org_name: t.tax_org_name || '',
-                tax_org_ein: t.tax_org_ein || '',
-                fmv_per_player_dollars:
-                  t.fmv_per_player_cents != null ? (t.fmv_per_player_cents / 100).toFixed(2) : '0.00',
-                tax_receipt_disclaimer: t.tax_receipt_disclaimer || '',
-              },
-            };
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Failed to fetch tournament settings:', err);
-    }
-    return { settings: null, sponsorReservedTeams: 0, sponsorReservedSlots: 0 };
-  };
-
-  useEffect(() => {
-    if (!organization?.slug) return;
-
-    let isCancelled = false;
-
-    async function bootstrapSettingsPage() {
-      setIsInitialLoading(true);
-
-      const [membersResult, tournamentResult] = await Promise.all([
-        fetchMembers(),
-        fetchTournamentSettings(),
-      ]);
-
-      if (isCancelled) return;
-
-      setMembers(membersResult);
-      setTournamentSettings(tournamentResult.settings);
-      setSponsorReservedTeams(tournamentResult.sponsorReservedTeams);
-      setSponsorReservedSlots(tournamentResult.sponsorReservedSlots);
-      setIsInitialLoading(false);
-    }
-
-    bootstrapSettingsPage();
-
-    return () => {
-      isCancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organization?.slug]);
-
-  const handleTournamentChange = <K extends keyof TournamentSettings>(
-    field: K,
-    value: TournamentSettings[K]
-  ) => {
-    setTournamentSettings(prev => {
-      if (!prev) return null;
-      const updated = { ...prev, [field]: value };
-      if (field === 'registration_mode' && value === 'closed') {
-        updated.waitlist_enabled = false;
-      }
-      return updated;
-    });
-  };
-
-  const updateCourseConfig = (key: string, patch: Partial<CourseConfigDef>) => {
-    setTournamentSettings(prev => {
-      if (!prev) return null;
-      const normalizedPatch = { ...patch };
-      if (normalizedPatch.hole_count !== undefined) {
-        normalizedPatch.hole_count = clampCourseHoleCount(normalizedPatch.hole_count);
-      }
-      return {
-        ...prev,
-        course_configs: prev.course_configs.map((course) =>
-          course.key === key ? { ...course, ...normalizedPatch } : course
-        ),
-      };
-    });
-  };
-
-  const addCourseConfig = () => {
-    setTournamentSettings(prev => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        course_configs: [...prev.course_configs, createCourseConfig(prev.course_configs.length + 1)],
-      };
-    });
-  };
-
-  const removeCourseConfig = (key: string) => {
-    setTournamentSettings(prev => {
-      if (!prev || prev.course_configs.length <= 1) return prev;
-
-      return {
-        ...prev,
-        course_configs: prev.course_configs.filter((course) => course.key !== key),
-      };
-    });
-  };
-
-  const saveTournamentSettings = async (token: string): Promise<boolean> => {
-    if (!tournamentSettings?.id) return true;
-
-    const isRegular = tournamentSettings.registration_mode === 'regular';
-    const isWalkin = tournamentSettings.registration_mode === 'walkin';
-
-    const body: Record<string, unknown> = {
-      name: tournamentSettings.name || null,
-      event_date: tournamentSettings.event_date || null,
-      location_name: tournamentSettings.location_name || null,
-      location_address: tournamentSettings.location_address || null,
-      format_name: tournamentSettings.format_name || null,
-      team_size: tournamentSettings.team_size ? parseInt(tournamentSettings.team_size, 10) : 2,
-      capacity_unit: tournamentSettings.capacity_unit,
-      allow_partial_teams: tournamentSettings.allow_partial_teams,
-      teams_per_start_position: tournamentSettings.teams_per_start_position ? parseInt(tournamentSettings.teams_per_start_position) : 1,
-      start_positions_per_hole: tournamentSettings.start_positions_per_hole ? parseInt(tournamentSettings.start_positions_per_hole) : null,
-      registration_open: isRegular,
-      walkin_registration_open: isWalkin,
-      registration_deadline: tournamentSettings.registration_deadline || null,
-      entry_fee_display: tournamentSettings.entry_fee_display || null,
-      walkin_fee: tournamentSettings.walkin_fee ? Math.round(parseFloat(tournamentSettings.walkin_fee) * 100) : null,
-      max_capacity: tournamentSettings.max_capacity ? parseInt(tournamentSettings.max_capacity) : null,
-      waitlist_enabled: tournamentSettings.waitlist_enabled,
-      waitlist_max: tournamentSettings.waitlist_max ? parseInt(tournamentSettings.waitlist_max) : null,
-      banner_url_override: tournamentSettings.banner_url_override.trim() || null,
-      signature_image_url_override: tournamentSettings.signature_image_url_override.trim() || null,
-      commemorative_banner_url: tournamentSettings.commemorative_banner_url.trim() || null,
-      tribute_title: tournamentSettings.tribute_title.trim() || null,
-      tribute_subtitle: tournamentSettings.tribute_subtitle.trim() || null,
-      story_photos: tournamentSettings.story_photos
-        .filter((photo) => photo.url.trim())
-        .map(({ url, caption }) => ({ url: url.trim(), caption: caption?.trim() || null })),
-      waiver_enabled: tournamentSettings.waiver_enabled,
-      waiver_text: tournamentSettings.waiver_text.trim() || null,
-      show_public_sponsors: tournamentSettings.show_public_sponsors,
-      sponsor_wall_title: tournamentSettings.sponsor_wall_title.trim() || null,
-      theme_preset: resolveThemePackId(tournamentSettings.theme_preset),
-      swipe_simple_url: tournamentSettings.swipe_simple_url || null,
-      walkin_swipe_simple_url: tournamentSettings.walkin_swipe_simple_url || null,
-      contact_name: tournamentSettings.contact_name || null,
-      contact_phone: tournamentSettings.contact_phone || null,
-      contact_email: tournamentSettings.contact_email || null,
-      raffle_enabled: tournamentSettings.raffle_enabled,
-      raffle_description: tournamentSettings.raffle_description || null,
-      raffle_draw_time: tournamentSettings.raffle_draw_time || null,
-      raffle_ticket_price_cents: tournamentSettings.raffle_ticket_price_cents ? parseInt(tournamentSettings.raffle_ticket_price_cents) : 500,
-      raffle_include_with_registration: tournamentSettings.raffle_include_with_registration,
-      raffle_bundles: tournamentSettings.raffle_bundles,
-      course_configs: tournamentSettings.course_configs.map((course) => ({
-        ...course,
-        hole_count: clampCourseHoleCount(course.hole_count),
-      })),
-      sponsor_edit_deadline: tournamentSettings.sponsor_edit_deadline || null,
-      sponsor_tiers: tournamentSettings.sponsor_tiers,
-      event_schedule: tournamentSettings.event_schedule || null,
-      tournament_info: tournamentSettings.tournament_info || null,
-      payment_instructions: tournamentSettings.payment_instructions || null,
-      check_in_time: tournamentSettings.check_in_time || null,
-      start_time: tournamentSettings.start_time || null,
-      fee_includes: tournamentSettings.fee_includes || null,
-      tax_receipt_enabled: tournamentSettings.tax_receipt_enabled,
-      tax_org_name: tournamentSettings.tax_org_name || null,
-      tax_org_ein: tournamentSettings.tax_org_ein || null,
-      fmv_per_player_cents: tournamentSettings.fmv_per_player_dollars
-        ? Math.max(0, Math.round(parseFloat(tournamentSettings.fmv_per_player_dollars) * 100) || 0)
-        : 0,
-      tax_receipt_disclaimer: tournamentSettings.tax_receipt_disclaimer || null,
-    };
-    const res = await fetch(
-      `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournamentSettings.id}`,
-      {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tournament: body }),
-      }
-    );
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.errors?.join(', ') || 'Failed to save event settings');
-    }
-    return true;
-  };
-
-  const handleAddMember = async () => {
-    if (!newMemberEmail.trim() || !organization?.slug) return;
-    setAddingMember(true);
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}/members`,
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: newMemberEmail.trim(), role: newMemberRole }),
-        }
-      );
-      const data = await res.json();
-      if (res.ok) {
-        setMembers(prev => [...prev, data.member]);
-        setNewMemberEmail('');
-        setNewMemberRole('admin');
-        const roleLabel = newMemberRole === 'volunteer' ? 'Volunteer' : 'Admin';
-        toast.success(data.invitation_sent ? `${roleLabel} added — invitation email sent!` : `${roleLabel} added successfully`);
-      } else {
-        toast.error(data.error || 'Failed to add member');
-      }
-    } catch {
-      toast.error('Failed to add member');
-    } finally {
-      setAddingMember(false);
-    }
-  };
-
-  const [resendingInvite, setResendingInvite] = useState<string | null>(null);
-
-  const handleResendInvite = async (memberId: string) => {
-    if (!organization?.slug) return;
-    setResendingInvite(memberId);
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}/members/${memberId}/resend_invite`,
-        { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (res.ok) {
-        toast.success('Invitation email sent!');
-      } else {
-        const data = await res.json();
-        toast.error(data.error || 'Failed to resend invitation');
-      }
-    } catch {
-      toast.error('Failed to resend invitation');
-    } finally {
-      setResendingInvite(null);
-    }
-  };
-
-  const handleRemoveMember = async (memberId: string) => {
-    if (!organization?.slug) return;
-    if (!confirm('Are you sure you want to remove this admin?')) return;
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}/members/${memberId}`,
-        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (res.ok) {
-        setMembers(prev => prev.filter(m => m.id !== memberId));
-        toast.success('Admin removed');
-      } else {
-        const data = await res.json();
-        toast.error(data.error || 'Failed to remove admin');
-      }
-    } catch {
-      toast.error('Failed to remove admin');
-    }
-  };
-
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-  ) => {
-    const { name, value } = e.target;
-
-    if (name === 'slug') {
-      const cleanSlug = value.toLowerCase().replace(/[^a-z0-9-]/g, '');
-      setFormData(prev => prev ? { ...prev, [name]: cleanSlug } : null);
-    } else {
-      setFormData(prev => prev ? { ...prev, [name]: value } : null);
-    }
-
-    if (errors[name as keyof FormData]) {
-      setErrors(prev => ({ ...prev, [name]: undefined }));
-    }
-  };
-
-  const validate = (): boolean => {
-    if (!formData) return false;
-    const newErrors: Partial<Record<keyof FormData, string>> = {};
-
-    if (!formData.name.trim()) newErrors.name = 'Organization name is required';
-    if (!formData.slug.trim()) newErrors.slug = 'URL slug is required';
-    else if (!/^[a-z0-9-]+$/.test(formData.slug))
-      newErrors.slug = 'Slug can only contain lowercase letters, numbers, and hyphens';
-    if (formData.contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.contact_email))
-      newErrors.contact_email = 'Invalid email format';
-    if (formData.website_url && !formData.website_url.startsWith('http'))
-      newErrors.website_url = 'Website URL must start with http:// or https://';
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSaveAll = async () => {
-    if (!validate() || !formData || !organization) {
-      toast.error('Please fix the errors before saving');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const token = await getToken();
-      if (!token) throw new Error('Not authenticated');
-
-      const restOrgSettings = { ...(organization.settings || {}) };
-      delete restOrgSettings.features;
-
-      const orgRes = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}`,
-        {
-          method: 'PATCH',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            organization: {
-              name: formData.name,
-              slug: formData.slug,
-              contact_email: formData.contact_email,
-              contact_phone: formData.contact_phone,
-              website_url: formData.website_url,
-              logo_url: formData.logo_url.trim() || null,
-              reversed_logo_url: formData.reversed_logo_url.trim() || null,
-              show_homepage_sponsors: formData.show_homepage_sponsors,
-              settings: {
-                ...restOrgSettings,
-                homepage_tagline: formData.homepage_tagline,
-                homepage_mission: formData.homepage_mission,
-                homepage_stats: formData.homepage_stats.filter(s => s.value || s.label),
-              },
-            },
-          }),
-        }
-      );
-      if (!orgRes.ok) {
-        const data = await orgRes.json();
-        throw new Error(data.errors?.join(', ') || 'Failed to save organization settings');
-      }
-
-      const updatedOrg = await orgRes.json();
-      useOrganizationStore.getState().setOrganization(updatedOrg);
-
-      await saveTournamentSettings(token);
-      await refreshTournaments();
-
-      toast.success('All settings saved!');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (!organization || !formData || isInitialLoading) {
-    return <SettingsPageSkeleton organizationName={organization?.name} />;
+function validateDraft(draft: OrganizationDraft, event: TournamentSettings | null): { tab: SettingsTab; message: string } | null {
+  if (!draft.name.trim() || !draft.slug) return { tab: 'event', message: 'Enter an organization name and web address.' };
+  if (event && !event.name.trim()) return { tab: 'event', message: 'Enter an event name.' };
+  if ([draft.contact_email, event?.contact_email].some((value) => value && !validEmail.test(value))) {
+    return { tab: 'event', message: 'Enter a valid contact email address.' };
   }
-
-  const registrationModeOptions: { value: RegistrationMode; label: string; description: string }[] = [
-    { value: 'regular', label: 'Regular Registration', description: 'Public registration is open for teams to sign up and pay.' },
-    { value: 'walkin', label: 'Walk-in Only', description: 'Online registration is closed. Walk-ins accepted on event day at a separate rate.' },
-    { value: 'closed', label: 'Registration Closed', description: 'No registrations accepted — neither online nor walk-in.' },
-  ];
-
-  return (
-    <div className="min-h-screen bg-gray-100 overflow-x-hidden" data-static-flow>
-      <Toaster position="top-right" />
-
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-          <Link
-            to={"/admin"}
-            className="inline-flex items-center gap-2 text-gray-500 hover:text-gray-700 mb-3 sm:mb-4 text-sm"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Dashboard
-          </Link>
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div
-              className="w-11 h-11 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center text-white text-lg sm:text-xl font-bold bg-brand-600 flex-shrink-0"
-            >
-              {organization.name?.charAt(0) || 'O'}
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
-                <Settings className="w-5 h-5 sm:w-6 sm:h-6 text-gray-400 flex-shrink-0" />
-                <span className="truncate">Organization Settings</span>
-              </h1>
-              <p className="text-gray-500 text-sm truncate">{organization.name}</p>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-4 pt-6 pb-32 sm:px-6 sm:py-8 lg:px-8">
-        <div className="space-y-5 sm:space-y-6">
-          {/* Basic Info */}
-          <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4 sm:mb-6">Basic Information</h2>
-            <div className="space-y-4 sm:space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5 sm:mb-2">
-                  Organization Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500 ${
-                    errors.name ? 'border-red-500' : 'border-gray-300'
-                  }`}
-                />
-                {errors.name && <p className="mt-1 text-sm text-red-600">{errors.name}</p>}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5 sm:mb-2">
-                  URL Slug <span className="text-red-500">*</span>
-                </label>
-                <div className="flex flex-col sm:flex-row sm:items-center">
-                  <span className="px-3 sm:px-4 py-2 sm:py-3 bg-gray-100 border border-gray-300 rounded-t-xl sm:rounded-t-none sm:rounded-l-xl sm:border-r-0 text-gray-500 text-sm">
-                    {window.location.host}/
-                  </span>
-                  <input
-                    type="text"
-                    name="slug"
-                    value={formData.slug}
-                    onChange={handleChange}
-                    className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border rounded-b-xl sm:rounded-b-none sm:rounded-r-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500 ${
-                      errors.slug ? 'border-red-500' : 'border-gray-300'
-                    }`}
-                  />
-                </div>
-                {errors.slug && <p className="mt-1 text-sm text-red-600">{errors.slug}</p>}
-              </div>
-            </div>
-          </div>
-
-          {/* Contact Info */}
-          <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4 sm:mb-6">Contact Information</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5 sm:mb-2">
-                  <Mail className="w-4 h-4 inline mr-1" /> Contact Email
-                </label>
-                <input
-                  type="email"
-                  name="contact_email"
-                  value={formData.contact_email}
-                  onChange={handleChange}
-                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500 ${
-                    errors.contact_email ? 'border-red-500' : 'border-gray-300'
-                  }`}
-                />
-                {errors.contact_email && <p className="mt-1 text-sm text-red-600">{errors.contact_email}</p>}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5 sm:mb-2">
-                  <Phone className="w-4 h-4 inline mr-1" /> Contact Phone
-                </label>
-                <input
-                  type="tel"
-                  name="contact_phone"
-                  value={formData.contact_phone}
-                  onChange={handleChange}
-                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1.5 sm:mb-2">
-                  <Globe className="w-4 h-4 inline mr-1" /> Website
-                </label>
-                <input
-                  type="url"
-                  name="website_url"
-                  value={formData.website_url}
-                  onChange={handleChange}
-                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500 ${
-                    errors.website_url ? 'border-red-500' : 'border-gray-300'
-                  }`}
-                />
-                {errors.website_url && <p className="mt-1 text-sm text-red-600">{errors.website_url}</p>}
-              </div>
-            </div>
-          </div>
-
-          <BrandingMediaPanel
-            organization={formData}
-            tournament={tournamentSettings}
-            onOrganizationChange={(patch) => setFormData((current) => current && { ...current, ...patch })}
-            onTournamentChange={(patch) => setTournamentSettings((current) => current && { ...current, ...patch })}
-            onStoryPhotosChange={(update) => setTournamentSettings((current) => current && {
-              ...current, story_photos: update(current.story_photos),
-            })}
-            getToken={getToken}
-          />
-
-          {/* Events Landing Page */}
-          <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4 sm:mb-6 flex items-center gap-2">
-              <Home className="w-5 h-5 text-gray-400" />
-              Events Landing Page
-            </h2>
-            <p className="text-xs sm:text-sm text-gray-500 mb-4">
-              These fields control the main events landing page. The page introduces the organization and lists upcoming events. Event artwork is managed separately below.
-            </p>
-            <div className="space-y-4">
-              <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-gray-700">
-                <input type="checkbox" className="h-5 w-5 accent-brand-600"
-                  checked={formData.show_homepage_sponsors}
-                  onChange={(event) => setFormData({ ...formData, show_homepage_sponsors: event.target.checked })} />
-                Show featured event sponsors on the events homepage
-              </label>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tagline
-                </label>
-                <input
-                  type="text"
-                  value={formData.homepage_tagline}
-                  onChange={(e) => setFormData(prev => prev ? { ...prev, homepage_tagline: e.target.value } : null)}
-                  placeholder="e.g. Granting wishes since 1988"
-                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Mission Statement
-                </label>
-                <input
-                  type="text"
-                  value={formData.homepage_mission}
-                  onChange={(e) => setFormData(prev => prev ? { ...prev, homepage_mission: e.target.value } : null)}
-                  placeholder="e.g. Together we create life-changing wishes for children with critical illnesses"
-                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Highlight Stats
-                </label>
-                <p className="text-xs text-gray-500 mb-3">Up to 3 stats shown in the events landing page hero.</p>
-                <div className="space-y-3">
-                  {formData.homepage_stats.map((stat, i) => (
-                    <div key={i} className="relative flex flex-col sm:flex-row sm:items-center gap-2 bg-gray-50 rounded-xl p-3 pr-10 sm:pr-3 sm:bg-transparent sm:p-0">
-                      <input
-                        type="text"
-                        value={stat.value}
-                        onChange={(e) => {
-                          const updated = [...formData.homepage_stats];
-                          updated[i] = { ...updated[i], value: e.target.value };
-                          setFormData(prev => prev ? { ...prev, homepage_stats: updated } : null);
-                        }}
-                        placeholder="Value (e.g. 38+)"
-                        className="w-full sm:w-28 px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                      <input
-                        type="text"
-                        value={stat.label}
-                        onChange={(e) => {
-                          const updated = [...formData.homepage_stats];
-                          updated[i] = { ...updated[i], label: e.target.value };
-                          setFormData(prev => prev ? { ...prev, homepage_stats: updated } : null);
-                        }}
-                        placeholder="Label (e.g. Years granting wishes)"
-                        className="w-full sm:flex-1 px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                      {formData.homepage_stats.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const updated = formData.homepage_stats.filter((_, idx) => idx !== i);
-                            setFormData(prev => prev ? { ...prev, homepage_stats: updated } : null);
-                          }}
-                          className="absolute top-2 right-2 sm:relative sm:top-auto sm:right-auto p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition shrink-0"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                  {formData.homepage_stats.length < 4 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFormData(prev => prev ? { ...prev, homepage_stats: [...prev.homepage_stats, { value: '', label: '' }] } : null);
-                      }}
-                      className="flex items-center gap-1.5 text-sm text-brand-600 hover:text-brand-700 font-medium"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Add stat
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Per-Organization Payment Configuration */}
-          <OrgPaymentConfigPanel organizationSlug={organization.slug} />
-
-          {/* Platform Features */}
-          <OrgFeaturesPanel
-            organizationSlug={organization.slug}
-            onFeaturesUpdated={(updated) => {
-              refreshTournaments();
-              if (tournamentSettings?.id) {
-                const matched = updated.tournaments.find(
-                  (t) => t.id.toString() === tournamentSettings.id
-                );
-                if (matched) {
-                  setTournamentSettings((prev) =>
-                    prev ? { ...prev, raffle_enabled: matched.raffle_enabled } : null
-                  );
-                }
-              }
-            }}
-          />
-
-          {/* ─── EVENT SETTINGS DIVIDER ─── */}
-          {tournamentSettings && (
-            <>
-            <div className="flex items-center gap-3 pt-6">
-              <div className="p-2 bg-brand-50 rounded-lg">
-                <Calendar className="w-5 h-5 text-brand-600" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-gray-900">Event Settings</h2>
-                <p className="text-sm text-gray-500">{tournamentSettings.name}</p>
-              </div>
-            </div>
-
-            {/* Event Information */}
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <h3 className="text-sm sm:text-md font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                Event Information
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Event Name
-                  </label>
-                  <input
-                    type="text"
-                    value={tournamentSettings.name}
-                    onChange={(e) => handleTournamentChange('name', e.target.value)}
-                    placeholder="e.g. Annual Golf Classic 2027"
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Event Date
-                    </label>
-                    <input
-                      type="date"
-                      value={tournamentSettings.event_date ? tournamentSettings.event_date.slice(0, 10) : ''}
-                      onChange={(e) => handleTournamentChange('event_date', e.target.value)}
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Format Name
-                    </label>
-                    <input
-                      type="text"
-                      value={tournamentSettings.format_name}
-                      onChange={(e) => handleTournamentChange('format_name', e.target.value)}
-                      placeholder="e.g. Two-Person Scramble"
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Venue Name
-                    </label>
-                    <input
-                      type="text"
-                      value={tournamentSettings.location_name}
-                      onChange={(e) => handleTournamentChange('location_name', e.target.value)}
-                      placeholder="e.g. LeoPalace Resort Country Club"
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Venue Address
-                    </label>
-                    <input
-                      type="text"
-                      value={tournamentSettings.location_address}
-                      onChange={(e) => handleTournamentChange('location_address', e.target.value)}
-                      placeholder="e.g. Yona, Guam"
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Format Type
-                    </label>
-                    <div className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 rounded-xl text-base bg-gray-50 text-gray-600 capitalize">
-                      {tournamentSettings.tournament_format?.replace('_', ' ') || 'Scramble'}
-                    </div>
-                    <p className="mt-1 text-xs text-gray-400">Contact support to change format type</p>
-                  </div>
-                  <div>
-                    <label htmlFor="settings-team-size" className="block text-sm font-medium text-gray-700 mb-1">
-                      Team Size
-                    </label>
-                    <select
-                      id="settings-team-size"
-                      value={tournamentSettings.team_size || '2'}
-                      onChange={(e) => {
-                        const nextSize = e.target.value;
-                        handleTournamentChange('team_size', nextSize);
-                        if (nextSize === '1') {
-                          handleTournamentChange('allow_partial_teams', false);
-                        }
-                      }}
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    >
-                      <option value="1">1 player (Individual)</option>
-                      <option value="2">2 players (Pairs)</option>
-                      <option value="4">4 players (Foursomes)</option>
-                    </select>
-                  </div>
-                </div>
-                {parseInt(tournamentSettings.team_size || '2', 10) > 1 && (
-                  <div className="flex items-center gap-3">
-                    <input
-                      id="settings-allow-partial-teams"
-                      type="checkbox"
-                      checked={tournamentSettings.allow_partial_teams}
-                      onChange={(e) => handleTournamentChange('allow_partial_teams', e.target.checked)}
-                      className="w-5 h-5 text-brand-600 rounded focus:ring-brand-500"
-                    />
-                    <div>
-                      <label htmlFor="settings-allow-partial-teams" className="text-sm font-medium text-gray-700">
-                        Allow partial teams
-                      </label>
-                      <p className="text-xs text-gray-400">
-                        Permit public registrations with fewer than {tournamentSettings.team_size} players.
-                      </p>
-                    </div>
-                  </div>
-                )}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Teams Per Start Position
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="4"
-                      value={tournamentSettings.teams_per_start_position}
-                      onChange={(e) => handleTournamentChange('teams_per_start_position', e.target.value)}
-                      className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                    <p className="mt-1 text-xs text-gray-400">
-                      Each start slot like 1A or 1B will hold this many teams (typically 1 or 2).
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Players Per Start Position
-                    </label>
-                    <div className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-200 rounded-xl text-base bg-gray-50 text-gray-600">
-                      {(parseInt(tournamentSettings.team_size || '0', 10) || 0) * (parseInt(tournamentSettings.teams_per_start_position || '0', 10) || 0)} players per slot
-                    </div>
-                    <p className="mt-1 text-xs text-gray-400">
-                      Calculated as team size × teams per start position.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Start Positions Per Hole
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="26"
-                      value={tournamentSettings.start_positions_per_hole}
-                      onChange={(e) => handleTournamentChange('start_positions_per_hole', e.target.value)}
-                      className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      placeholder="Unlimited"
-                    />
-                    <p className="mt-1 text-xs text-gray-400">
-                      Optional limit. Leave blank to allow A, B, C, and more pairings on the same hole.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <section aria-labelledby="waiver-settings-heading" className="space-y-3 rounded-xl bg-white p-4 shadow-sm sm:p-6">
-              <h3 id="waiver-settings-heading" className="font-semibold text-gray-900">Liability Waiver</h3>
-              <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-gray-700">
-                <input type="checkbox" className="h-5 w-5 accent-brand-600"
-                  checked={tournamentSettings.waiver_enabled}
-                  onChange={(event) => handleTournamentChange('waiver_enabled', event.target.checked)} />
-                Require a waiver for every player
-              </label>
-              {tournamentSettings.waiver_enabled && (
-                <div className="space-y-1 text-sm text-gray-700">
-                  <label htmlFor="settings-waiver-text" className="block font-medium">Custom Waiver Text</label>
-                  <textarea id="settings-waiver-text" aria-describedby="settings-waiver-help"
-                    rows={5} value={tournamentSettings.waiver_text}
-                    onChange={(event) => handleTournamentChange('waiver_text', event.target.value)}
-                    className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-500" />
-                  <p id="settings-waiver-help" className="text-gray-600">Leave blank to use the standard release with your organization’s name.</p>
-                </div>
-              )}
-            </section>
-
-            {/* Theme Pack & Public Styling */}
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <div className="mb-4">
-                <h3 className="text-sm sm:text-md font-semibold text-gray-900 flex items-center gap-2">
-                  <Palette className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                  Public Theme Pack
-                </h3>
-                <p className="mt-1 text-xs sm:text-sm text-gray-500">
-                  Choose how this event’s public page presents its artwork, information, and registration.
-                </p>
-              </div>
-              <ThemePackPicker
-                value={tournamentSettings.theme_preset}
-                onChange={(packId) => handleTournamentChange('theme_preset', packId)}
-                eventName={tournamentSettings.name}
-                organizationName={organization.name}
-                eventDateLabel={tournamentSettings.event_date}
-                locationName={tournamentSettings.location_name}
-                entryFeeLabel={tournamentSettings.entry_fee_display}
-              />
-            </div>
-
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div>
-                  <h3 className="text-sm sm:text-md font-semibold text-gray-900 flex items-center gap-2">
-                    <Building2 className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                    Starting Courses
-                  </h3>
-                  <p className="mt-1 text-xs sm:text-sm text-gray-500">
-                    Configure how starting positions are grouped. This supports one 18-hole course, two 9-hole courses, or other layouts.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={addCourseConfig}
-                  className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add Course
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                {tournamentSettings.course_configs.map((course, index) => (
-                  <div key={course.key} className="rounded-2xl border border-gray-200 bg-gray-50 p-3 sm:p-4">
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div>
-                        <p className="text-sm font-semibold text-gray-900">Course {index + 1}</p>
-                        <p className="text-xs text-gray-500">Used by hole assignments, reports, check-in, and golfer-facing start info.</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeCourseConfig(course.key)}
-                        disabled={tournamentSettings.course_configs.length <= 1}
-                        className="rounded-lg p-2 text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Remove course"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_180px] gap-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Course Name
-                        </label>
-                        <input
-                          type="text"
-                          value={course.name}
-                          onChange={(e) => updateCourseConfig(course.key, { name: e.target.value })}
-                          placeholder="e.g. Hibiscus"
-                          className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Holes
-                        </label>
-                        <input
-                          type="number"
-                          min="1"
-                          max={MAX_COURSE_HOLES}
-                          value={course.hole_count}
-                          onChange={(e) => updateCourseConfig(course.key, { hole_count: clampCourseHoleCount(parseInt(e.target.value || '1', 10)) })}
-                          className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Registration Mode */}
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <h3 className="text-sm sm:text-md font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
-                {tournamentSettings.registration_mode === 'closed' ? (
-                  <ToggleLeft className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                ) : (
-                  <ToggleRight className="w-5 h-5 text-green-500 flex-shrink-0" />
-                )}
-                Registration Mode
-              </h3>
-
-              <div className="space-y-2.5 sm:space-y-3 mb-4 sm:mb-6">
-                {registrationModeOptions.map((opt) => (
-                  <label
-                    key={opt.value}
-                    className={`flex items-start gap-3 p-3 sm:p-4 rounded-xl border-2 cursor-pointer transition-colors ${
-                      tournamentSettings.registration_mode === opt.value
-                        ? 'border-brand-500 bg-brand-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="registration_mode"
-                      value={opt.value}
-                      checked={tournamentSettings.registration_mode === opt.value}
-                      onChange={() => handleTournamentChange('registration_mode', opt.value)}
-                      className="mt-0.5 w-4 h-4 text-brand-600 focus:ring-brand-500 flex-shrink-0"
-                    />
-                    <div>
-                      <span className="font-medium text-sm sm:text-base text-gray-900">{opt.label}</span>
-                      <p className="text-xs sm:text-sm text-gray-500">{opt.description}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-
-              {/* Regular registration fields */}
-              {tournamentSettings.registration_mode === 'regular' && (
-                <div className="space-y-4 pt-4 border-t border-gray-200">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Entry Fee Display Label
-                    </label>
-                    <input
-                      type="text"
-                      value={tournamentSettings.entry_fee_display}
-                      onChange={(e) => handleTournamentChange('entry_fee_display', e.target.value)}
-                      placeholder="e.g. $300/team"
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                    <p className="mt-1 text-xs sm:text-sm text-gray-500">Shown on the public event page, registration form, and emails</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      SwipeSimple Payment URL
-                    </label>
-                    <input
-                      type="url"
-                      value={tournamentSettings.swipe_simple_url}
-                      onChange={(e) => handleTournamentChange('swipe_simple_url', e.target.value)}
-                      placeholder="https://swipesimple.com/links/..."
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                    <p className="mt-1 text-xs sm:text-sm text-gray-500">Registrants are redirected here after signing up</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Registration Deadline
-                    </label>
-                    <input
-                      type="datetime-local"
-                      value={tournamentSettings.registration_deadline ? tournamentSettings.registration_deadline.slice(0, 16) : ''}
-                      onChange={(e) => handleTournamentChange('registration_deadline', e.target.value)}
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                    <p className="mt-1 text-xs sm:text-sm text-gray-500">After this date, online registration automatically closes</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Walk-in fields */}
-              {tournamentSettings.registration_mode === 'walkin' && (
-                <div className="space-y-4 pt-4 border-t border-gray-200">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Walk-in Fee ($)
-                    </label>
-                    <input
-                      type="number"
-                      value={tournamentSettings.walkin_fee}
-                      onChange={(e) => handleTournamentChange('walkin_fee', e.target.value)}
-                      placeholder="e.g. 350"
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                    <p className="mt-1 text-xs sm:text-sm text-gray-500">Amount charged for day-of walk-in registrations</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Walk-in SwipeSimple URL
-                    </label>
-                    <input
-                      type="url"
-                      value={tournamentSettings.walkin_swipe_simple_url}
-                      onChange={(e) => handleTournamentChange('walkin_swipe_simple_url', e.target.value)}
-                      placeholder="https://swipesimple.com/links/..."
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                    <p className="mt-1 text-xs sm:text-sm text-gray-500">Payment link for walk-in registrations</p>
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-4 pt-4 border-t border-gray-200 space-y-4">
-                <div>
-                  <label htmlFor="settings-capacity-unit" className="block text-sm font-medium text-gray-700 mb-1">
-                    Capacity Unit
-                  </label>
-                  <select
-                    id="settings-capacity-unit"
-                    value={tournamentSettings.capacity_unit}
-                    onChange={(e) => handleTournamentChange('capacity_unit', e.target.value as 'players' | 'teams')}
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  >
-                    <option value="players">Players (counts individual players &amp; partial teams)</option>
-                    <option value="teams">Teams (counts each team registration)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label htmlFor="settings-max-capacity" className="block text-sm font-medium text-gray-700 mb-1">
-                    Max Capacity ({tournamentSettings.capacity_unit})
-                  </label>
-                  <input
-                    id="settings-max-capacity"
-                    type="number"
-                    value={tournamentSettings.max_capacity}
-                    onChange={(e) => handleTournamentChange('max_capacity', e.target.value)}
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  {(() => {
-                    const reservedCount =
-                      tournamentSettings.capacity_unit === 'players'
-                        ? sponsorReservedSlots
-                        : sponsorReservedTeams;
-                    if (reservedCount <= 0 || !tournamentSettings.max_capacity) return null;
-                    const unitWord = tournamentSettings.capacity_unit === 'players' ? 'player slot' : 'team';
-                    return (
-                      <p className="mt-1 text-xs text-gray-500">
-                        {reservedCount} {unitWord}{reservedCount !== 1 ? 's' : ''} reserved for sponsors
-                        {' \u2022 '}
-                        {Math.max(0, parseInt(tournamentSettings.max_capacity, 10) - reservedCount)} available for public registration
-                      </p>
-                    );
-                  })()}
-                </div>
-
-                {tournamentSettings.registration_mode !== 'closed' && (
-                  <>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={tournamentSettings.waitlist_enabled}
-                        onChange={(e) => handleTournamentChange('waitlist_enabled', e.target.checked)}
-                        className="w-5 h-5 text-brand-600 rounded focus:ring-brand-500"
-                      />
-                      <label className="text-sm font-medium text-gray-700">
-                        Enable waitlist when at capacity
-                      </label>
-                    </div>
-                    {tournamentSettings.waitlist_enabled && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Max Waitlist Size
-                        </label>
-                        <input
-                          type="number"
-                          value={tournamentSettings.waitlist_max}
-                          onChange={(e) => handleTournamentChange('waitlist_max', e.target.value)}
-                          placeholder="Leave blank for unlimited"
-                          className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                        <p className="mt-1 text-xs text-gray-500">Leave blank for unlimited waitlist</p>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Event Contact */}
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <h3 className="text-sm sm:text-md font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
-                <Phone className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                Event Contact
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Contact Name
-                  </label>
-                  <input
-                    type="text"
-                    value={tournamentSettings.contact_name}
-                    onChange={(e) => handleTournamentChange('contact_name', e.target.value)}
-                    placeholder="e.g. Tournament Director"
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Contact Phone
-                  </label>
-                  <input
-                    type="tel"
-                    value={tournamentSettings.contact_phone}
-                    onChange={(e) => handleTournamentChange('contact_phone', e.target.value)}
-                    placeholder="e.g. 671-555-0100"
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-              </div>
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Contact Email
-                </label>
-                <input
-                  type="email"
-                  value={tournamentSettings.contact_email}
-                  onChange={(e) => handleTournamentChange('contact_email', e.target.value)}
-                  placeholder="e.g. events@organization.org"
-                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-              <p className="mt-2 text-xs sm:text-sm text-gray-500">Shown in emails and on the event page. All fields are optional.</p>
-            </div>
-
-            {/* Event Details */}
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <h3 className="text-sm sm:text-md font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
-                <Clock className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                Event Details
-              </h3>
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Check-in Time
-                    </label>
-                    <input
-                      type="text"
-                      value={tournamentSettings.check_in_time}
-                      onChange={(e) => handleTournamentChange('check_in_time', e.target.value)}
-                      placeholder="e.g. 7:00 AM"
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Start Time
-                    </label>
-                    <input
-                      type="text"
-                      value={tournamentSettings.start_time}
-                      onChange={(e) => handleTournamentChange('start_time', e.target.value)}
-                      placeholder="e.g. 8:00 AM Shotgun Start"
-                      className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Event Schedule
-                  </label>
-                  <textarea
-                    value={tournamentSettings.event_schedule}
-                    onChange={(e) => handleTournamentChange('event_schedule', e.target.value)}
-                    rows={4}
-                    placeholder={"7:00 AM — Check-in\n8:00 AM — Shotgun Start\n1:30 PM — Banquet & Awards"}
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <p className="mt-1 text-xs sm:text-sm text-gray-500">One item per line. Shown on the public event page.</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Entry Fee Includes
-                  </label>
-                  <input
-                    type="text"
-                    value={tournamentSettings.fee_includes}
-                    onChange={(e) => handleTournamentChange('fee_includes', e.target.value)}
-                    placeholder="e.g. Green Fee, Cart, Lunch, Awards Banquet, and Raffle Entry"
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <p className="mt-1 text-xs sm:text-sm text-gray-500">Shown on the public event page under tournament details</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Tournament Info
-                  </label>
-                  <textarea
-                    value={tournamentSettings.tournament_info}
-                    onChange={(e) => handleTournamentChange('tournament_info', e.target.value)}
-                    rows={3}
-                    placeholder={"e.g. Team photos will be taken before tee-off.\nGolf attire required.\nBanquet immediately follows play."}
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <p className="mt-1 text-xs sm:text-sm text-gray-500">Shown anywhere registrants see tournament details. Preserves line breaks.</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Payment Instructions
-                  </label>
-                  <textarea
-                    value={tournamentSettings.payment_instructions}
-                    onChange={(e) => handleTournamentChange('payment_instructions', e.target.value)}
-                    rows={2}
-                    placeholder="e.g. Payment will be processed securely online after registration."
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <p className="mt-1 text-xs sm:text-sm text-gray-500">Replaces the default payment options list on the public page</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Raffle Settings */}
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <h3 className="text-sm sm:text-md font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
-                <Gift className="w-5 h-5 text-accent-500 flex-shrink-0" />
-                Raffle Settings
-              </h3>
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    id="raffle_enabled"
-                    checked={tournamentSettings.raffle_enabled}
-                    onChange={(e) => handleTournamentChange('raffle_enabled', e.target.checked)}
-                    className="w-5 h-5 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
-                  />
-                  <label htmlFor="raffle_enabled" className="text-sm font-medium text-gray-700">
-                    Raffle Enabled
-                  </label>
-                </div>
-
-                {tournamentSettings.raffle_enabled && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Raffle Description
-                      </label>
-                      <textarea
-                        value={tournamentSettings.raffle_description}
-                        onChange={(e) => handleTournamentChange('raffle_description', e.target.value)}
-                        rows={3}
-                        placeholder="Description shown on public raffle page..."
-                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        id="raffle_include_with_registration"
-                        checked={tournamentSettings.raffle_include_with_registration}
-                        onChange={(e) => handleTournamentChange('raffle_include_with_registration', e.target.checked)}
-                        className="w-5 h-5 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
-                      />
-                      <label htmlFor="raffle_include_with_registration" className="text-sm font-medium text-gray-700">
-                        Include complimentary raffle tickets with registration
-                      </label>
-                    </div>
-                    <p className="text-xs text-gray-500 -mt-2 ml-8">
-                      {tournamentSettings.raffle_include_with_registration
-                        ? 'Registrants automatically receive complimentary raffle tickets when they pay.'
-                        : 'No complimentary tickets with registration. Tickets can be purchased as an add-on during registration or at the event.'}
-                    </p>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Individual Ticket Price ($)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={tournamentSettings.raffle_ticket_price_cents ? (parseInt(tournamentSettings.raffle_ticket_price_cents) / 100).toFixed(2) : ''}
-                        onChange={(e) => {
-                          const cents = Math.round(parseFloat(e.target.value || '0') * 100);
-                          handleTournamentChange('raffle_ticket_price_cents', cents.toString());
-                        }}
-                        placeholder="5.00"
-                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                      <p className="mt-1 text-xs sm:text-sm text-gray-500">Default price per individual ticket (used for manual ticket creation).</p>
-                    </div>
-
-                    {/* Raffle Bundles Config */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Ticket Bundles (for point-of-sale)
-                      </label>
-                      <p className="text-xs text-gray-500 mb-3">Configure quick-tap bundle options for selling raffle tickets at the event.</p>
-                      <div className="space-y-2">
-                        {tournamentSettings.raffle_bundles.map((bundle, idx) => {
-                          const individualPriceCents = parseInt(tournamentSettings.raffle_ticket_price_cents || '500') || 500;
-                          const bundleTicketCents = effectiveBundlePriceCents(bundle);
-                          const expectedBundleCents = individualPriceCents * bundle.quantity;
-                          const hasBundleDiscount = bundle.quantity > 0 && bundle.price_cents !== expectedBundleCents;
-
-                          return (
-                            <div key={idx} className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="number"
-                                  value={bundle.quantity}
-                                  onChange={(e) => {
-                                    const updated = [...tournamentSettings.raffle_bundles];
-                                    updated[idx] = { ...bundle, quantity: parseInt(e.target.value) || 0 };
-                                    handleTournamentChange('raffle_bundles', updated);
-                                  }}
-                                  placeholder="Qty"
-                                  className="w-20 px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                                />
-                                <span className="text-sm text-gray-500">tickets for</span>
-                                <div className="relative">
-                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">$</span>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={(bundle.price_cents / 100).toFixed(2)}
-                                    onChange={(e) => {
-                                      const updated = [...tournamentSettings.raffle_bundles];
-                                      const cents = Math.round(parseFloat(e.target.value || '0') * 100);
-                                      updated[idx] = { ...bundle, price_cents: cents };
-                                      handleTournamentChange('raffle_bundles', updated);
-                                    }}
-                                    placeholder="0.00"
-                                    className="w-24 px-3 py-2 pl-7 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                                  />
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const updated = tournamentSettings.raffle_bundles.filter((_, i) => i !== idx);
-                                    handleTournamentChange('raffle_bundles', updated);
-                                  }}
-                                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
-                              <p className={`ml-1 text-xs ${hasBundleDiscount ? 'text-amber-600' : 'text-gray-500'}`}>
-                                Effective {formatMoney(bundleTicketCents)}/ticket
-                                {hasBundleDiscount ? ` vs ${formatMoney(individualPriceCents)}/individual ticket` : ''}
-                              </p>
-                            </div>
-                          );
-                        })}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const updated = [...tournamentSettings.raffle_bundles, { quantity: 10, price_cents: 5000, label: '' }];
-                            handleTournamentChange('raffle_bundles', updated);
-                          }}
-                          className="flex items-center gap-1.5 text-sm text-brand-600 hover:text-brand-700 font-medium mt-1"
-                        >
-                          <Plus className="w-4 h-4" />
-                          Add bundle
-                        </button>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Draw Time
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={tournamentSettings.raffle_draw_time ? tournamentSettings.raffle_draw_time.slice(0, 16) : ''}
-                        onChange={(e) => handleTournamentChange('raffle_draw_time', e.target.value)}
-                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Sponsor Settings */}
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <h3 className="text-sm sm:text-md font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-brand-500 flex-shrink-0" />
-                Sponsor Settings
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Sponsor Slot Edit Deadline
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={tournamentSettings.sponsor_edit_deadline ? tournamentSettings.sponsor_edit_deadline.slice(0, 16) : ''}
-                    onChange={(e) => handleTournamentChange('sponsor_edit_deadline', e.target.value)}
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <p className="mt-1 text-xs sm:text-sm text-gray-500">After this time, sponsors can no longer edit their player slots</p>
-                </div>
-
-                <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-gray-700">
-                  <input type="checkbox" className="h-5 w-5 accent-brand-600"
-                    checked={tournamentSettings.show_public_sponsors}
-                    onChange={(event) => handleTournamentChange('show_public_sponsors', event.target.checked)} />
-                  Show sponsors on the public tournament page
-                </label>
-                <label className="block space-y-1 text-sm font-medium text-gray-700">
-                  <span>Sponsor Wall Title</span>
-                  <input value={tournamentSettings.sponsor_wall_title} placeholder="Our Sponsors"
-                    onChange={(event) => handleTournamentChange('sponsor_wall_title', event.target.value)}
-                    className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-500" />
-                </label>
-
-                {/* Sponsor Tier Configuration */}
-                <SponsorTierEditor
-                  tiers={tournamentSettings.sponsor_tiers}
-                  onChange={(updated) => setTournamentSettings(prev => prev ? { ...prev, sponsor_tiers: updated } : null)}
-                />
-              </div>
-            </div>
-
-            {/* IRS >$75 Quid-Pro-Quo Tax Receipts (default OFF) */}
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <div className="flex items-start justify-between gap-4 mb-3 sm:mb-4">
-                <div>
-                  <h3 className="text-sm sm:text-md font-semibold text-gray-900 flex items-center gap-2">
-                    <Shield className="w-5 h-5 text-brand-500 flex-shrink-0" />
-                    IRS Quid-Pro-Quo Tax Receipts (&gt;$75 FMV)
-                  </h3>
-                  <p className="text-xs sm:text-sm text-gray-500 mt-1">
-                    Disabled by default. Enable only after your treasurer or CPA confirms your EIN, Fair Market Value (FMV), and receipt wording.
-                  </p>
-                </div>
-                <label className="inline-flex items-center gap-2 cursor-pointer shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={tournamentSettings.tax_receipt_enabled}
-                    onChange={(e) => handleTournamentChange('tax_receipt_enabled', e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
-                  />
-                  <span className="text-sm font-medium text-gray-700">
-                    {tournamentSettings.tax_receipt_enabled ? 'Enabled' : 'Disabled'}
-                  </span>
-                </label>
-              </div>
-
-              {tournamentSettings.tax_receipt_enabled && (
-                <div className="space-y-4 pt-2 border-t border-gray-100">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Legal Tax-Exempt Organization Name
-                      </label>
-                      <input
-                        type="text"
-                        value={tournamentSettings.tax_org_name}
-                        onChange={(e) => handleTournamentChange('tax_org_name', e.target.value)}
-                        placeholder="Legal 501(c)(3) / association name"
-                        className="w-full px-3 sm:px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        EIN / Tax ID
-                      </label>
-                      <input
-                        type="text"
-                        value={tournamentSettings.tax_org_ein}
-                        onChange={(e) => handleTournamentChange('tax_org_ein', e.target.value)}
-                        placeholder="XX-XXXXXXX"
-                        className="w-full px-3 sm:px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Fair Market Value (FMV) per Player (USD)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={tournamentSettings.fmv_per_player_dollars}
-                      onChange={(e) => handleTournamentChange('fmv_per_player_dollars', e.target.value)}
-                      placeholder="0.00"
-                      className="w-full sm:w-56 px-3 sm:px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">
-                      Used to calculate the deductible excess (payment minus FMV) for registrations and sponsorships over $75.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Custom Receipt Disclaimer
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={tournamentSettings.tax_receipt_disclaimer}
-                      onChange={(e) => handleTournamentChange('tax_receipt_disclaimer', e.target.value)}
-                      placeholder="Optional disclaimer text approved by your treasurer or CPA"
-                      className="w-full px-3 sm:px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            </>
-          )}
-
-        </div>
-
-        {/* Admin Management Section */}
-        <div className="mt-6 sm:mt-8 bg-white rounded-2xl shadow-sm border border-gray-200 p-4 sm:p-6 lg:p-8">
-          <div className="flex items-start gap-3 mb-5 sm:mb-6">
-            <div className="p-2 bg-brand-50 rounded-lg flex-shrink-0">
-              <Users className="w-5 h-5 text-brand-600" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-base sm:text-lg font-bold text-gray-900">Team Members</h2>
-              <p className="text-xs sm:text-sm text-gray-500">Invite admins or volunteers by email. Volunteers can only access Check-In and Raffle ticket sales.</p>
-            </div>
-          </div>
-
-          {/* Add member */}
-          <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 mb-5 sm:mb-6">
-            <input
-              type="email"
-              value={newMemberEmail}
-              onChange={(e) => setNewMemberEmail(e.target.value)}
-              placeholder="Enter email address..."
-              className="flex-1 px-3 sm:px-4 py-2.5 border border-gray-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
-              onKeyDown={(e) => e.key === 'Enter' && handleAddMember()}
-            />
-            <select
-              value={newMemberRole}
-              onChange={(e) => setNewMemberRole(e.target.value as 'admin' | 'volunteer')}
-              className="px-3 py-2.5 border border-gray-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 flex-shrink-0"
-            >
-              <option value="admin">Admin</option>
-              <option value="volunteer">Volunteer</option>
-            </select>
-            <button
-              onClick={handleAddMember}
-              disabled={addingMember || !newMemberEmail.trim()}
-              className="flex items-center justify-center gap-2 px-5 py-2.5 bg-brand-600 hover:bg-brand-700 disabled:bg-gray-300 text-white rounded-xl font-medium text-sm transition-colors flex-shrink-0"
-            >
-              {addingMember ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <UserPlus className="w-4 h-4" />
-              )}
-              Invite {newMemberRole === 'volunteer' ? 'Volunteer' : 'Admin'}
-            </button>
-          </div>
-
-          {/* Member list */}
-          <div className="space-y-2.5 sm:space-y-3">
-            {members.length === 0 ? (
-              <p className="text-gray-500 text-sm text-center py-4">No team members configured yet.</p>
-            ) : (
-              members.map((member) => (
-                <div
-                  key={member.id}
-                  className="flex items-center justify-between gap-2 p-3 sm:p-4 bg-gray-50 rounded-xl"
-                >
-                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-                    <div className="p-1.5 sm:p-2 bg-white rounded-lg border border-gray-200 flex-shrink-0">
-                      {member.role === 'admin' ? (
-                        <Crown className="w-4 h-4 text-amber-500" />
-                      ) : member.role === 'volunteer' ? (
-                        <Users className="w-4 h-4 text-emerald-500" />
-                      ) : (
-                        <Shield className="w-4 h-4 text-gray-400" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                        <p className="font-medium text-sm sm:text-base text-gray-900 truncate">{member.name}</p>
-                        {member.invitation_pending && (
-                          <span className="text-[10px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex items-center gap-0.5 flex-shrink-0">
-                            <Clock className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                            Pending
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs sm:text-sm text-gray-500 truncate">{member.email}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-                    <span className={`text-[10px] sm:text-xs font-medium px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full capitalize ${
-                      member.role === 'admin'
-                        ? 'bg-brand-100 text-brand-700'
-                        : member.role === 'volunteer'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-gray-200 text-gray-600'
-                    }`}>
-                      {member.role}
-                    </span>
-                    {member.invitation_pending && (
-                      <button
-                        onClick={() => handleResendInvite(member.id)}
-                        disabled={resendingInvite === member.id}
-                        className="p-1 sm:p-1.5 text-brand-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors disabled:opacity-50"
-                        title="Resend invitation email"
-                      >
-                        {resendingInvite === member.id ? (
-                          <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
-                        ) : (
-                          <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                        )}
-                      </button>
-                    )}
-                    {!(member.role === 'admin' && members.filter(m => m.role === 'admin').length <= 1) && (
-                      <button
-                        onClick={() => handleRemoveMember(member.id)}
-                        className="p-1 sm:p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Remove member"
-                      >
-                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </main>
-
-      <div className="pointer-events-none fixed inset-x-4 bottom-4 z-40 sm:inset-x-6 lg:inset-x-auto lg:right-8">
-        <div className="pointer-events-auto flex items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white/96 px-4 py-3 shadow-[0_20px_60px_rgba(15,23,42,0.18)] backdrop-blur lg:min-w-[420px]">
-          <Link
-            to={"/admin"}
-            className="px-3 py-2 text-sm font-medium text-gray-600 transition hover:text-gray-900"
-          >
-            Cancel
-          </Link>
-          <button
-            onClick={handleSaveAll}
-            disabled={saving}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:bg-gray-300 sm:px-5"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4" />
-                Save All Settings
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
+  if ([draft.website_url, draft.offseason_cta_url].some((url) => url && !validUrl.test(url))) {
+    return { tab: 'event', message: 'Enter web addresses that start with https:// or http://.' };
+  }
+  if ([draft.primary_color, draft.accent_color, event?.primary_color_override, event?.accent_color_override]
+    .some((color) => color?.trim() && !validColor.test(color.trim()))) {
+    return { tab: 'look', message: 'Enter brand colors in the format #1E3A5F.' };
+  }
+  if (event && [event.entry_fee_dollars, event.employee_entry_fee_dollars, event.walkin_fee]
+    .some((price) => price && (!Number.isFinite(Number(price)) || Number(price) < 0))) {
+    return { tab: 'registration', message: 'Enter fees of zero or more.' };
+  }
+  if (event && (Number(event.raffle_ticket_price_dollars) < 0 || event.raffle_bundles.some((bundle) => bundle.price_cents < 0))) {
+    return { tab: 'raffle', message: 'Enter raffle prices of zero or more.' };
+  }
+  return null;
+}
 
 export default OrgSettingsPage;

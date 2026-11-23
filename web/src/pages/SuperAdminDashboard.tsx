@@ -1,3 +1,4 @@
+import { useOrganizationStore } from '../stores/organizationStore';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -11,13 +12,12 @@ import {
   X,
 } from 'lucide-react';
 import { api, type Organization, type OrganizationDomain } from '../services/api';
-import { useOrganizationStore } from '../stores/organizationStore';
 import { useAdmin } from '../contexts';
 
 export const SuperAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { isSuperAdmin } = useAdmin();
-  const { setOrganization, setAccessibleOrganizations } = useOrganizationStore();
+  const { setAccessibleOrganizations } = useOrganizationStore();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -123,8 +123,7 @@ export const SuperAdminDashboard: React.FC = () => {
   };
 
   const handleSwitchOrganization = (org: Organization) => {
-    setOrganization(org);
-    navigate('/admin');
+    navigate({ pathname: '/admin', search: new URLSearchParams({ org: org.slug }).toString() });
   };
 
   if (!isSuperAdmin) {

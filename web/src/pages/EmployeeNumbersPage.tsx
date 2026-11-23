@@ -1,3 +1,5 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
+import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -36,6 +38,7 @@ import {
 type StatusFilter = 'all' | 'available' | 'used';
 
 export const EmployeeNumbersPage: React.FC = () => {
+  const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
   const { tournaments } = useTournament();
@@ -76,6 +79,8 @@ export const EmployeeNumbersPage: React.FC = () => {
     [bulkText]
   );
 
+  const startRefresh = useLatestRequest(`${tournament?.id}/${employeePricingEnabled}/${searchTerm}/${statusFilter}`);
+
   const fetchEmployeeNumbers = useCallback(async () => {
     if (!tournament?.id || !employeePricingEnabled) {
       setLoading(false);
@@ -83,20 +88,25 @@ export const EmployeeNumbersPage: React.FC = () => {
     }
 
     setLoading(true);
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
+
     try {
       const data = await api.getEmployeeNumbers({
         tournament_id: tournament.id,
         search: searchTerm.trim() || undefined,
         status: statusFilter,
       });
+      if (!isCurrent()) return;
       setRecords(data.employee_numbers);
       setStats(data.stats);
     } catch (err) {
+      if (!isCurrent()) return;
       toast.error(err instanceof Error ? err.message : 'Failed to load employee numbers');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [tournament?.id, employeePricingEnabled, searchTerm, statusFilter]);
+  }, [tournament?.id, employeePricingEnabled, searchTerm, statusFilter, startRefresh]);
 
   useEffect(() => {
     fetchEmployeeNumbers();
@@ -172,7 +182,12 @@ export const EmployeeNumbersPage: React.FC = () => {
   };
 
   const handleRelease = async (record: EmployeeNumberRecord) => {
-    if (!confirm(`Release employee number ${record.employee_number}? It will become available again.`)) {
+    if (!await requestConfirmation({
+      title: 'Release employee number?',
+      description: `Employee number ${record.employee_number} will become available again.`,
+      confirmLabel: 'Release number',
+      tone: 'danger',
+    })) {
       return;
     }
 
@@ -193,7 +208,12 @@ export const EmployeeNumbersPage: React.FC = () => {
       ? `${record.employee_number} is currently claimed${record.used_by_golfer_name ? ` by ${record.used_by_golfer_name}` : ''}. Release and permanently delete it?`
       : `Delete employee number ${record.employee_number}?`;
 
-    if (!confirm(message)) return;
+    if (!await requestConfirmation({
+      title: 'Delete employee number?',
+      description: message,
+      confirmLabel: 'Delete number',
+      tone: 'danger',
+    })) return;
 
     setBusyId(record.id);
     try {
@@ -246,6 +266,7 @@ export const EmployeeNumbersPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {confirmationDialog}
       {/* Header */}
       <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

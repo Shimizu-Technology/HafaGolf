@@ -1,3 +1,5 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
+import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Check,
@@ -32,29 +34,41 @@ export const SponsorTiersAdminPanel: React.FC<SponsorTiersAdminPanelProps> = ({
   orgSlug,
   tournamentSlug,
 }) => {
+  const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const [tiers, setTiers] = useState<PricedSponsorTier[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingTier, setEditingTier] = useState<PricedSponsorTier | null>(null);
 
+  const startRefresh = useLatestRequest(String(tournamentId));
+
   const loadTiers = useCallback(async () => {
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
     setLoading(true);
     try {
       const res = await api.getSponsorTiers(tournamentId);
+      if (!isCurrent()) return;
       setTiers(res.sponsor_tiers || []);
     } catch (err) {
+      if (!isCurrent()) return;
       toast.error(err instanceof Error ? err.message : 'Failed to load sponsor tiers');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [tournamentId]);
+  }, [startRefresh, tournamentId]);
 
   useEffect(() => {
     loadTiers();
   }, [loadTiers]);
 
   const handleDelete = async (tier: PricedSponsorTier) => {
-    if (!confirm(`Delete sponsor tier "${tier.label}"? Existing sponsors will remain intact.`)) return;
+    if (!await requestConfirmation({
+      title: 'Delete sponsor tier?',
+      description: `Remove the “${tier.label}” tier. Existing sponsors will remain intact.`,
+      confirmLabel: 'Delete tier',
+      tone: 'danger',
+    })) return;
     try {
       await api.deleteSponsorTier(tournamentId, tier.id);
       toast.success('Sponsor tier deleted');
@@ -69,6 +83,7 @@ export const SponsorTiersAdminPanel: React.FC<SponsorTiersAdminPanelProps> = ({
 
   return (
     <div className="space-y-5">
+      {confirmationDialog}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white rounded-xl border border-gray-200 p-4 sm:p-5">
         <div>
           <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">

@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useOrganizationStore } from '../stores/organizationStore';
 import { api } from '../services/api';
 import type { Organization } from '../stores/organizationStore';
@@ -54,7 +54,8 @@ export function OrganizationProvider({
   mode = 'public',
 }: OrganizationProviderProps) {
   const { orgSlug: paramOrgSlug } = useParams<{ orgSlug: string }>();
-  const explicitSlug = propOrgSlug || paramOrgSlug || null;
+  const [searchParams] = useSearchParams();
+  const explicitSlug = propOrgSlug || (mode === 'admin' ? searchParams.get('org') : paramOrgSlug) || null;
   const navigate = useNavigate();
   const {
     organization,
@@ -66,36 +67,57 @@ export function OrganizationProvider({
     error,
   } = useOrganizationStore();
 
-  useApplyBranding(organization);
+  const [adminResolution, setAdminResolution] = useState<{
+    requestedSlug: string | null;
+    error: string | null;
+  } | null>(null);
+  const adminResolutionMatches = Boolean(adminResolution && (
+    adminResolution.requestedSlug === explicitSlug || (!explicitSlug && !adminResolution.error)
+  ));
+  const adminLoading = !adminResolutionMatches;
+  const adminError = adminResolutionMatches ? adminResolution?.error : null;
+
+  useApplyBranding(mode === 'admin' && (adminLoading || adminError) ? null : organization);
 
   useEffect(() => {
+    if (mode !== 'admin' || adminResolutionMatches) return;
+    let cancelled = false;
+
+    async function loadAdminOrganization() {
+      try {
+        const accessible = (await api.getAdminOrganizations()) as Organization[];
+        if (cancelled) return;
+
+        const storedSlug = useOrganizationStore.getState().organization?.slug;
+        const selected = selectAdminOrganization(accessible, storedSlug, explicitSlug);
+        setAccessibleOrganizations(accessible);
+        if (explicitSlug && selected?.slug !== explicitSlug) {
+          setAdminResolution({ requestedSlug: explicitSlug, error: 'You do not have access to the organization in this link.' });
+          return;
+        }
+
+        setOrganization(selected);
+        setAdminResolution({ requestedSlug: explicitSlug, error: null });
+      } catch (err: unknown) {
+        if (cancelled) return;
+        console.error('Failed to load accessible organizations:', err);
+        setAdminResolution({
+          requestedSlug: explicitSlug,
+          error: err instanceof Error ? err.message : 'Failed to load organizations',
+        });
+      }
+    }
+
+    void loadAdminOrganization();
+    return () => { cancelled = true; };
+  }, [adminResolutionMatches, explicitSlug, mode, setAccessibleOrganizations, setOrganization]);
+
+  useEffect(() => {
+    if (mode !== 'public') return;
     let cancelled = false;
 
     async function fetchOrganization() {
       const storedOrg = useOrganizationStore.getState().organization;
-
-      if (mode === 'admin') {
-        if (!storedOrg) {
-          setLoading(true);
-        }
-
-        try {
-          const accessible = (await api.getAdminOrganizations()) as Organization[];
-          if (cancelled) return;
-
-          setAccessibleOrganizations(accessible);
-          const selected = selectAdminOrganization(accessible, storedOrg?.slug, explicitSlug);
-          setOrganization(selected);
-        } catch (err: unknown) {
-          if (cancelled) return;
-          console.error('Failed to load accessible organizations:', err);
-          const message = err instanceof Error ? err.message : 'Failed to load organizations';
-          setError(message);
-        } finally {
-          if (!cancelled) setLoading(false);
-        }
-        return;
-      }
 
       const needsLoad = !storedOrg || (explicitSlug && storedOrg.slug !== explicitSlug);
       if (needsLoad) {
@@ -132,11 +154,11 @@ export function OrganizationProvider({
     return () => {
       cancelled = true;
     };
-  }, [explicitSlug, fallbackPath, mode, navigate, setAccessibleOrganizations, setError, setLoading, setOrganization]);
+  }, [explicitSlug, fallbackPath, mode, navigate, setError, setLoading, setOrganization]);
 
-  if (isLoading && !organization) {
+  if (mode === 'admin' ? adminLoading : isLoading && !organization) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div data-static-flow={mode === 'admin' ? true : undefined} role="status" className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600 mx-auto"></div>
           <p className="mt-4 text-gray-600">Loading...</p>
@@ -145,7 +167,7 @@ export function OrganizationProvider({
     );
   }
 
-  if (error && !organization) {
+  if (mode === 'admin' ? adminError : error && !organization) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
         <div className="text-center max-w-md mx-auto px-6">
@@ -157,14 +179,22 @@ export function OrganizationProvider({
           </h1>
           <p className="text-gray-500 mb-8 leading-relaxed">
             {mode === 'admin'
-              ? error
+              ? adminError
               : 'We could not find an organization configured for this address. Check the URL or contact your event organizer.'}
           </p>
           <button
-            onClick={() => navigate(mode === 'admin' ? '/admin/login' : '/')}
-            className="px-6 py-3 bg-brand-600 text-white rounded-xl font-semibold hover:bg-brand-700 transition-all shadow-lg"
+            onClick={() => {
+              if (mode === 'public') {
+                navigate('/');
+              } else if (explicitSlug) {
+                navigate('/admin');
+              } else {
+                setAdminResolution(null);
+              }
+            }}
+            className="min-h-[48px] rounded-xl bg-brand-600 px-6 py-3 font-semibold text-brand-foreground shadow-lg hover:bg-brand-700"
           >
-            {mode === 'admin' ? 'Back to Sign In' : 'Go Home'}
+            {mode === 'admin' ? (explicitSlug ? 'Back to dashboard' : 'Try again') : 'Go home'}
           </button>
         </div>
       </div>

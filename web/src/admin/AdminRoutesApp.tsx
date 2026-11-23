@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Navigate, Route, Routes, useParams, useSearchParams } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { ClerkProvider, useAuth, useUser } from '@clerk/react';
 import { usePostHog } from 'posthog-js/react';
 import { AlertTriangle } from 'lucide-react';
@@ -83,19 +83,18 @@ function PostHogClerkIdentitySync() {
 
 function AdminTournamentShell({ children }: { children: React.ReactNode }) {
   const { organization } = useOrganization();
-  return <TournamentProvider orgSlug={organization?.slug}>{children}</TournamentProvider>;
+  return <TournamentProvider key={organization?.id} orgSlug={organization?.slug}>{children}</TournamentProvider>;
 }
 
-function AdminShellPage({ children }: { children: React.ReactNode }) {
-  const [searchParams] = useSearchParams();
-  const requestedOrgSlug = searchParams.get('org') || undefined;
+function AdminShellPage() {
+  const { pathname } = useLocation();
 
   return (
     <AdminProvider>
       <ProtectedRoute>
-        <OrganizationProvider mode="admin" orgSlug={requestedOrgSlug} fallbackPath="">
+        <OrganizationProvider mode="admin" fallbackPath="">
           <AdminTournamentShell>
-            <AdminLayout>{children}</AdminLayout>
+            <AdminLayout><Outlet key={pathname} /></AdminLayout>
           </AdminTournamentShell>
         </OrganizationProvider>
       </ProtectedRoute>
@@ -103,9 +102,10 @@ function AdminShellPage({ children }: { children: React.ReactNode }) {
   );
 }
 
-function LegacyTournamentRedirect({ suffix = '' }: { suffix?: string }) {
+function LegacyTournamentRedirect({ suffix = '', fallbackPath = '/admin/events' }: { suffix?: string; fallbackPath?: string }) {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
-  return <Navigate to={tournamentSlug ? `/admin/events/${tournamentSlug}${suffix}` : '/admin/events'} replace />;
+  const { search } = useLocation();
+  return <Navigate to={{ pathname: tournamentSlug ? `/admin/events/${tournamentSlug}${suffix}` : fallbackPath, search }} replace />;
 }
 
 export default function AdminRoutesApp() {
@@ -131,25 +131,27 @@ export default function AdminRoutesApp() {
         <PostHogClerkIdentitySync />
         <Routes>
           <Route path="login" element={<AdminLoginPage />} />
-          <Route index element={<AdminShellPage><OrgAdminDashboard /></AdminShellPage>} />
-          <Route path="organizations" element={<AdminShellPage><AdminOnlyRoute><SuperAdminDashboard /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events" element={<AdminShellPage><AdminOnlyRoute><EventsManagementPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events/new" element={<AdminShellPage><AdminOnlyRoute><CreateTournamentPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events/:tournamentSlug" element={<AdminShellPage><AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events/:tournamentSlug/registrations" element={<AdminShellPage><AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events/:tournamentSlug/payments" element={<AdminShellPage><AdminOnlyRoute><PaymentReconciliationPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events/:tournamentSlug/checkin" element={<AdminShellPage><OrgCheckInPage /></AdminShellPage>} />
-          <Route path="events/:tournamentSlug/groups" element={<AdminShellPage><AdminOnlyRoute><GroupManagementPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events/:tournamentSlug/raffle" element={<AdminShellPage><RaffleManagementPage /></AdminShellPage>} />
-          <Route path="events/:tournamentSlug/sponsors" element={<AdminShellPage><AdminOnlyRoute><SponsorManagementPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events/:tournamentSlug/employee-numbers" element={<AdminShellPage><AdminOnlyRoute><EmployeeNumbersPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events/:tournamentSlug/settings" element={<AdminShellPage><AdminOnlyRoute><OrgSettingsPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="events/:tournamentSlug/reports" element={<AdminShellPage><AdminOnlyRoute><ReportsPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="sponsors" element={<AdminShellPage><AdminOnlyRoute><SponsorsOverviewPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="settings" element={<AdminShellPage><AdminOnlyRoute><OrgSettingsPage /></AdminOnlyRoute></AdminShellPage>} />
-          <Route path="activity" element={<AdminShellPage><AdminOnlyRoute><ActivityLogPage /></AdminOnlyRoute></AdminShellPage>} />
+          <Route element={<AdminShellPage />}>
+            <Route index element={<OrgAdminDashboard />} />
+            <Route path="organizations" element={<AdminOnlyRoute><SuperAdminDashboard /></AdminOnlyRoute>} />
+            <Route path="events" element={<AdminOnlyRoute><EventsManagementPage /></AdminOnlyRoute>} />
+            <Route path="events/new" element={<AdminOnlyRoute><CreateTournamentPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug" element={<AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/registrations" element={<AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/payments" element={<AdminOnlyRoute><PaymentReconciliationPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/checkin" element={<OrgCheckInPage />} />
+            <Route path="events/:tournamentSlug/groups" element={<AdminOnlyRoute><GroupManagementPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/raffle" element={<RaffleManagementPage />} />
+            <Route path="events/:tournamentSlug/sponsors" element={<AdminOnlyRoute><SponsorManagementPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/employee-numbers" element={<AdminOnlyRoute><EmployeeNumbersPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/settings" element={<AdminOnlyRoute><OrgSettingsPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/reports" element={<AdminOnlyRoute><ReportsPage /></AdminOnlyRoute>} />
+            <Route path="sponsors" element={<AdminOnlyRoute><SponsorsOverviewPage /></AdminOnlyRoute>} />
+            <Route path="settings" element={<AdminOnlyRoute><OrgSettingsPage /></AdminOnlyRoute>} />
+            <Route path="activity" element={<AdminOnlyRoute><ActivityLogPage /></AdminOnlyRoute>} />
+          </Route>
 
-          <Route path="tournaments/new" element={<Navigate to="/admin/events/new" replace />} />
+          <Route path="tournaments/new" element={<LegacyTournamentRedirect fallbackPath="/admin/events/new" />} />
           <Route path="tournaments/:tournamentSlug" element={<LegacyTournamentRedirect />} />
           <Route path="tournaments/:tournamentSlug/checkin" element={<LegacyTournamentRedirect suffix="/checkin" />} />
           <Route path="tournaments/:tournamentSlug/payments" element={<LegacyTournamentRedirect suffix="/payments" />} />

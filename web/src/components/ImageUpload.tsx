@@ -1,4 +1,4 @@
-import React, { useState, useRef, useId } from 'react';
+import React, { useState, useRef, useId, useLayoutEffect } from 'react';
 import { Upload, X, Loader2, Image as ImageIcon } from 'lucide-react';
 import { resolvePublicImageUrl } from '../utils/branding';
 
@@ -16,6 +16,7 @@ interface ImageUploadProps {
   value: string;           // Current URL
   onChange: (url: string) => void;
   getToken: () => Promise<string | null>;
+  onUploadStateChange?: (uploading: boolean) => void;
   placeholder?: string;
   helpText?: string;
   accept?: string;
@@ -29,6 +30,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   value,
   onChange,
   getToken,
+  onUploadStateChange,
   placeholder = 'Upload an image or paste a URL',
   helpText,
   accept = 'image/jpeg,image/png,image/gif,image/webp,image/avif',
@@ -41,8 +43,17 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   const [dragOver, setDragOver] = useState(false);
   const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadRef = useRef<AbortController | null>(null);
+
+  useLayoutEffect(() => () => {
+    if (!uploadRef.current) return;
+    uploadRef.current.abort();
+    uploadRef.current = null;
+    onUploadStateChange?.(false);
+  }, [onUploadStateChange]);
 
   const handleUpload = async (file: File) => {
+    if (uploadRef.current) return;
     setError(null);
 
     // Validate size
@@ -59,9 +70,13 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
       return;
     }
 
+    const upload = new AbortController();
+    uploadRef.current = upload;
     setUploading(true);
+    onUploadStateChange?.(true);
     try {
       const token = await getToken();
+      if (upload.signal.aborted) return;
       const formData = new FormData();
       formData.append('file', file);
 
@@ -69,6 +84,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
         `${import.meta.env.VITE_API_URL}/api/v1/admin/uploads`,
         {
           method: 'POST',
+          signal: upload.signal,
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
           body: formData,
         }
@@ -80,11 +96,15 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
       }
 
       const data = await response.json();
-      onChange(data.url);
+      if (!upload.signal.aborted) onChange(data.url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
+      if (!upload.signal.aborted) setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
-      setUploading(false);
+      if (uploadRef.current === upload) {
+        uploadRef.current = null;
+        setUploading(false);
+        onUploadStateChange?.(false);
+      }
     }
   };
 
@@ -139,7 +159,8 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
           <button
             type="button"
             onClick={handleClear}
-            className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full border border-white/60 bg-red-500 text-white shadow-md hover:bg-red-600"
+            disabled={uploading}
+            className="absolute right-3 top-3 flex h-12 w-12 items-center justify-center rounded-full border border-white/60 bg-red-500 text-white shadow-md hover:bg-red-600"
             aria-label={`Remove ${label}`}
           >
             <X className="w-3.5 h-3.5" />
@@ -156,7 +177,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         className={`
-          relative w-full border-2 border-dashed rounded-lg p-4 text-center cursor-pointer
+          relative min-h-[48px] w-full border-2 border-dashed rounded-lg p-4 text-center cursor-pointer
           ${dragOver 
             ? 'border-green-500 bg-green-50' 
             : 'border-gray-300 hover:border-gray-400 bg-white'
@@ -186,9 +207,10 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
           type="text"
           id={inputId}
           value={value}
+          disabled={uploading}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Or paste image URL directly"
-          className="min-w-0 min-h-11 flex-1 text-base border border-gray-300 rounded-md px-3 py-1.5 text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500"
+          className="min-w-0 min-h-[48px] flex-1 text-base border border-gray-300 rounded-md px-3 py-1.5 text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500"
         />
       </div>
 

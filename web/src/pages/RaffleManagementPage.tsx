@@ -1,3 +1,5 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
+import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '@clerk/react';
@@ -582,6 +584,7 @@ function SellTicketsTab({
 }
 
 export const RaffleManagementPage: React.FC = () => {
+  const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
   const { getToken } = useAuth();
@@ -701,17 +704,25 @@ export const RaffleManagementPage: React.FC = () => {
     }
   }, [tournament?.id, getToken]);
 
+  const startRefresh = useLatestRequest(`${organization?.slug}/${tournamentSlug}`);
+
   const fetchData = useCallback(async () => {
     if (!organization || !tournamentSlug) return;
 
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
+
     try {
       const token = await getToken();
+      if (!isCurrent()) return;
       
       const tournamentRes = await fetch(
         `${import.meta.env.VITE_API_URL}/api/v1/admin/organizations/${organization.slug}/tournaments/${tournamentSlug}`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
+      if (!tournamentRes.ok) throw new Error('Failed to load event');
       const tournamentData = await tournamentRes.json();
+      if (!isCurrent()) return;
       const t = tournamentData.tournament || tournamentData;
       const tid = t.id;
       setTournament({ ...t, id: tid });
@@ -720,14 +731,17 @@ export const RaffleManagementPage: React.FC = () => {
         `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tid}/raffle/prizes`,
         { cache: 'no-store' }
       );
+      if (!prizesRes.ok) throw new Error('Failed to load prizes');
       const prizesData = await prizesRes.json();
+      if (!isCurrent()) return;
       setPrizes(prizesData.prizes || []);
     } catch {
+      if (!isCurrent()) return;
       toast.error('Failed to load raffle data');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [organization, tournamentSlug, getToken]);
+  }, [organization, tournamentSlug, getToken, startRefresh]);
 
   useEffect(() => {
     fetchData();
@@ -798,7 +812,12 @@ export const RaffleManagementPage: React.FC = () => {
   };
 
   const handleResetPrize = async (prize: Prize) => {
-    if (!confirm(`Reset "${prize.name}"? This will undo the draw.`)) return;
+    if (!await requestConfirmation({
+      title: 'Reset prize draw?',
+      description: `This will clear the winning ticket for “${prize.name}”.`,
+      confirmLabel: 'Reset draw',
+      tone: 'danger',
+    })) return;
 
     setActionLoading(`reset-${prize.id}`);
     try {
@@ -844,7 +863,12 @@ export const RaffleManagementPage: React.FC = () => {
   };
 
   const handleDeletePrize = async (prize: Prize) => {
-    if (!confirm(`Delete "${prize.name}"?`)) return;
+    if (!await requestConfirmation({
+      title: 'Delete prize?',
+      description: `“${prize.name}” will be removed from the raffle.`,
+      confirmLabel: 'Delete prize',
+      tone: 'danger',
+    })) return;
 
     try {
       const token = await getToken();
@@ -1068,7 +1092,11 @@ export const RaffleManagementPage: React.FC = () => {
     const { buyerLabel, emailValue, phoneValue } = validated;
 
     const phoneReadback = phoneValue ? ` (${formatPhoneReadback(phoneValue)})` : '';
-    if (!confirm(`Sell ${bundle.quantity} tickets for $${(bundle.price_cents / 100).toFixed(0)} to "${buyerLabel}"${phoneReadback}?`)) return;
+    if (!await requestConfirmation({
+      title: 'Confirm raffle sale',
+      description: `Sell ${bundle.quantity} tickets for $${(bundle.price_cents / 100).toFixed(2)} to “${buyerLabel}”${phoneReadback}?`,
+      confirmLabel: 'Sell tickets',
+    })) return;
     setSellLoading(true);
     try {
       const token = await getToken();
@@ -1127,7 +1155,11 @@ export const RaffleManagementPage: React.FC = () => {
     const { buyerLabel, emailValue, phoneValue } = validated;
 
     const phoneReadback = phoneValue ? ` (${formatPhoneReadback(phoneValue)})` : '';
-    if (!confirm(`Sell ${quantity} tickets for $${(priceCents / 100).toFixed(2)} to "${buyerLabel}"${phoneReadback}?`)) return;
+    if (!await requestConfirmation({
+      title: 'Confirm raffle sale',
+      description: `Sell ${quantity} tickets for $${(priceCents / 100).toFixed(2)} to “${buyerLabel}”${phoneReadback}?`,
+      confirmLabel: 'Sell tickets',
+    })) return;
     setSellLoading(true);
     try {
       const token = await getToken();
@@ -1181,7 +1213,11 @@ export const RaffleManagementPage: React.FC = () => {
 
   const handleResendNotification = async (prize: Prize) => {
     if (!tournament) return;
-    if (!confirm(`Resend winner notification to ${prize.winner?.name}?`)) return;
+    if (!await requestConfirmation({
+      title: 'Resend winner notification?',
+      description: `Send another notification to ${prize.winner?.name || "the winner"}.`,
+      confirmLabel: 'Resend notification',
+    })) return;
 
     setActionLoading(`resend-${prize.id}`);
     try {
@@ -1253,6 +1289,7 @@ export const RaffleManagementPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      {confirmationDialog}
       <section 
         className="rounded-[28px] px-4 sm:px-6 py-4 sm:py-5 text-white shadow-sm lg:px-8"
         style={{ backgroundColor: organization?.primary_color || '#7c3aed' }}

@@ -1,3 +1,5 @@
+import { useLatestRequest } from '../hooks/useLatestRequest';
+import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '@clerk/react';
@@ -109,6 +111,7 @@ function sortSponsorsForDisplay(sponsors: Sponsor[], courseConfigs: CourseConfig
 }
 
 export const SponsorManagementPage: React.FC = () => {
+  const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
   const { getToken } = useAuth();
@@ -121,14 +124,22 @@ export const SponsorManagementPage: React.FC = () => {
   const [expandedSponsor, setExpandedSponsor] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'sponsors' | 'tiers' | 'donations'>('sponsors');
 
+  const startRefresh = useLatestRequest(`${organization?.slug}/${tournamentSlug}`);
+
   const fetchData = useCallback(async () => {
     if (!organization || !tournamentSlug) return;
+    const isCurrent = startRefresh();
+    if (!isCurrent()) return;
+
     try {
       const token = await getToken();
+      if (!isCurrent()) return;
       const tournamentRes = await fetch(
         `${import.meta.env.VITE_API_URL}/api/v1/organizations/${organization.slug}/tournaments/${tournamentSlug}`
       );
+      if (!tournamentRes.ok) throw new Error('Failed to load event');
       const tournamentData = await tournamentRes.json();
+      if (!isCurrent()) return;
       const tid = tournamentData.id || tournamentData.tournament?.id;
       setTournament({ ...tournamentData, id: tid, sponsor_tiers: tournamentData.sponsor_tiers });
 
@@ -136,14 +147,17 @@ export const SponsorManagementPage: React.FC = () => {
         `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tid}/sponsors`,
         { headers: token ? { 'Authorization': `Bearer ${token}` } : {} }
       );
+      if (!sponsorsRes.ok) throw new Error('Failed to load sponsors');
       const sponsorsData = await sponsorsRes.json();
+      if (!isCurrent()) return;
       setSponsors(sponsorsData.sponsors || []);
     } catch {
+      if (!isCurrent()) return;
       toast.error('Failed to load sponsors');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [organization, tournamentSlug, getToken]);
+  }, [organization, tournamentSlug, getToken, startRefresh]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -167,7 +181,12 @@ export const SponsorManagementPage: React.FC = () => {
   };
 
   const handleDelete = async (sponsor: Sponsor) => {
-    if (!confirm(`Delete sponsor "${sponsor.name}"?`)) return;
+    if (!await requestConfirmation({
+      title: 'Delete sponsor?',
+      description: `“${sponsor.name}” will be removed from this event’s sponsors.`,
+      confirmLabel: 'Delete sponsor',
+      tone: 'danger',
+    })) return;
     try {
       const token = await getToken();
       const res = await fetch(
@@ -197,6 +216,7 @@ export const SponsorManagementPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      {confirmationDialog}
       <section className="rounded-[28px] bg-brand-600 px-4 sm:px-6 py-4 sm:py-5 text-brand-foreground shadow-sm lg:px-8">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
