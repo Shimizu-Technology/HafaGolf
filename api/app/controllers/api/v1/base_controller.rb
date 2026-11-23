@@ -4,12 +4,13 @@ module Api
       include Authenticated
       around_action :with_tenant_rls_context
 
-      # Standardized error handling
+      # Standardized error handling (Rails evaluates rescue_from in reverse
+      # declaration order, so StandardError must be declared first).
+      rescue_from StandardError, with: :internal_server_error if Rails.env.production?
       rescue_from ActiveRecord::RecordNotFound, with: :record_not_found
       rescue_from ActiveRecord::RecordInvalid, with: :record_invalid
       rescue_from ActionController::ParameterMissing, with: :parameter_missing
       rescue_from ArgumentError, with: :bad_request_error
-      rescue_from StandardError, with: :internal_server_error if Rails.env.production?
 
       private
 
