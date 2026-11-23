@@ -57,6 +57,7 @@ class ActivityLog < ApplicationRecord
     raffle_prize_drawn
     raffle_prize_reset
     raffle_prize_claimed
+    raffle_prize_unclaimed
     raffle_draw_all
     raffle_draw_readiness_overridden
     raffle_winner_notification_resent

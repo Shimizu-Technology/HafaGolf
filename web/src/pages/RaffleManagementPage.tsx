@@ -51,6 +51,7 @@ import {
   type DeliveryBadgeMeta,
   type TicketDeliveryStatus,
 } from '../utils/raffleDelivery';
+import { RaffleConfirmSaleModal, type RaffleSaleDetails } from '../components/RaffleConfirmSaleModal';
 import { RaffleEditContactModal } from '../components/RaffleEditContactModal';
 import { RafflePreDrawModal, type PreDrawTarget } from '../components/RafflePreDrawModal';
 
@@ -192,6 +193,23 @@ const DEFAULT_BUNDLES: RaffleBundleDef[] = [
   { quantity: 25, price_cents: 10000, label: '$100 for 25 tickets' },
 ];
 
+const PAYMENT_METHODS = [
+  { value: 'swipe_simple', label: 'SwipeSimple' },
+  { value: 'cash', label: 'Cash' },
+  { value: 'check', label: 'Check' },
+  { value: 'card', label: 'Card' },
+  { value: 'comp', label: 'Comp' },
+] as const;
+
+type PaymentMethod = typeof PAYMENT_METHODS[number]['value'];
+
+interface PendingSale extends RaffleSaleDetails {
+  tournamentId: string;
+  priceCents: number;
+  paymentMethod: PaymentMethod;
+  bundle?: RaffleBundleDef;
+}
+
 interface SellTicketsTabProps {
   tournament: Tournament;
   sellBuyerName: string;
@@ -202,10 +220,15 @@ interface SellTicketsTabProps {
   onBuyerPhoneChange: (v: string) => void;
   sellBuyerPhoneConfirm: string;
   onBuyerPhoneConfirmChange: (v: string) => void;
-  sellPaymentMethod: string;
-  onPaymentMethodChange: (v: string) => void;
+  sellPaymentMethod: PaymentMethod;
+  onPaymentMethodChange: (v: PaymentMethod) => void;
+  sellReceipt: string;
+  onReceiptChange: (v: string) => void;
+  sellNotes: string;
+  onNotesChange: (v: string) => void;
+  selectedBundle?: RaffleBundleDef;
   sellLoading: boolean;
-  lastSale: { quantity: number; total: string; buyer: string; ticketNumbers?: string[] } | null;
+  lastSale: { quantity: number; total: string; buyer: string; ticketNumbers: string[]; custom: boolean } | null;
   onSellBundle: (bundle: RaffleBundleDef) => void;
   onSellCustom: (qty: number, priceCents: number) => void;
   stats: Stats | null;
@@ -263,6 +286,11 @@ function SellTicketsTab({
   onBuyerPhoneConfirmChange,
   sellPaymentMethod,
   onPaymentMethodChange,
+  sellReceipt,
+  onReceiptChange,
+  sellNotes,
+  onNotesChange,
+  selectedBundle,
   sellLoading,
   lastSale,
   onSellBundle,
@@ -271,10 +299,24 @@ function SellTicketsTab({
 }: SellTicketsTabProps) {
   const [customQty, setCustomQty] = useState('');
   const [customPrice, setCustomPrice] = useState('');
+  const buyerNameInputRef = useRef<HTMLInputElement>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!lastSale) return;
+    buyerNameInputRef.current?.focus();
+    if (lastSale.custom) {
+      setCustomQty('');
+      setCustomPrice('');
+    }
+  }, [lastSale]);
 
   const bundles = tournament.raffle_bundles?.length ? tournament.raffle_bundles : DEFAULT_BUNDLES;
   const ticketPriceCents = tournament.raffle_ticket_price_cents || 500;
-  const customQtyNumber = parseInt(customQty) || 0;
+  const customQtyNumber = Number(customQty);
+  const customPriceCents = Math.round(Number(customPrice) * 100);
+  const validCustomSale = Number.isSafeInteger(customQtyNumber) && customQtyNumber > 0 &&
+    Number.isSafeInteger(customPriceCents) && customPriceCents > 0;
   const customPricePlaceholder = customQtyNumber > 0
     ? (customQtyNumber * ticketPriceCents / 100).toFixed(2)
     : (ticketPriceCents / 100).toFixed(2);
@@ -325,6 +367,7 @@ function SellTicketsTab({
             Buyer name <span className="text-red-500">*</span>
           </label>
           <input
+            ref={buyerNameInputRef}
             id="sell-buyer-name"
             type="text"
             value={sellBuyerName}
@@ -414,6 +457,7 @@ function SellTicketsTab({
           <div className="relative">
             <Mail className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
+              ref={emailInputRef}
               id="sell-buyer-email"
               type="email"
               value={sellBuyerEmail}
@@ -427,61 +471,46 @@ function SellTicketsTab({
           </p>
         </div>
 
-        <div>
-          <label htmlFor="sell-payment-method" className="block text-sm font-medium text-slate-700 mb-1">
-            Payment method
-          </label>
-          <select
-            id="sell-payment-method"
-            value={sellPaymentMethod}
-            onChange={(e) => onPaymentMethodChange(e.target.value)}
-            className="w-full px-4 py-3 border border-slate-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
-          >
-            <option value="swipe_simple">SwipeSimple</option>
-            <option value="cash">Cash</option>
-            <option value="check">Check</option>
-            <option value="card">Card</option>
-            <option value="comp">Comp</option>
-          </select>
-        </div>
-
-        {/* High-contrast read-back confirmation strip */}
-        {canSell && (
-          <div className="rounded-2xl bg-slate-900 px-4 py-4 sm:px-5 text-white shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                Read back to buyer before tapping Sell
-              </p>
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Ready to sell
-              </span>
-            </div>
-            <div className="mt-2.5 flex flex-col gap-1.5 sm:flex-row sm:items-baseline sm:justify-between">
-              <div className="min-w-0">
-                <p className="text-base font-semibold text-white truncate">{trimmedName}</p>
-                {trimmedEmail ? (
-                  <p className="text-sm text-slate-200 flex items-center gap-1.5 mt-0.5 truncate">
-                    <Mail className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                    <span className="truncate">{trimmedEmail}</span>
-                  </p>
-                ) : (
-                  <p className="text-xs text-amber-300 mt-0.5">
-                    SMS only — ask if buyer wants email backup too
-                  </p>
-                )}
-              </div>
-              {phoneValidation.normalized && (
-                <div className="sm:text-right">
-                  <p className="text-[11px] uppercase tracking-wider text-slate-400">SMS Number</p>
-                  <p className="font-mono text-xl sm:text-2xl font-bold tracking-wide text-emerald-300">
-                    {formatPhoneReadback(phoneValidation.normalized)}
-                  </p>
-                </div>
-              )}
-            </div>
+        <fieldset>
+          <legend className="mb-2 text-base font-semibold text-slate-900">Payment method</legend>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {PAYMENT_METHODS.map(({ value, label }) => (
+              <label key={value} className="min-w-0 cursor-pointer">
+                <input
+                  type="radio"
+                  name="raffle-payment-method"
+                  value={value}
+                  checked={sellPaymentMethod === value}
+                  onChange={() => onPaymentMethodChange(value)}
+                  className="peer sr-only"
+                />
+                <span className="flex min-h-[56px] items-center justify-center gap-2 rounded-xl border-2 border-slate-400 px-2 text-center text-base font-bold text-slate-800 hover:border-brand-700 peer-checked:border-brand-800 peer-checked:bg-brand-700 peer-checked:text-brand-foreground peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2">
+                  {sellPaymentMethod === value && <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />}
+                  <span className="min-w-0 break-words">{label}</span>
+                </span>
+              </label>
+            ))}
           </div>
-        )}
+        </fieldset>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="min-w-0 text-sm font-semibold text-slate-700">
+            Receipt number <span className="font-normal">(optional)</span>
+            <input
+              value={sellReceipt}
+              onChange={(event) => onReceiptChange(event.target.value)}
+              className="mt-1 min-h-[48px] w-full rounded-xl border border-slate-300 px-3 text-base font-normal"
+            />
+          </label>
+          <label className="min-w-0 text-sm font-semibold text-slate-700">
+            Payment notes <span className="font-normal">(optional)</span>
+            <textarea
+              value={sellNotes}
+              onChange={(event) => onNotesChange(event.target.value)}
+              rows={2}
+              className="mt-1 min-h-[48px] w-full rounded-xl border border-slate-300 px-3 py-2 text-base font-normal"
+            />
+          </label>
+        </div>
       </div>
 
       {/* Quick-tap bundles */}
@@ -490,20 +519,22 @@ function SellTicketsTab({
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {bundles.map((bundle, idx) => (
             <button
+              type="button"
               key={idx}
-              onClick={() => onSellBundle(bundle)}
+              onClick={() => {
+                if (emailInputRef.current?.reportValidity()) onSellBundle(bundle);
+              }}
               disabled={sellLoading || !canSell}
-              className="flex flex-col items-center gap-2 p-5 rounded-2xl border-2 border-slate-200 bg-white hover:border-brand-500 hover:bg-brand-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`flex min-h-[56px] min-w-0 flex-col items-center gap-2 rounded-2xl border-2 p-4 active:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-60 ${selectedBundle === bundle
+                ? 'border-brand-700 bg-brand-50 ring-2 ring-brand-700'
+                : 'border-slate-400 bg-white hover:border-brand-700 hover:bg-brand-50'}`}
             >
-              <span className="text-3xl font-bold text-brand-600">{bundle.quantity}</span>
-              <span className="text-sm text-slate-600">tickets</span>
-              <span className="text-lg font-bold text-slate-900">
-                {formatMoney(bundle.price_cents)}
+              <span className="flex items-baseline gap-2 text-base font-semibold text-slate-900">
+                <span className="text-3xl font-bold text-brand-700">{bundle.quantity}</span>
+                {bundle.quantity === 1 ? 'ticket' : 'tickets'}
               </span>
-              <span className="text-xs text-slate-500">{formatMoney(bundlePerTicketCents(bundle), 2)}/ticket</span>
-              {sellLoading && (
-                <Loader2 className="w-4 h-4 animate-spin text-brand-500" />
-              )}
+              <span className="text-xl font-extrabold text-slate-950">{formatMoney(bundle.price_cents, 2)}</span>
+              <span className="text-sm text-slate-700">{formatMoney(bundlePerTicketCents(bundle), 2)} per ticket</span>
             </button>
           ))}
         </div>
@@ -514,43 +545,40 @@ function SellTicketsTab({
         <h3 className="text-sm font-semibold text-slate-900 mb-4">Custom sale</h3>
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-600 mb-1">Quantity</label>
+            <label htmlFor="raffle-custom-quantity" className="block text-sm font-medium text-slate-700 mb-1">Quantity</label>
             <input
+              id="raffle-custom-quantity"
               type="number"
               min="1"
               value={customQty}
               onChange={(e) => setCustomQty(e.target.value)}
               placeholder="10"
-              className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="min-h-[48px] w-full px-3 py-2.5 border border-slate-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
           <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-600 mb-1">Total price ($)</label>
+            <label htmlFor="raffle-custom-price" className="block text-sm font-medium text-slate-700 mb-1">Total price ($)</label>
             <input
+              id="raffle-custom-price"
               type="number"
               min="0"
               step="0.01"
               value={customPrice}
               onChange={(e) => setCustomPrice(e.target.value)}
               placeholder={customPricePlaceholder}
-              className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="min-h-[48px] w-full px-3 py-2.5 border border-slate-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
           <div className="flex items-end">
             <button
+              type="button"
               onClick={() => {
-                const qty = parseInt(customQty) || 0;
-                const cents = Math.round(parseFloat(customPrice || '0') * 100);
-                if (qty > 0 && cents > 0) {
-                  onSellCustom(qty, cents);
-                  setCustomQty('');
-                  setCustomPrice('');
-                }
+                if (validCustomSale && emailInputRef.current?.reportValidity()) onSellCustom(customQtyNumber, customPriceCents);
               }}
-              disabled={sellLoading || !customQty || !customPrice || !canSell}
-              className="px-5 py-2.5 bg-brand-600 text-white rounded-xl font-medium text-sm hover:bg-brand-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              disabled={sellLoading || !validCustomSale || !canSell}
+              className="min-h-[56px] whitespace-nowrap rounded-xl bg-brand-600 px-5 text-base font-semibold text-brand-foreground hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {sellLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Sell'}
+              Review Custom Sale
             </button>
           </div>
         </div>
@@ -612,9 +640,17 @@ export const RaffleManagementPage: React.FC = () => {
   const [sellBuyerEmail, setSellBuyerEmail] = useState('');
   const [sellBuyerPhone, setSellBuyerPhone] = useState('');
   const [sellBuyerPhoneConfirm, setSellBuyerPhoneConfirm] = useState('');
-  const [sellPaymentMethod, setSellPaymentMethod] = useState('swipe_simple');
+  const [sellPaymentMethod, setSellPaymentMethod] = useState<PaymentMethod>('swipe_simple');
+  const [sellReceipt, setSellReceipt] = useState('');
+  const [sellNotes, setSellNotes] = useState('');
+  const [saleDraft, setPendingSale] = useState<PendingSale | null>(null);
+  const pendingSale = saleDraft?.tournamentId === tournament?.id ? saleDraft : null;
+  const [sellError, setSellError] = useState<string | null>(null);
+  const sellSubmittingRef = useRef(false);
   const [sellLoading, setSellLoading] = useState(false);
-  const [lastSale, setLastSale] = useState<{ quantity: number; total: string; buyer: string; ticketNumbers?: string[] } | null>(null);
+  const claimRequests = useRef(new Set<number>());
+  const [claimingPrizes, setClaimingPrizes] = useState<Set<number>>(() => new Set());
+  const [lastSale, setLastSale] = useState<SellTicketsTabProps['lastSale']>(null);
   
   // Ticket detail expand & contact edit modal
   const [expandedTicketId, setExpandedTicketId] = useState<number | null>(null);
@@ -704,7 +740,12 @@ export const RaffleManagementPage: React.FC = () => {
     }
   }, [tournament?.id, getToken]);
 
-  const startRefresh = useLatestRequest(`${organization?.slug}/${tournamentSlug}`);
+  const raffleScope = `${organization?.slug}/${tournamentSlug}`;
+  const startRefresh = useLatestRequest(raffleScope);
+
+  useEffect(() => {
+    setPendingSale(null);
+  }, [raffleScope]);
 
   const fetchData = useCallback(async () => {
     if (!organization || !tournamentSlug) return;
@@ -841,24 +882,33 @@ export const RaffleManagementPage: React.FC = () => {
   };
 
   const handleClaimPrize = async (prize: Prize) => {
-    setActionLoading(`claim-${prize.id}`);
+    if (!tournament || claimRequests.current.has(prize.id)) return;
+    const claimed = !prize.claimed;
+    claimRequests.current.add(prize.id);
+    setClaimingPrizes(new Set(claimRequests.current));
+
     try {
       const token = await getToken();
       const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament?.id}/raffle/prizes/${prize.id}/claim`,
+        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament.id}/raffle/prizes/${prize.id}/claim`,
         {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
-        }
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ claimed }),
+        },
       );
-
-      if (!res.ok) throw new Error('Failed to claim');
-      toast.success('Prize marked as claimed');
-      void refreshRaffle();
+      if (!res.ok) throw new Error('Failed to update claim status');
+      const { prize: updated }: { prize: Prize } = await res.json();
+      setPrizes((current) => current.map((item) =>
+        item.id === prize.id && item.won ? { ...item, claimed: updated.claimed } : item,
+      ));
+      toast.success(updated.claimed ? 'Prize marked as claimed' : 'Prize marked as unclaimed');
     } catch {
-      toast.error('Failed to claim prize');
+      toast.error('Failed to update claim status');
+      void refreshRaffle();
     } finally {
-      setActionLoading(null);
+      claimRequests.current.delete(prize.id);
+      setClaimingPrizes(new Set(claimRequests.current));
     }
   };
 
@@ -1085,128 +1135,92 @@ export const RaffleManagementPage: React.FC = () => {
     };
   };
 
-  const handleSellBundle = async (bundle: RaffleBundleDef) => {
-    if (!tournament) return;
-    const validated = validateSellContact();
-    if (!validated) return;
-    const { buyerLabel, emailValue, phoneValue } = validated;
+  const reviewSale = (quantity: number, priceCents: number, bundle?: RaffleBundleDef) => {
+    if (!tournament || pendingSale || sellSubmittingRef.current) return;
+    if (!Number.isSafeInteger(quantity) || !Number.isSafeInteger(priceCents) || quantity <= 0 || priceCents <= 0) return;
 
-    const phoneReadback = phoneValue ? ` (${formatPhoneReadback(phoneValue)})` : '';
-    if (!await requestConfirmation({
-      title: 'Confirm raffle sale',
-      description: `Sell ${bundle.quantity} tickets for $${(bundle.price_cents / 100).toFixed(2)} to “${buyerLabel}”${phoneReadback}?`,
-      confirmLabel: 'Sell tickets',
-    })) return;
-    setSellLoading(true);
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament.id}/raffle/sell`,
-        {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            quantity: bundle.quantity,
-            price_cents: bundle.price_cents,
-            buyer_name: buyerLabel,
-            buyer_email: emailValue,
-            buyer_phone: phoneValue,
-            payment_method: sellPaymentMethod,
-          }),
-        }
-      );
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to sell tickets');
-      }
-      const data = await res.json();
-      const totalDollars = `$${(bundle.price_cents / 100).toFixed(0)}`;
-      const ticketNums = Array.isArray(data.tickets)
-        ? data.tickets.map((ticket: { ticket_number: string }) => ticket.ticket_number)
-        : [];
-      setLastSale({
-        quantity: bundle.quantity,
-        total: totalDollars,
-        buyer: buyerLabel,
-        ticketNumbers: ticketNums,
-      });
-      setSellBuyerName('');
-      setSellBuyerEmail('');
-      setSellBuyerPhone('');
-      setSellBuyerPhoneConfirm('');
-      setSellPaymentMethod('swipe_simple');
-      toast.success(`Sold ${bundle.quantity} tickets for ${totalDollars}`);
-      const deliveryWarning = deliveryFailureMessage(data.delivery);
-      if (deliveryWarning) {
-        toast.error(`Tickets were created, but ${deliveryWarning}`);
-      }
-      void refreshRaffle();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to sell tickets');
-    } finally {
-      setSellLoading(false);
-    }
+    const contact = validateSellContact();
+    if (!contact) return;
+
+    setSellError(null);
+    setPendingSale({
+      tournamentId: tournament.id,
+      buyerName: contact.buyerLabel,
+      email: contact.emailValue,
+      phone: contact.phoneValue,
+      bundle,
+      bundleLabel: bundle?.label,
+      quantity,
+      priceCents,
+      total: formatMoney(priceCents, 2),
+      paymentMethod: sellPaymentMethod,
+      paymentLabel: PAYMENT_METHODS.find(({ value }) => value === sellPaymentMethod)?.label || sellPaymentMethod,
+      receipt: sellReceipt.trim() || undefined,
+      notes: sellNotes.trim() || undefined,
+    });
   };
 
-  const handleSellCustom = async (quantity: number, priceCents: number) => {
-    if (!tournament || quantity <= 0 || priceCents <= 0) return;
-    const validated = validateSellContact();
-    if (!validated) return;
-    const { buyerLabel, emailValue, phoneValue } = validated;
+  const cancelSale = () => {
+    if (!sellSubmittingRef.current) setPendingSale(null);
+  };
 
-    const phoneReadback = phoneValue ? ` (${formatPhoneReadback(phoneValue)})` : '';
-    if (!await requestConfirmation({
-      title: 'Confirm raffle sale',
-      description: `Sell ${quantity} tickets for $${(priceCents / 100).toFixed(2)} to “${buyerLabel}”${phoneReadback}?`,
-      confirmLabel: 'Sell tickets',
-    })) return;
+  const completeSale = async () => {
+    const sale = pendingSale;
+    if (!sale || sale.tournamentId !== tournament?.id || sellSubmittingRef.current) return;
+    sellSubmittingRef.current = true;
     setSellLoading(true);
+    setSellError(null);
+
     try {
       const token = await getToken();
       const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament.id}/raffle/sell`,
+        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${sale.tournamentId}/raffle/sell`,
         {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            quantity,
-            price_cents: priceCents,
-            buyer_name: buyerLabel,
-            buyer_email: emailValue,
-            buyer_phone: phoneValue,
-            payment_method: sellPaymentMethod,
+            quantity: sale.quantity,
+            price_cents: sale.priceCents,
+            buyer_name: sale.buyerName,
+            buyer_email: sale.email,
+            buyer_phone: sale.phone,
+            payment_method: sale.paymentMethod,
+            receipt_number: sale.receipt,
+            payment_notes: sale.notes,
           }),
-        }
+        },
       );
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to sell tickets');
-      }
       const data = await res.json();
-      const totalDollars = `$${(priceCents / 100).toFixed(0)}`;
-      const ticketNums = Array.isArray(data.tickets)
-        ? data.tickets.map((ticket: { ticket_number: string }) => ticket.ticket_number)
-        : [];
+      if (!res.ok) {
+        setSellError(data.error || 'The sale could not be completed. Review the sale details and try again.');
+        return;
+      }
+
       setLastSale({
-        quantity,
-        total: totalDollars,
-        buyer: buyerLabel,
-        ticketNumbers: ticketNums,
+        quantity: sale.quantity,
+        total: sale.total,
+        buyer: sale.buyerName,
+        ticketNumbers: Array.isArray(data.tickets)
+          ? data.tickets.map((ticket: { ticket_number: string }) => ticket.ticket_number)
+          : [],
+        custom: !sale.bundle,
       });
+      setPendingSale(null);
       setSellBuyerName('');
       setSellBuyerEmail('');
       setSellBuyerPhone('');
       setSellBuyerPhoneConfirm('');
       setSellPaymentMethod('swipe_simple');
-      toast.success(`Sold ${quantity} tickets for ${totalDollars}`);
+      setSellReceipt('');
+      setSellNotes('');
+      toast.success(`Sold ${sale.quantity} tickets for ${sale.total}`);
       const deliveryWarning = deliveryFailureMessage(data.delivery);
-      if (deliveryWarning) {
-        toast.error(`Tickets were created, but ${deliveryWarning}`);
-      }
+      if (deliveryWarning) toast.error(`Tickets were created, but ${deliveryWarning}`);
       void refreshRaffle();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to sell tickets');
+    } catch {
+      setSellError('We couldn’t confirm the sale. Check Tickets for this buyer before trying again.');
     } finally {
+      sellSubmittingRef.current = false;
       setSellLoading(false);
     }
   };
@@ -1247,8 +1261,22 @@ export const RaffleManagementPage: React.FC = () => {
 
   const handleVoidTicket = async (ticket: RaffleTicket) => {
     if (!tournament) return;
-    const reason = prompt(`Void ticket ${ticket.ticket_number}? Enter reason (optional):`);
-    if (reason === null) return;
+    let reason = '';
+    if (!await requestConfirmation({
+      title: `Void ticket #${ticket.ticket_number}?`,
+      description: 'Voiding removes this ticket from the drawing.',
+      confirmLabel: 'Void Ticket',
+      tone: 'danger',
+      children: (
+        <label className="mt-4 block text-base font-medium text-slate-800">
+          Reason (optional)
+          <input
+            onChange={(event) => { reason = event.target.value; }}
+            className="mt-1 min-h-[48px] w-full rounded-xl border border-slate-300 px-3 text-base font-normal"
+          />
+        </label>
+      ),
+    })) return;
 
     setActionLoading(`void-${ticket.id}`);
     try {
@@ -1258,7 +1286,7 @@ export const RaffleManagementPage: React.FC = () => {
         {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason: reason || undefined }),
+          body: JSON.stringify({ reason: reason.trim() || undefined }),
         }
       );
       if (!res.ok) {
@@ -1644,19 +1672,9 @@ export const RaffleManagementPage: React.FC = () => {
                       <div className="hidden sm:flex items-center gap-2 shrink-0">
                         {prize.won ? (
                           <>
-                            {!prize.claimed && (
-                              <button
-                                onClick={() => handleClaimPrize(prize)}
-                                disabled={actionLoading === `claim-${prize.id}`}
-                                className="p-2 text-green-600 hover:bg-green-50 rounded-lg"
-                                title="Mark as claimed"
-                              >
-                                <CheckCircle className="w-5 h-5" />
-                              </button>
-                            )}
                             <button
                               onClick={() => handleResetPrize(prize)}
-                              disabled={actionLoading === `reset-${prize.id}`}
+                              disabled={actionLoading === `reset-${prize.id}` || claimingPrizes.has(prize.id)}
                               className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg"
                               title="Reset (undo draw)"
                             >
@@ -1696,26 +1714,15 @@ export const RaffleManagementPage: React.FC = () => {
                     {/* Mobile action buttons on their own row */}
                     <div className="flex sm:hidden items-center gap-2 mt-3 pt-3 border-t border-gray-100">
                       {prize.won ? (
-                        <>
-                          {!prize.claimed && (
-                            <button
-                              onClick={() => handleClaimPrize(prize)}
-                              disabled={actionLoading === `claim-${prize.id}`}
-                              className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-green-600 bg-green-50 rounded-lg"
-                            >
-                              <CheckCircle className="w-4 h-4" />
-                              Claim
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleResetPrize(prize)}
-                            disabled={actionLoading === `reset-${prize.id}`}
-                            className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-gray-500 bg-gray-100 rounded-lg"
-                          >
-                            <RotateCcw className="w-4 h-4" />
-                            Reset
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          onClick={() => handleResetPrize(prize)}
+                          disabled={actionLoading === `reset-${prize.id}` || claimingPrizes.has(prize.id)}
+                          className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-slate-100 px-3 text-sm font-semibold text-slate-700 disabled:opacity-60"
+                        >
+                          <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                          Reset Draw
+                        </button>
                       ) : (
                         <>
                           <button
@@ -1747,33 +1754,55 @@ export const RaffleManagementPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Winner banner */}
-                  {prize.won && prize.winner && (
-                    <div className="px-4 pb-3 pt-0">
-                      <div className={`flex items-center gap-3 rounded-lg px-3 py-2.5 ${
-                        prize.claimed ? 'bg-green-50' : 'bg-amber-50'
-                      }`}>
-                        <PartyPopper className={`w-4 h-4 shrink-0 ${prize.claimed ? 'text-green-500' : 'text-amber-500'}`} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-gray-900">{prize.winner.name}</p>
-                          <p className="text-xs text-gray-500">
-                            Ticket #{prize.winner.ticket_number}
-                            {prize.claimed && ' — Claimed'}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => handleResendNotification(prize)}
-                          disabled={actionLoading === `resend-${prize.id}`}
-                          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 shrink-0"
-                          title="Resend winner notification"
-                        >
-                          {actionLoading === `resend-${prize.id}` ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Send className="w-3.5 h-3.5" />
+                  {prize.won && (
+                    <div className="px-4 pb-4">
+                      <div className={`flex flex-wrap items-center gap-3 rounded-lg p-3 ${prize.claimed ? 'bg-emerald-50' : 'bg-amber-50'}`}>
+                        {prize.winner && (
+                          <div className="flex min-w-0 flex-1 basis-36 items-start gap-2 break-words">
+                            <PartyPopper className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
+                            <div className="min-w-0">
+                              <p className="font-semibold text-slate-900">{prize.winner.name}</p>
+                              <p className="text-sm text-slate-700">Ticket #{prize.winner.ticket_number}</p>
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleClaimPrize(prize)}
+                            disabled={claimingPrizes.has(prize.id) || actionLoading === `reset-${prize.id}`}
+                            aria-pressed={prize.claimed}
+                            title={prize.claimed ? 'Mark as unclaimed' : 'Mark prize as claimed'}
+                            className={`inline-flex min-h-[48px] items-center gap-2 rounded-xl border-2 border-emerald-800 px-3 text-base font-bold disabled:opacity-60 ${prize.claimed
+                              ? 'bg-emerald-100 text-emerald-950 hover:bg-emerald-200'
+                              : 'bg-emerald-800 text-white hover:bg-emerald-900'}`}
+                          >
+                            {claimingPrizes.has(prize.id) ? (
+                              <Loader2 className="h-5 w-5 motion-safe:animate-spin" aria-hidden="true" />
+                            ) : prize.claimed ? (
+                              <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+                            ) : (
+                              <Gift className="h-5 w-5" aria-hidden="true" />
+                            )}
+                            {prize.claimed ? 'Claimed' : 'Mark Claimed'}
+                          </button>
+                          {prize.winner && (
+                            <button
+                              type="button"
+                              onClick={() => handleResendNotification(prize)}
+                              disabled={actionLoading === `resend-${prize.id}`}
+                              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                              title="Resend winner notification"
+                            >
+                              {actionLoading === `resend-${prize.id}` ? (
+                                <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
+                              ) : (
+                                <Send className="h-4 w-4" aria-hidden="true" />
+                              )}
+                              Resend
+                            </button>
                           )}
-                          <span className="hidden sm:inline">Resend</span>
-                        </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1833,10 +1862,15 @@ export const RaffleManagementPage: React.FC = () => {
             onBuyerPhoneConfirmChange={setSellBuyerPhoneConfirm}
             sellPaymentMethod={sellPaymentMethod}
             onPaymentMethodChange={setSellPaymentMethod}
+            sellReceipt={sellReceipt}
+            onReceiptChange={setSellReceipt}
+            sellNotes={sellNotes}
+            onNotesChange={setSellNotes}
+            selectedBundle={pendingSale?.bundle}
             sellLoading={sellLoading}
             lastSale={lastSale}
-            onSellBundle={handleSellBundle}
-            onSellCustom={handleSellCustom}
+            onSellBundle={(bundle) => reviewSale(bundle.quantity, bundle.price_cents, bundle)}
+            onSellCustom={reviewSale}
             stats={stats}
           />
         )}
@@ -2318,6 +2352,16 @@ export const RaffleManagementPage: React.FC = () => {
           </div>
         )}
       </main>
+
+      {pendingSale && (
+        <RaffleConfirmSaleModal
+          sale={pendingSale}
+          submitting={sellLoading}
+          error={sellError}
+          onCancel={cancelSale}
+          onConfirm={completeSale}
+        />
+      )}
 
       {/* Prize Modal - simplified for now */}
       {showPrizeModal && (

@@ -34,6 +34,22 @@ class Rack::Attack
     req.ip
   end
 
+  throttle("req/ip/raffle-check-ticket", limit: 180, period: 1.minute) do |req|
+    next unless req.get? || req.head?
+    match = req.path.match(%r{\A/api/v1/tournaments/([^/]+)/raffle/check_ticket(?:\.[^/]+)?/?\z})
+    next unless match
+
+    "#{req.ip}:#{match[1]}"
+  end
+
+  throttle("req/ip/raffle-legacy-tickets", limit: 30, period: 1.minute) do |req|
+    next unless req.get? || req.head?
+    match = req.path.match(%r{\A/api/v1/tournaments/([^/]+)/raffle/tickets(?:\.[^/]+)?/?\z})
+    next unless match
+
+    "#{req.ip}:#{match[1]}"
+  end
+
   # Authenticated traffic throttle keyed by bearer token fingerprint.
   throttle("req/token/authenticated", limit: 120, period: 1.minute) do |req|
     auth_header = req.get_header("HTTP_AUTHORIZATION").to_s

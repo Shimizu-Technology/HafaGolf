@@ -181,6 +181,7 @@ Rails.application.routes.draw do
         # Raffle (public)
         get 'raffle/prizes' => 'raffle#prizes'
         get 'raffle/board' => 'raffle#board'
+        get 'raffle/check_ticket' => 'raffle#check_ticket'
         get 'raffle/tickets' => 'raffle#tickets'
 
         # Raffle (admin)
