@@ -7,7 +7,7 @@ require "uri"
 
 module HafagolfMigrations
   class LegacyAssets
-    attr_reader :migrated_count
+    attr_reader :migrated_count, :expected_attachments, :attached_attachments, :missing_attachments
 
     def initialize(source:, blob_dir: nil, brand_assets_dir: nil, asset_host: nil)
       @source = source
@@ -16,6 +16,9 @@ module HafagolfMigrations
       @asset_host = asset_host.presence
       @asset_hostname = parse_url(@asset_host)&.host
       @migrated_count = 0
+      @expected_attachments = 0
+      @attached_attachments = 0
+      @missing_attachments = []
     end
 
     def import_attachments(sponsors:, prizes:)
@@ -26,10 +29,10 @@ module HafagolfMigrations
         case row.values_at("record_type", "name")
         when ["Sponsor", "logo"]
           record = sponsors[row["record_id"].to_s]
-          attach_blob(record, :logo, :logo_url, blobs[row["blob_id"].to_s]) if record
+          attach_blob(record, :logo, :logo_url, blobs[row["blob_id"].to_s], label: "Sponsor##{row['record_id']}:logo") if record
         when ["RafflePrize", "image"]
           record = prizes[row["record_id"].to_s]
-          attach_blob(record, :image, :image_url, blobs[row["blob_id"].to_s]) if record
+          attach_blob(record, :image, :image_url, blobs[row["blob_id"].to_s], label: "RafflePrize##{row['record_id']}:image") if record
         end
       end
     end
@@ -48,19 +51,25 @@ module HafagolfMigrations
           parts = blob_url_parts(url)
           next unless parts
 
+          @expected_attachments += 1
           signed_id, filename = parts
           row = rows_by_id[legacy_blob_id(signed_id)]
           matches = rows_by_filename[filename]
           row ||= matches.first if matches&.one?
           unless row
+            @missing_attachments << "#{record.class.name}##{record.id}:#{field} (unmatched blob)"
             Rails.logger.warn("[LegacyAssets] No unique source blob for #{record.class.name} #{record.id} #{field}")
             next
           end
 
           blob = upload_legacy_blob(row)
-          next unless blob
+          unless blob
+            @missing_attachments << "#{record.class.name}##{record.id}:#{field} (missing file #{row['key']})"
+            next
+          end
 
           record.update!(field => blob_url(blob))
+          @attached_attachments += 1
           replaced_assets.add(row["id"])
         end
       end
@@ -89,17 +98,23 @@ module HafagolfMigrations
 
     private
 
-    def attach_blob(record, attachment_name, url_field, row)
+    def attach_blob(record, attachment_name, url_field, row, label: nil)
+      @expected_attachments += 1
       attachment = record.public_send(attachment_name)
       unless attachment.attached?
         blob = upload_legacy_blob(row)
-        return unless blob
+        unless blob
+          @missing_attachments << "#{label || "#{record.class.name}##{record.id}:#{attachment_name}"} (key=#{row&.fetch('key', nil)})"
+          return
+        end
 
         # Attach the uploaded blob so Rails can save the attachment in the same
         # transaction without retaining a file handle until after commit.
         attachment.attach(blob) || raise(ActiveRecord::RecordInvalid, record)
         @migrated_count += 1
       end
+
+      @attached_attachments += 1
 
       # Sponsor URL validation accepts image URLs, but the attachment takes over
       # once the stale direct URL is cleared.
@@ -129,7 +144,13 @@ module HafagolfMigrations
 
       File.open(path, "rb") do |file|
         blob = ActiveStorage::Blob.create_and_upload!(io: file, filename: filename, content_type: content_type)
-        ActiveRecord::Base.current_transaction.after_rollback { blob.delete }
+        key = blob.key
+        service = blob.service
+        ActiveRecord::Base.current_transaction.after_rollback do
+          service.delete(key)
+        rescue StandardError
+          nil
+        end
         blob
       end
     end
@@ -193,11 +214,12 @@ module HafagolfMigrations
     end
 
     def local_file(directory, basename)
+      return unless basename.is_a?(String) && !basename.include?("\0")
       return unless basename.present? && File.basename(basename) == basename
 
       path = File.realpath(File.join(directory, basename))
       path if File.dirname(path) == directory && File.file?(path)
-    rescue Errno::ENOENT, Errno::ENOTDIR
+    rescue ArgumentError, TypeError, Errno::ENOENT, Errno::ENOTDIR
       nil
     end
   end

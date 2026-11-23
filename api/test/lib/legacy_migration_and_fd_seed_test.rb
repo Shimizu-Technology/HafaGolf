@@ -687,9 +687,18 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
           { "record_type" => "RafflePrize", "record_id" => 1, "name" => "image", "blob_id" => 2 }
         ]
       }
-      importer = HafagolfMigrations::MawImporter.new(
+      strict_importer = HafagolfMigrations::MawImporter.new(
         source_reader: HafagolfMigrations::SourceReader.from_hash(fixture), expected_db_name: @current_db,
         blob_dir: blob_dir, brand_assets_dir: brand_dir, asset_host: "https://api.example.test"
+      )
+      assert_no_difference ["ActiveStorage::Blob.count", "ActiveStorage::Attachment.count"] do
+        assert_raises(HafagolfMigrations::VerificationMismatchError) { strict_importer.run! }
+      end
+
+      importer = HafagolfMigrations::MawImporter.new(
+        source_reader: HafagolfMigrations::SourceReader.from_hash(fixture), expected_db_name: @current_db,
+        blob_dir: blob_dir, brand_assets_dir: brand_dir, asset_host: "https://api.example.test",
+        allow_missing_attachments: true
       )
 
       report = nil
@@ -699,6 +708,9 @@ class LegacyMigrationAndFdSeedTest < ActiveSupport::TestCase
         end
       end
       assert_equal 8, report["attachments_migrated"]
+      assert_equal 5, report["attachments_expected"]
+      assert_equal 4, report["attachments_present"]
+      assert_equal 1, report["attachments_missing"].size
 
       org = Organization.find_by!(slug: "make-a-wish-guam")
       tournament = org.tournaments.find_by!(slug: "synthetic-assets")

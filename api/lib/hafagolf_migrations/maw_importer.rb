@@ -33,9 +33,11 @@ module HafagolfMigrations
     ].freeze
 
     def initialize(source_reader:, expected_db_name: ENV["EXPECTED_DB_NAME"], blob_dir: ENV["LEGACY_BLOB_DIR"],
-                   brand_assets_dir: ENV["LEGACY_BRAND_ASSETS_DIR"], asset_host: ENV["ASSET_HOST"] || ENV["API_URL"])
+                   brand_assets_dir: ENV["LEGACY_BRAND_ASSETS_DIR"], asset_host: ENV["ASSET_HOST"] || ENV["API_URL"],
+                   allow_missing_attachments: ActiveModel::Type::Boolean.new.cast(ENV["ALLOW_MISSING_ATTACHMENTS"]) == true)
       @source = source_reader
       @expected_db_name = expected_db_name
+      @allow_missing_attachments = allow_missing_attachments
       @asset_options = { blob_dir: blob_dir, brand_assets_dir: brand_assets_dir, asset_host: asset_host }
     end
 
@@ -64,8 +66,12 @@ module HafagolfMigrations
           import_message_deliveries!(org, tournament_map, golfer_map, ticket_map, sponsor_map)
           import_activity_logs!(org, tournament_map, user_map)
 
-          report = verify_import!(org, tournament_map)
-          report["attachments_migrated"] = import_assets!(org, tournament_map.values, sponsor_map, prize_map)
+          assets = import_assets!(org, tournament_map.values, sponsor_map, prize_map)
+          report = verify_import!(org, tournament_map, assets: assets)
+          report["attachments_migrated"] = assets.migrated_count
+          report["attachments_expected"] = assets.expected_attachments
+          report["attachments_present"] = assets.attached_attachments
+          report["attachments_missing"] = assets.missing_attachments
         end
       end
 
@@ -113,7 +119,8 @@ module HafagolfMigrations
       case value
       when Hash
         value.each_with_object({}) do |(key, item), clean|
-          next if key.to_s.match?(/stripe|secret|password|credential|(?:api|access|private|public)[_-]?key|token/i)
+          next if key.to_s.match?(/stripe|secret|password|smtp_pass|credential|publishable|(?:api|access|private|public|webhook|signing)[_-]?key|token/i)
+          next if item.is_a?(String) && item.match?(/\A(?:sk|pk|rk|whsec)_(?:live|test)?/i)
 
           clean[key.to_s] = sanitize_settings(item)
         end
@@ -133,7 +140,7 @@ module HafagolfMigrations
       hero_targets = [[org, :banner_url]] + tournaments.filter_map { |t| [t, :banner_url_override] if t.banner_url_override.blank? }
       assets.wire_brand_asset("maw-hero.jpg", hero_targets, match_filename: true)
       assets.wire_brand_asset("maw-star-icon.png", tournaments.map { |t| [t, :signature_image_url_override] }, match_filename: true)
-      assets.migrated_count
+      assets
     end
 
     def import_domains!(org)
@@ -270,11 +277,15 @@ module HafagolfMigrations
         if tournament.new_record?
           attrs[:capacity_unit] = attrs[:team_size] > 1 ? "teams" : "players"
         end
-        assign_backfill(tournament, attrs)
+        assign_backfill(
+          tournament,
+          attrs,
+          %i[handicap_required use_flights tee_times_enabled raffle_enabled walkin_registration_open]
+        )
         if tournament.new_record? || tournament.theme_preset.blank? || tournament.theme_preset == "classic"
           tournament.theme_preset = "charity-bright"
         end
-        config = parse_json(row["config"], {}, expected_type: Hash)
+        config = sanitize_settings(parse_json(row["config"], {}, expected_type: Hash))
         unless row["raffle_hold_winner_on_screen"].nil?
           config = config.merge("raffle_hold_winner_on_screen" => truthy?(row["raffle_hold_winner_on_screen"]))
         end
@@ -698,7 +709,7 @@ module HafagolfMigrations
       end
     end
 
-    def verify_import!(org, tournament_map)
+    def verify_import!(org, tournament_map, assets: nil)
       src_golfers = @source.rows("golfers")
       src_tickets = @source.rows("raffle_tickets")
       tournament_ids = tournament_map.values.map(&:id)
@@ -763,11 +774,17 @@ module HafagolfMigrations
         target_metrics["team_members"] = TeamMember.where(tournament_id: tournament_ids).count
       end
 
+      if assets && assets.expected_attachments.positive? && !@allow_missing_attachments
+        source_metrics["attachments"] = assets.expected_attachments
+        target_metrics["attachments"] = assets.attached_attachments
+      end
+
       orphans = {
         "golfer_groups" => tgt_golfers.where.not(group_id: nil).where.not(group_id: Group.where(tournament_id: tournament_ids).select(:id)).count,
         "golfer_sponsors" => tgt_golfers.where.not(sponsor_id: nil).where.not(sponsor_id: Sponsor.where(tournament_id: tournament_ids).select(:id)).count,
         "prize_winning_tickets" => RafflePrize.where(tournament_id: tournament_ids).where.not(winning_ticket_id: nil).where.not(winning_ticket_id: tgt_tickets.select(:id)).count
       }
+      orphans["missing_attachments"] = assets.missing_attachments.size if assets && !@allow_missing_attachments
 
       Verifier.verify!(source_metrics: source_metrics, target_metrics: target_metrics, orphans: orphans)
     end

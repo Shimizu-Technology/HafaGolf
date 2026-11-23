@@ -9,10 +9,17 @@ module HafagolfMigrations
 
     private
 
-    def assign_backfill(record, attributes)
-      attributes = attributes.select do |column, value|
-        !missing_value?(value) && missing_value?(record.public_send(column))
-      end unless record.new_record?
+    def assign_backfill(record, attributes, force_if_default = [])
+      force_set = Array(force_if_default).map(&:to_sym).to_set
+      unless record.new_record?
+        defaults = record.class.column_defaults
+        attributes = attributes.select do |column, value|
+          next false if missing_value?(value)
+
+          current = record.public_send(column)
+          missing_value?(current) || (force_set.include?(column.to_sym) && current == defaults[column.to_s] && value != current)
+        end
+      end
 
       record.assign_attributes(attributes)
     end
