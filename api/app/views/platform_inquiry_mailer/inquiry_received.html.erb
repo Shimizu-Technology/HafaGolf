@@ -1,0 +1,35 @@
+<div style="max-width: 600px; margin: 24px auto; background: #ffffff; border: 1px solid #e7e1d3; border-radius: 12px; overflow: hidden;">
+  <div style="background: #0b3b2e; color: #ffffff; padding: 20px 24px;">
+    <p style="margin: 0; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #d9b56b;">HafaGolf Reach Out</p>
+    <h1 style="margin: 6px 0 0; font-size: 20px; font-weight: 600;"><%= @type_label %></h1>
+  </div>
+  <div style="padding: 24px; color: #111827; font-size: 15px; line-height: 1.55;">
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 18px;">
+      <tr>
+        <td style="padding: 6px 0; color: #4b5563; width: 140px;">Name</td>
+        <td style="padding: 6px 0; font-weight: 600;"><%= @inquiry[:name] %></td>
+      </tr>
+      <tr>
+        <td style="padding: 6px 0; color: #4b5563;">Email</td>
+        <td style="padding: 6px 0;"><a href="mailto:<%= @inquiry[:email] %>" style="color: #0b3b2e;"><%= @inquiry[:email] %></a></td>
+      </tr>
+      <% if @inquiry[:organization_name].present? %>
+      <tr>
+        <td style="padding: 6px 0; color: #4b5563;">Organization</td>
+        <td style="padding: 6px 0;"><%= @inquiry[:organization_name] %></td>
+      </tr>
+      <% end %>
+      <% if @inquiry[:estimated_date].present? %>
+      <tr>
+        <td style="padding: 6px 0; color: #4b5563;">Target date</td>
+        <td style="padding: 6px 0;"><%= @inquiry[:estimated_date] %></td>
+      </tr>
+      <% end %>
+      <tr>
+        <td style="padding: 6px 0; color: #4b5563;">Received</td>
+        <td style="padding: 6px 0;"><%= @received_at %></td>
+      </tr>
+    </table>
+    <div style="background: #faf8f3; border: 1px solid #e7e1d3; border-radius: 8px; padding: 16px; white-space: pre-wrap;"><%= @inquiry[:message] %></div>
+  </div>
+</div>

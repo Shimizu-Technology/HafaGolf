@@ -1,0 +1,14 @@
+HafaGolf Reach Out — <%= @type_label %>
+
+Name: <%= @inquiry[:name] %>
+Email: <%= @inquiry[:email] %>
+<% if @inquiry[:organization_name].present? -%>
+Organization: <%= @inquiry[:organization_name] %>
+<% end -%>
+<% if @inquiry[:estimated_date].present? -%>
+Target date: <%= @inquiry[:estimated_date] %>
+<% end -%>
+Received: <%= @received_at %>
+
+Message:
+<%= @inquiry[:message] %>

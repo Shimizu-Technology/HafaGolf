@@ -50,6 +50,13 @@ class Rack::Attack
     "#{req.ip}:#{match[1]}"
   end
 
+  throttle("req/ip/platform-inquiries", limit: 5, period: 10.minutes) do |req|
+    next unless req.post?
+    next unless req.path.match?(%r{\A/api/v1/platform/inquiries(?:\.[^/]+)?/?\z})
+
+    req.ip
+  end
+
   # Authenticated traffic throttle keyed by bearer token fingerprint.
   throttle("req/token/authenticated", limit: 120, period: 1.minute) do |req|
     auth_header = req.get_header("HTTP_AUTHORIZATION").to_s

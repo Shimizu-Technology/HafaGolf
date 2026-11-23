@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_23_180000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_24_002500) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -842,6 +842,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_180000) do
     t.string "sponsor_wall_title"
     t.jsonb "homepage_config", default: {}, null: false
     t.boolean "allow_sponsor_check_invoice", default: true, null: false
+    t.boolean "directory_listed", default: false, null: false
+    t.index ["directory_listed"], name: "index_tournaments_on_directory_listed"
     t.index ["early_bird_deadline"], name: "index_tournaments_on_early_bird_deadline"
     t.index ["event_type"], name: "index_tournaments_on_event_type"
     t.index ["organization_id", "slug"], name: "index_tournaments_on_organization_id_and_slug", unique: true

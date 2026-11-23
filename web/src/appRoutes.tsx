@@ -40,6 +40,15 @@ const LazyLeaderboardPage = lazy(() =>
 const LazyPlatformHomePage = lazy(() =>
   import('./pages/PlatformHomePage').then((module) => ({ default: module.PlatformHomePage }))
 );
+const LazyPrivacyPolicyPage = lazy(() =>
+  import('./pages/PrivacyPolicyPage').then((module) => ({ default: module.PrivacyPolicyPage }))
+);
+const LazyTermsOfServicePage = lazy(() =>
+  import('./pages/TermsOfServicePage').then((module) => ({ default: module.TermsOfServicePage }))
+);
+const LazyContactPage = lazy(() =>
+  import('./pages/ContactPage').then((module) => ({ default: module.ContactPage }))
+);
 
 function TenantPublicWrapper({ children }: { children: React.ReactNode }) {
   const { search } = useLocation();
@@ -182,14 +191,24 @@ function AppLayout() {
         <Toaster position="top-right" />
         <Outlet />
       <footer className="py-4 text-center border-t border-gray-100 bg-white mt-auto">
-        <a
-          href="https://shimizu-technology.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-gray-400 hover:text-gray-600 transition-colors duration-200"
-        >
-          Built by <span className="font-medium">Shimizu Technology</span>
-        </a>
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-400">
+          <a
+            href="https://shimizu-technology.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-gray-600 transition-colors duration-200"
+          >
+            Built by <span className="font-medium">Shimizu Technology</span>
+          </a>
+          <span aria-hidden="true">·</span>
+          <a href="/privacy" className="hover:text-gray-600 transition-colors duration-200">
+            Privacy
+          </a>
+          <span aria-hidden="true">·</span>
+          <a href="/terms" className="hover:text-gray-600 transition-colors duration-200">
+            Terms
+          </a>
+        </div>
       </footer>
       </div>
     </ErrorBoundary>
@@ -201,6 +220,30 @@ export const appRoutes = createRoutesFromElements(
     <Route path="/" element={<RootRoute />} />
     <Route path="/platform" element={<PlatformHomeRoute />} />
     <Route path="/about" element={<PlatformHomeRoute />} />
+    <Route
+      path="/privacy"
+      element={
+        <Suspense fallback={<div className="min-h-screen bg-[#faf8f3]" />}>
+          <LazyPrivacyPolicyPage />
+        </Suspense>
+      }
+    />
+    <Route
+      path="/terms"
+      element={
+        <Suspense fallback={<div className="min-h-screen bg-[#faf8f3]" />}>
+          <LazyTermsOfServicePage />
+        </Suspense>
+      }
+    />
+    <Route
+      path="/contact"
+      element={
+        <Suspense fallback={<div className="min-h-screen bg-[#faf8f3]" />}>
+          <LazyContactPage />
+        </Suspense>
+      }
+    />
 
     <Route path="/sponsor-portal" element={<TenantPublicWrapper><SponsorPortalPage /></TenantPublicWrapper>} />
     <Route path="/sponsor-portal/login" element={<TenantPublicWrapper><SponsorPortalPage /></TenantPublicWrapper>} />

@@ -47,6 +47,7 @@ class Tournament < ApplicationRecord
   scope :active, -> { where.not(status: 'archived') }
   scope :archived, -> { where(status: 'archived') }
   scope :open_for_registration, -> { where(status: 'open', registration_open: true) }
+  scope :directory_eligible, -> { where(public_listed: true, directory_listed: true, status: %w[open in_progress closed completed]) }
   scope :by_year, ->(year) { where(year: year) }
   scope :recent, -> { order(year: :desc, created_at: :desc) }
   scope :for_organization, ->(org) { where(organization: org) }
@@ -66,7 +67,7 @@ class Tournament < ApplicationRecord
   validates :logo_url_override, public_image_url: true, allow_blank: true, if: :will_save_change_to_logo_url_override?
   validates :signature_image_url_override, public_image_url: true, allow_blank: true, if: :will_save_change_to_signature_image_url_override?
   validate :valid_story_photos
-  validates :waiver_enabled, :show_public_sponsors, :allow_sponsor_check_invoice, inclusion: { in: [true, false] }
+  validates :waiver_enabled, :show_public_sponsors, :allow_sponsor_check_invoice, :directory_listed, inclusion: { in: [true, false] }
 
   validates :theme_preset, presence: true, inclusion: { in: THEME_PRESETS }
   validates :capacity_unit, presence: true, inclusion: { in: CAPACITY_UNITS }

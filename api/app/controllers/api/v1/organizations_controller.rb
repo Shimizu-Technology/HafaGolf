@@ -1359,6 +1359,7 @@ module Api
           :theme_preset, :use_org_branding,
           :commemorative_banner_url, :tribute_title, :tribute_subtitle,
           :waiver_enabled, :waiver_text, :show_public_sponsors, :sponsor_wall_title,
+          :directory_listed,
           team_categories: [],
           course_configs: [:key, :name, :hole_count]
         )
