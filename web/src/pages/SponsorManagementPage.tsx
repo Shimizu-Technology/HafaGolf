@@ -1,66 +1,24 @@
 import { useLatestRequest } from '../hooks/useLatestRequest';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '@clerk/react';
 import { useOrganization } from '../components/OrganizationProvider';
 import {
-  Building2, Plus, Trash2, Edit, ArrowLeft, RefreshCw, Loader2,
-  ExternalLink, Flag, Star, Award, Medal, X, Mail, Upload, Users,
-  ChevronDown, ChevronUp, Save, Tag, Heart,
+  Building2, Plus, ArrowLeft, RefreshCw, ExternalLink, Flag, Star, Award, Medal, X, Upload,
+  Users, Tag, Heart, Eye, EyeOff,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { adminEventPath } from '../utils/adminRoutes';
 import { SponsorTiersAdminPanel } from '../components/SponsorTiersAdminPanel';
 import { DonationsAdminPanel } from '../components/DonationsAdminPanel';
+import { SponsorAdminCard, type SponsorQuickEdit } from '../components/sponsors/SponsorAdminCard';
+import type {
+  AdminSponsor, CourseConfig, ManagedTournament, TierDefinition, TierOption,
+} from '../components/sponsors/sponsorAdminTypes';
+import { describeSlotTeams } from '../utils/sponsorTeams';
 
-interface SponsorSlot {
-  id: number;
-  slot_number: number;
-  player_name: string | null;
-  player_email: string | null;
-  player_phone: string | null;
-  confirmed_at: string | null;
-}
-
-interface Sponsor {
-  id: number;
-  name: string;
-  tier: string;
-  tier_display: string;
-  logo_url: string | null;
-  website_url: string | null;
-  description: string | null;
-  course_key: string | null;
-  course_name: string | null;
-  hole_number: number | null;
-  position: number;
-  active: boolean;
-  major: boolean;
-  display_label: string;
-  slot_count: number;
-  login_email: string | null;
-  slots_filled: number;
-}
-
-interface TierDefinition {
-  key: string;
-  label: string;
-  sort_order: number;
-}
-
-interface Tournament {
-  id: string;
-  name: string;
-  course_configs?: CourseConfig[];
-  sponsor_tiers?: TierDefinition[];
-}
-
-interface CourseConfig {
-  key: string;
-  name: string;
-  hole_count: number;
-}
+const API_URL = import.meta.env.VITE_API_URL;
 
 const DEFAULT_TIERS: TierDefinition[] = [
   { key: 'title', label: 'Title Sponsor', sort_order: 0 },
@@ -72,20 +30,20 @@ const DEFAULT_TIERS: TierDefinition[] = [
 ];
 
 const TIER_COLORS = [
-  'text-yellow-500 bg-yellow-50',
-  'text-slate-500 bg-slate-50',
-  'text-amber-500 bg-amber-50',
-  'text-gray-400 bg-gray-50',
+  'text-yellow-600 bg-yellow-50',
+  'text-slate-600 bg-slate-50',
+  'text-amber-600 bg-amber-50',
+  'text-gray-500 bg-gray-50',
   'text-orange-600 bg-orange-50',
-  'text-green-500 bg-green-50',
-  'text-blue-500 bg-blue-50',
-  'text-purple-500 bg-purple-50',
+  'text-green-600 bg-green-50',
+  'text-blue-600 bg-blue-50',
+  'text-purple-600 bg-purple-50',
 ];
 
 const TIER_ICONS = [Star, Award, Medal, Medal, Medal, Flag, Medal, Medal];
 
-function buildTiers(tierDefs: TierDefinition[]) {
-  return tierDefs
+function buildTiers(tierDefs: TierDefinition[]): TierOption[] {
+  return [...tierDefs]
     .sort((a, b) => a.sort_order - b.sort_order)
     .map((t, i) => ({
       value: t.key,
@@ -95,7 +53,7 @@ function buildTiers(tierDefs: TierDefinition[]) {
     }));
 }
 
-function sortSponsorsForDisplay(sponsors: Sponsor[], courseConfigs: CourseConfig[] = []) {
+function sortSponsorsForDisplay(sponsors: AdminSponsor[], courseConfigs: CourseConfig[] = []) {
   const courseOrder = new Map(courseConfigs.map((course, index) => [course.key, index]));
 
   return [...sponsors].sort((a, b) => {
@@ -110,19 +68,36 @@ function sortSponsorsForDisplay(sponsors: Sponsor[], courseConfigs: CourseConfig
   });
 }
 
+function apiErrorMessage(data: unknown, fallback: string): string {
+  if (!data || typeof data !== 'object') return fallback;
+  const error = (data as { error?: unknown; errors?: unknown }).error ?? (data as { errors?: unknown }).errors;
+  if (typeof error === 'string') return error;
+  if (Array.isArray(error)) return error.join(', ');
+  if (error && typeof error === 'object') {
+    const details = (error as { details?: unknown }).details;
+    if (Array.isArray(details)) return details.join(', ');
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+  }
+  return fallback;
+}
+
 export const SponsorManagementPage: React.FC = () => {
   const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
   const { getToken } = useAuth();
 
-  const [tournament, setTournament] = useState<Tournament | null>(null);
-  const [sponsors, setSponsors] = useState<Sponsor[]>([]);
+  const [tournament, setTournament] = useState<ManagedTournament | null>(null);
+  const [tierDefinitions, setTierDefinitions] = useState<TierDefinition[]>(DEFAULT_TIERS);
+  const [sponsors, setSponsors] = useState<AdminSponsor[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [editingSponsor, setEditingSponsor] = useState<Sponsor | null>(null);
+  const [editingSponsor, setEditingSponsor] = useState<AdminSponsor | null>(null);
   const [expandedSponsor, setExpandedSponsor] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'sponsors' | 'tiers' | 'donations'>('sponsors');
+  const [tierFilter, setTierFilter] = useState<string>('all');
+  const [savingWall, setSavingWall] = useState(false);
 
   const startRefresh = useLatestRequest(`${organization?.slug}/${tournamentSlug}`);
 
@@ -134,26 +109,26 @@ export const SponsorManagementPage: React.FC = () => {
     try {
       const token = await getToken();
       if (!isCurrent()) return;
+      const headers = { Authorization: `Bearer ${token}` };
       const tournamentRes = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/organizations/${organization.slug}/tournaments/${tournamentSlug}`
+        `${API_URL}/api/v1/admin/organizations/${organization.slug}/tournaments/${tournamentSlug}`,
+        { headers }
       );
       if (!tournamentRes.ok) throw new Error('Failed to load event');
       const tournamentData = await tournamentRes.json();
       if (!isCurrent()) return;
-      const tid = tournamentData.id || tournamentData.tournament?.id;
-      setTournament({ ...tournamentData, id: tid, sponsor_tiers: tournamentData.sponsor_tiers });
+      const tid = (tournamentData.tournament || tournamentData).id;
 
-      const sponsorsRes = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tid}/sponsors`,
-        { headers: token ? { 'Authorization': `Bearer ${token}` } : {} }
-      );
-      if (!sponsorsRes.ok) throw new Error('Failed to load sponsors');
-      const sponsorsData = await sponsorsRes.json();
+      const manageRes = await fetch(`${API_URL}/api/v1/tournaments/${tid}/sponsors/manage`, { headers });
+      if (!manageRes.ok) throw new Error('Failed to load sponsors');
+      const data = await manageRes.json();
       if (!isCurrent()) return;
-      setSponsors(sponsorsData.sponsors || []);
+      setTournament(data.tournament);
+      setTierDefinitions(data.tier_definitions?.length ? data.tier_definitions : DEFAULT_TIERS);
+      setSponsors(data.sponsors || []);
     } catch {
       if (!isCurrent()) return;
-      toast.error('Failed to load sponsors');
+      toast.error('Could not load sponsors. Please refresh.');
     } finally {
       if (isCurrent()) setLoading(false);
     }
@@ -169,18 +144,103 @@ export const SponsorManagementPage: React.FC = () => {
     );
   }, []);
 
-  const handleSendAccessLink = async (sponsor: Sponsor) => {
-    try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/sponsor_access/request_link`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: sponsor.login_email }) }
-      );
-      if (res.ok) toast.success('Access link sent!');
-      else toast.error('Failed to send access link');
-    } catch { toast.error('Failed to send access link'); }
+  const replaceSponsor = (updated: AdminSponsor) => {
+    setSponsors((prev) => prev.map((sponsor) => (sponsor.id === updated.id ? updated : sponsor)));
   };
 
-  const handleDelete = async (sponsor: Sponsor) => {
+  const handleSendInvite = async (sponsor: AdminSponsor) => {
+    if (!tournament) return;
+    const confirmed = await requestConfirmation({
+      title: 'Email the portal invite?',
+      description: `We will email a sign-in link to ${sponsor.login_email} so ${sponsor.name} can enter their players.`,
+      confirmLabel: 'Send invite',
+    });
+    if (!confirmed) return;
+
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_URL}/api/v1/tournaments/${tournament.id}/sponsors/${sponsor.id}/send_portal_invite`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error(apiErrorMessage(data, 'The invite could not be sent. Try Copy Portal Link instead.'));
+        return;
+      }
+      toast.success(data?.message || 'Portal invite sent');
+      replaceSponsor({ ...sponsor, has_active_portal_link: true, portal_link_issued_at: data?.portal_link_issued_at || sponsor.portal_link_issued_at });
+    } catch {
+      toast.error('The invite could not be sent. Try Copy Portal Link instead.');
+    }
+  };
+
+  const handleQuickSave = async (sponsor: AdminSponsor, changes: SponsorQuickEdit): Promise<boolean> => {
+    if (!tournament) return false;
+    if (changes.slot_count < sponsor.slots_filled) {
+      const confirmed = await requestConfirmation({
+        title: 'Remove entered players?',
+        description: `${sponsor.name} has ${sponsor.slots_filled} players entered. Lowering the slots to ${changes.slot_count} removes the extra players from the event.`,
+        confirmLabel: 'Lower slots',
+        tone: 'danger',
+      });
+      if (!confirmed) return false;
+    }
+
+    const payload: Record<string, unknown> = {
+      slot_count: changes.slot_count,
+      active: changes.active,
+      logo_url: changes.logo_url.trim(),
+    };
+    if (sponsor.tier === 'hole') payload.hole_number = changes.hole_number;
+
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_URL}/api/v1/tournaments/${tournament.id}/sponsors/${sponsor.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sponsor: payload }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error(apiErrorMessage(data, 'Could not save changes.'));
+        return false;
+      }
+      replaceSponsor(data.sponsor);
+      toast.success('Sponsor updated');
+      return true;
+    } catch {
+      toast.error('Could not save changes.');
+      return false;
+    }
+  };
+
+  const handleToggleWall = async () => {
+    if (!tournament) return;
+    const next = !tournament.show_public_sponsors;
+    setSavingWall(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_URL}/api/v1/tournaments/${tournament.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tournament: { show_public_sponsors: next } }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        toast.error(apiErrorMessage(data, 'Could not update the sponsor wall.'));
+        return;
+      }
+      setTournament({ ...tournament, show_public_sponsors: next });
+      toast.success(next ? 'Sponsors are now shown on the public page' : 'Sponsors are now hidden from the public page');
+    } catch {
+      toast.error('Could not update the sponsor wall.');
+    } finally {
+      setSavingWall(false);
+    }
+  };
+
+  const handleDelete = async (sponsor: AdminSponsor) => {
     if (!await requestConfirmation({
       title: 'Delete sponsor?',
       description: `“${sponsor.name}” will be removed from this event’s sponsors.`,
@@ -190,50 +250,74 @@ export const SponsorManagementPage: React.FC = () => {
     try {
       const token = await getToken();
       const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournament?.id}/sponsors/${sponsor.id}`,
-        { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } }
+        `${API_URL}/api/v1/tournaments/${tournament?.id}/sponsors/${sponsor.id}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
       );
       if (!res.ok) throw new Error('Failed to delete');
       toast.success('Sponsor deleted');
       fetchData();
-    } catch { toast.error('Failed to delete sponsor'); }
+    } catch { toast.error('Could not delete sponsor.'); }
   };
 
-  const TIERS = buildTiers(tournament?.sponsor_tiers || DEFAULT_TIERS);
+  const TIERS = buildTiers(tierDefinitions);
+  const teamSize = tournament?.team_size || 1;
+  const courseConfigs = tournament?.course_configs || [];
+
+  // Sponsors on tiers that were renamed or removed still need a home.
+  const knownTiers = new Set(TIERS.map((tier) => tier.value));
+  for (const sponsor of sponsors) {
+    if (knownTiers.has(sponsor.tier)) continue;
+    knownTiers.add(sponsor.tier);
+    TIERS.push({ value: sponsor.tier, label: sponsor.tier_display || sponsor.tier, icon: Medal, color: TIER_COLORS[3] });
+  }
 
   const sponsorsByTier = TIERS.reduce((acc, tier) => {
-    acc[tier.value] = sponsors.filter(s => s.tier === tier.value);
+    acc[tier.value] = sponsors.filter((s) => s.tier === tier.value);
     return acc;
-  }, {} as Record<string, Sponsor[]>);
+  }, {} as Record<string, AdminSponsor[]>);
+
+  const activeSponsors = sponsors.filter((s) => s.active);
+  const portalSlotsTotal = activeSponsors.reduce((sum, s) => sum + (s.slot_count || 0), 0);
+  const portalSlotsFilled = activeSponsors.reduce((sum, s) => sum + Math.min(s.slots_filled || 0, s.slot_count || 0), 0);
+  const fillPercent = portalSlotsTotal > 0 ? Math.round((portalSlotsFilled / portalSlotsTotal) * 100) : 0;
+  const visibleTiers = tierFilter === 'all' ? TIERS : TIERS.filter((tier) => tier.value === tierFilter);
 
   if (loading) {
     return (
-      <div className="min-h-[50vh] flex items-center justify-center rounded-3xl bg-white">
-        <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
+      <div className="flex min-h-[50vh] items-center justify-center rounded-3xl bg-white">
+        <p className="text-base text-gray-600">Loading sponsors…</p>
       </div>
     );
   }
 
+  const tabClass = (tab: typeof activeTab) => `inline-flex min-h-[48px] items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium ${
+    activeTab === tab ? 'border-brand-600 text-brand-700' : 'border-transparent text-gray-600 hover:text-gray-900'
+  }`;
+
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
       {confirmationDialog}
-      <section className="rounded-[28px] bg-brand-600 px-4 sm:px-6 py-4 sm:py-5 text-brand-foreground shadow-sm lg:px-8">
-        <div className="max-w-6xl mx-auto">
+      <section className="rounded-[28px] bg-brand-600 px-4 py-4 text-brand-foreground shadow-sm sm:px-6 sm:py-5 lg:px-8">
+        <div className="mx-auto max-w-6xl">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <Link to={adminEventPath(tournamentSlug || '')} className="inline-flex items-center gap-2 text-white/80 hover:text-white mb-1 sm:mb-2 text-sm">
-                <ArrowLeft className="w-4 h-4" /> Back to Tournament
+              <Link to={adminEventPath(tournamentSlug || '')} className="mb-1 inline-flex items-center gap-2 text-sm text-white/80 hover:text-white sm:mb-2">
+                <ArrowLeft className="h-4 w-4" /> Back to Tournament
               </Link>
-              <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2 sm:gap-3">
-                <Building2 className="w-6 h-6 sm:w-8 sm:h-8 flex-shrink-0" /> Sponsor Management
+              <h1 className="flex items-center gap-2 text-xl font-bold sm:gap-3 sm:text-2xl">
+                <Building2 className="h-6 w-6 flex-shrink-0 sm:h-8 sm:w-8" /> Sponsor Management
               </h1>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
-              <button onClick={fetchData} className="p-2 bg-white/10 rounded-lg hover:bg-white/20">
-                <RefreshCw className="w-5 h-5" />
+              <button type="button" onClick={fetchData} aria-label="Refresh sponsors" className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-lg bg-white/10 hover:bg-white/20">
+                <RefreshCw className="h-5 w-5" />
               </button>
-              <button onClick={() => { setEditingSponsor(null); setShowModal(true); }} className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-white text-brand-600 rounded-lg hover:bg-brand-50 font-medium text-sm">
-                <Plus className="w-4 h-4 sm:w-5 sm:h-5" /> Add Sponsor
+              <button
+                type="button"
+                onClick={() => { setEditingSponsor(null); setShowModal(true); }}
+                className="inline-flex min-h-[48px] items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+              >
+                <Plus className="h-5 w-5" /> Add Sponsor
               </button>
             </div>
           </div>
@@ -241,128 +325,166 @@ export const SponsorManagementPage: React.FC = () => {
       </section>
 
       {/* Tabs */}
-      <div className="max-w-6xl mx-auto px-4">
-        <div className="flex items-center gap-2 border-b border-gray-200">
-          <button
-            type="button"
-            onClick={() => setActiveTab('sponsors')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'sponsors'
-                ? 'border-brand-600 text-brand-700'
-                : 'border-transparent text-gray-500 hover:text-gray-800'
-            }`}
-          >
-            <Building2 className="w-4 h-4" />
-            Sponsors ({sponsors.length})
+      <div className="mx-auto max-w-6xl px-4">
+        <div className="flex items-center gap-2 overflow-x-auto border-b border-gray-200">
+          <button type="button" onClick={() => setActiveTab('sponsors')} className={tabClass('sponsors')}>
+            <Building2 className="h-4 w-4" /> Sponsors ({sponsors.length})
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('tiers')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'tiers'
-                ? 'border-brand-600 text-brand-700'
-                : 'border-transparent text-gray-500 hover:text-gray-800'
-            }`}
-          >
-            <Tag className="w-4 h-4" />
-            Priced Tiers
+          <button type="button" onClick={() => setActiveTab('tiers')} className={tabClass('tiers')}>
+            <Tag className="h-4 w-4" /> Priced Tiers
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('donations')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'donations'
-                ? 'border-brand-600 text-brand-700'
-                : 'border-transparent text-gray-500 hover:text-gray-800'
-            }`}
-          >
-            <Heart className="w-4 h-4" />
-            Donations
+          <button type="button" onClick={() => setActiveTab('donations')} className={tabClass('donations')}>
+            <Heart className="h-4 w-4" /> Donations
           </button>
         </div>
       </div>
 
       {activeTab === 'tiers' && tournament?.id ? (
-        <main className="max-w-6xl mx-auto px-4 pb-8">
-          <SponsorTiersAdminPanel
-            tournamentId={Number(tournament.id)}
-            orgSlug={organization?.slug}
-            tournamentSlug={tournamentSlug}
-          />
+        <main className="mx-auto max-w-6xl px-4 pb-8">
+          <SponsorTiersAdminPanel tournamentId={Number(tournament.id)} orgSlug={organization?.slug} tournamentSlug={tournamentSlug} />
         </main>
       ) : activeTab === 'donations' && tournament?.id ? (
-        <main className="max-w-6xl mx-auto px-4 pb-8">
-          <DonationsAdminPanel
-            tournamentId={Number(tournament.id)}
-            orgSlug={organization?.slug}
-            tournamentSlug={tournamentSlug}
-          />
+        <main className="mx-auto max-w-6xl px-4 pb-8">
+          <DonationsAdminPanel tournamentId={Number(tournament.id)} orgSlug={organization?.slug} tournamentSlug={tournamentSlug} />
         </main>
       ) : (
       <>
-      {/* Stats */}
-      <div className="max-w-6xl mx-auto px-4 py-3 sm:py-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
-          <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4 flex items-center gap-2.5 sm:gap-3">
-            <Building2 className="w-6 h-6 sm:w-8 sm:h-8 text-brand-500 flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="text-xs sm:text-sm text-gray-500">Total Sponsors</p>
-              <p className="text-lg sm:text-xl font-bold">{sponsors.length}</p>
+      {/* Summary strip */}
+      <section aria-label="Sponsor summary" className="mx-auto grid max-w-6xl grid-cols-1 gap-3 px-4 md:grid-cols-3">
+        <div className="flex items-center gap-3 rounded-xl bg-white p-4 shadow-sm">
+          <Building2 className="h-8 w-8 flex-shrink-0 text-brand-600" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-sm text-gray-600">Total Sponsors</p>
+            <p className="text-2xl font-bold text-gray-900">{activeSponsors.length}</p>
+            {sponsors.length > activeSponsors.length && (
+              <p className="text-xs text-gray-500">{sponsors.length - activeSponsors.length} hidden</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <Users className="h-8 w-8 flex-shrink-0 text-brand-600" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-gray-600">Portal Slots Filled</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {portalSlotsFilled} / {portalSlotsTotal} <span className="text-base font-medium text-gray-600">players</span>
+              </p>
             </div>
           </div>
-          {TIERS.map((tier, i) => {
-            const count = (sponsorsByTier[tier.value] || []).length;
-            if (count === 0) return null;
-            const TierIcon = tier.icon;
-            return (
-              <div key={tier.value} className={`bg-white rounded-xl shadow-sm p-3 sm:p-4 flex items-center gap-2.5 sm:gap-3 ${i === TIERS.length - 1 ? 'col-span-2 sm:col-span-1' : ''}`}>
-                <TierIcon className={`w-6 h-6 sm:w-8 sm:h-8 flex-shrink-0 ${tier.color.split(' ')[0]}`} />
-                <div className="min-w-0">
-                  <p className="text-xs sm:text-sm text-gray-500 truncate">{tier.label}</p>
-                  <p className="text-lg sm:text-xl font-bold">{count}</p>
-                </div>
-              </div>
-            );
-          })}
+          <div
+            className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-gray-100"
+            role="progressbar"
+            aria-label="Portal slots filled"
+            aria-valuemin={0}
+            aria-valuemax={portalSlotsTotal}
+            aria-valuenow={portalSlotsFilled}
+          >
+            <div className="h-full rounded-full bg-brand-600" style={{ width: `${fillPercent}%` }} />
+          </div>
         </div>
-      </div>
 
-      {/* Sponsors by Tier */}
-      <main className="max-w-6xl mx-auto px-4 pb-8">
-        {TIERS.map(tier => {
-          const tierSponsors = sortSponsorsForDisplay(sponsorsByTier[tier.value] || [], tournament?.course_configs || []);
+        <div className="rounded-xl bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm text-gray-600">Public Sponsor Wall</p>
+              <p className="flex items-center gap-2 text-lg font-bold text-gray-900">
+                {tournament?.show_public_sponsors
+                  ? <><Eye className="h-5 w-5 text-green-600" aria-hidden="true" /> Visible</>
+                  : <><EyeOff className="h-5 w-5 text-gray-500" aria-hidden="true" /> Hidden</>}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!tournament?.show_public_sponsors}
+              aria-label="Show sponsors on the public event page"
+              onClick={handleToggleWall}
+              disabled={savingWall || !tournament}
+              className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full disabled:opacity-50 ${tournament?.show_public_sponsors ? 'bg-brand-600' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-6 w-6 rounded-full bg-white shadow ${tournament?.show_public_sponsors ? 'translate-x-7' : 'translate-x-1'}`} />
+            </button>
+          </div>
+          {tournament?.public_page_url && (
+            <a
+              href={tournament.public_page_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 text-sm font-semibold text-gray-800 hover:bg-gray-50"
+            >
+              <ExternalLink className="h-4 w-4" aria-hidden="true" /> Preview Public Page
+            </a>
+          )}
+          {tournament && !tournament.public_listed && (
+            <p className="mt-2 text-xs text-gray-500">This event page is not published yet, so the public preview may not load.</p>
+          )}
+        </div>
+      </section>
+
+      {/* Tier filter pills */}
+      {sponsors.length > 0 && (
+        <nav aria-label="Filter by tier" className="mx-auto flex max-w-6xl flex-wrap gap-2 px-4">
+          {[{ value: 'all', label: 'All', count: sponsors.length }, ...TIERS.map((tier) => ({ value: tier.value, label: tier.label, count: (sponsorsByTier[tier.value] || []).length }))]
+            .filter((pill) => pill.value === 'all' || pill.count > 0)
+            .map((pill) => (
+              <button
+                key={pill.value}
+                type="button"
+                aria-pressed={tierFilter === pill.value}
+                onClick={() => setTierFilter(pill.value)}
+                className={`inline-flex min-h-[44px] items-center gap-2 rounded-full border px-4 text-sm font-medium ${
+                  tierFilter === pill.value
+                    ? 'border-brand-600 bg-brand-600 text-white'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {pill.label}
+                <span className={`rounded-full px-2 text-xs ${tierFilter === pill.value ? 'bg-white/20' : 'bg-gray-100'}`}>{pill.count}</span>
+              </button>
+            ))}
+        </nav>
+      )}
+
+      {/* Sponsors by tier */}
+      <main className="mx-auto max-w-6xl px-4 pb-8">
+        {visibleTiers.map((tier) => {
+          const tierSponsors = sortSponsorsForDisplay(sponsorsByTier[tier.value] || [], courseConfigs);
           if (tierSponsors.length === 0) return null;
           const TierIcon = tier.icon;
 
           return (
-            <div key={tier.value} className="mb-6">
-              <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 mb-3">
-                <span className={`p-2 rounded-lg ${tier.color}`}><TierIcon className="w-5 h-5" /></span>
+            <section key={tier.value} className="mb-6" aria-label={tier.label}>
+              <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                <span className={`rounded-lg p-2 ${tier.color}`}><TierIcon className="h-5 w-5" /></span>
                 {tier.label} ({tierSponsors.length})
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {tierSponsors.map(sponsor => (
-                  <SponsorCard
+              <div className="space-y-3">
+                {tierSponsors.map((sponsor) => (
+                  <SponsorAdminCard
                     key={sponsor.id}
                     sponsor={sponsor}
-                    tournamentId={tournament?.id || ''}
+                    tournamentId={tournament?.id || 0}
+                    teamSize={teamSize}
+                    courseConfigs={courseConfigs}
                     expanded={expandedSponsor === sponsor.id}
                     onToggleExpand={() => setExpandedSponsor(expandedSponsor === sponsor.id ? null : sponsor.id)}
                     onEdit={() => { setEditingSponsor(sponsor); setShowModal(true); }}
                     onDelete={() => handleDelete(sponsor)}
-                    onSendPortalLink={() => handleSendAccessLink(sponsor)}
+                    onSendInvite={() => handleSendInvite(sponsor)}
+                    onQuickSave={(changes) => handleQuickSave(sponsor, changes)}
                     onSlotsFilledChange={handleSponsorSlotsFilledChange}
                   />
                 ))}
               </div>
-            </div>
+            </section>
           );
         })}
 
         {sponsors.length === 0 && (
-          <div className="text-center py-12 bg-white rounded-xl">
-            <Building2 className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500">No sponsors yet. Add your first sponsor!</p>
+          <div className="rounded-xl bg-white py-12 text-center">
+            <Building2 className="mx-auto mb-3 h-12 w-12 text-gray-300" />
+            <p className="text-base text-gray-600">No sponsors yet. Use Add Sponsor to create the first one.</p>
           </div>
         )}
       </main>
@@ -372,8 +494,9 @@ export const SponsorManagementPage: React.FC = () => {
       {showModal && (
         <SponsorModal
           sponsor={editingSponsor}
-          tournamentId={tournament?.id || ''}
-          courseConfigs={tournament?.course_configs || []}
+          tournamentId={tournament?.id || 0}
+          teamSize={teamSize}
+          courseConfigs={courseConfigs}
           tiers={TIERS}
           onClose={() => { setShowModal(false); setEditingSponsor(null); }}
           onSuccess={() => { setShowModal(false); setEditingSponsor(null); fetchData(); }}
@@ -384,289 +507,17 @@ export const SponsorManagementPage: React.FC = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Sponsor Card with expandable player slots
-// ---------------------------------------------------------------------------
-const SponsorCard: React.FC<{
-  sponsor: Sponsor;
-  tournamentId: string;
-  expanded: boolean;
-  onToggleExpand: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onSendPortalLink: () => void;
-  onSlotsFilledChange: (sponsorId: number, slotsFilled: number) => void;
-}> = ({ sponsor, tournamentId, expanded, onToggleExpand, onEdit, onDelete, onSendPortalLink, onSlotsFilledChange }) => {
-  const { getToken } = useAuth();
-  const teamCount = Math.floor(sponsor.slot_count / 2);
-  const hasPortal = !!sponsor.login_email;
-  const hasTeams = sponsor.slot_count > 0;
-
-  const [slots, setSlots] = useState<SponsorSlot[]>([]);
-  const [loadingSlots, setLoadingSlots] = useState(false);
-  const [slotsLoaded, setSlotsLoaded] = useState(false);
-  const slotsLoadedRef = useRef(false);
-  const [editingSlotId, setEditingSlotId] = useState<number | null>(null);
-  const [slotForm, setSlotForm] = useState({ player_name: '', player_email: '', player_phone: '' });
-  const [savingSlot, setSavingSlot] = useState(false);
-
-  const fetchSlots = useCallback(async (options?: { blocking?: boolean }) => {
-    if (!tournamentId) return;
-    const blocking = options?.blocking ?? !slotsLoadedRef.current;
-    if (blocking) setLoadingSlots(true);
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournamentId}/sponsors/${sponsor.id}/slots`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const loadedSlots = data.slots || [];
-        setSlots(loadedSlots);
-        setSlotsLoaded(true);
-        slotsLoadedRef.current = true;
-        onSlotsFilledChange(
-          sponsor.id,
-          loadedSlots.filter((slot: SponsorSlot) => !!slot.player_name?.trim()).length
-        );
-      }
-    } catch { /* silent */ } finally {
-      if (blocking) setLoadingSlots(false);
-    }
-  }, [tournamentId, sponsor.id, getToken, onSlotsFilledChange]);
-
-  useEffect(() => {
-    setSlots([]);
-    setSlotsLoaded(false);
-    slotsLoadedRef.current = false;
-    setEditingSlotId(null);
-  }, [sponsor.id]);
-
-  useEffect(() => {
-    if (!expanded || !hasTeams) return;
-    if (!slotsLoaded || slots.length !== sponsor.slot_count) {
-      fetchSlots({ blocking: !slotsLoaded });
-    }
-  }, [expanded, hasTeams, slotsLoaded, slots.length, sponsor.slot_count, fetchSlots]);
-
-  const startEditing = (slot: SponsorSlot) => {
-    setEditingSlotId(slot.id);
-    setSlotForm({
-      player_name: slot.player_name || '',
-      player_email: slot.player_email || '',
-      player_phone: slot.player_phone || '',
-    });
-  };
-
-  const saveSlot = async (slotId: number) => {
-    setSavingSlot(true);
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournamentId}/sponsors/${sponsor.id}/slots/${slotId}`,
-        {
-          method: 'PATCH',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(slotForm),
-        }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const updatedSlot = data.slot as SponsorSlot;
-        const nextSlots = slots.map((slot) => (slot.id === slotId ? updatedSlot : slot));
-
-        setSlots(nextSlots);
-        onSlotsFilledChange(
-          sponsor.id,
-          nextSlots.filter((slot) => !!slot.player_name?.trim()).length
-        );
-        toast.success('Player updated');
-        setEditingSlotId(null);
-      } else {
-        const data = await res.json().catch(() => null);
-        toast.error(data?.error || 'Failed to update');
-      }
-    } catch { toast.error('Failed to update'); } finally {
-      setSavingSlot(false);
-    }
-  };
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-      {/* Card header */}
-      <div className="flex items-center gap-3 p-4 pb-3">
-        {sponsor.logo_url ? (
-          <img src={sponsor.logo_url} alt={sponsor.name} className="w-10 h-10 object-contain rounded-lg bg-gray-50 flex-shrink-0" />
-        ) : (
-          <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-            <Building2 className="w-5 h-5 text-gray-400" />
-          </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-gray-900 truncate text-sm">{sponsor.name}</h3>
-          <p className="text-xs text-gray-500">{sponsor.display_label}</p>
-        </div>
-        <div className="flex gap-0.5 flex-shrink-0">
-          <button onClick={onEdit} className="p-1.5 text-gray-400 hover:text-brand-600 hover:bg-gray-100 rounded-lg">
-            <Edit className="w-3.5 h-3.5" />
-          </button>
-          <button onClick={onDelete} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg">
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Metadata pills */}
-      {(hasTeams || hasPortal || sponsor.website_url) && (
-        <div className="px-4 pb-3 flex flex-wrap items-center gap-1.5">
-          {hasTeams && (
-            <button
-              onClick={onToggleExpand}
-              className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium transition ${
-                (sponsor.slots_filled || 0) >= sponsor.slot_count
-                  ? 'bg-green-50 text-green-700 hover:bg-green-100'
-                  : (sponsor.slots_filled || 0) > 0
-                    ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-              }`}
-            >
-              <Users className="w-2.5 h-2.5" />
-              {teamCount} team{teamCount !== 1 ? 's' : ''} ({sponsor.slots_filled || 0}/{sponsor.slot_count})
-              {expanded ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
-            </button>
-          )}
-          {sponsor.website_url && (
-            <a href={sponsor.website_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium">
-              <ExternalLink className="w-2.5 h-2.5" /> Website
-            </a>
-          )}
-          {hasPortal && (
-            <button onClick={onSendPortalLink} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-brand-50 text-brand-600 hover:bg-brand-100 font-medium">
-              <Mail className="w-2.5 h-2.5" /> Send Portal Link
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Expandable player slots */}
-      {expanded && hasTeams && (
-        <div className="border-t border-gray-100 bg-gray-50/50">
-          <div className="px-4 py-2">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Sponsored Players</p>
-          </div>
-          {loadingSlots ? (
-            <div className="flex items-center justify-center py-4">
-              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-            </div>
-          ) : slots.length === 0 ? (
-            <p className="px-4 pb-3 text-xs text-gray-400">No player slots configured.</p>
-          ) : (
-            <div className="px-3 pb-3 space-y-3">
-              {(() => {
-                const teams: typeof slots[] = [];
-                for (let i = 0; i < slots.length; i += 2) teams.push(slots.slice(i, i + 2));
-                return teams.map((teamSlots, teamIdx) => (
-                  <div key={teamIdx}>
-                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1 px-1">Team {teamIdx + 1}</p>
-                    <div className="space-y-1.5">
-                      {teamSlots.map(slot => (
-                        <div key={slot.id} className="bg-white rounded-lg border border-gray-200">
-                          {editingSlotId === slot.id ? (
-                            <div className="p-3 space-y-3">
-                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Player #{slot.slot_number}</p>
-                              <div>
-                                <label className="block text-[11px] font-medium text-gray-600 mb-1">Name</label>
-                                <input
-                                  type="text"
-                                  placeholder="Player name"
-                                  value={slotForm.player_name}
-                                  onChange={e => setSlotForm({ ...slotForm, player_name: e.target.value })}
-                                  className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
-                                  autoFocus
-                                />
-                              </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <div>
-                                  <label className="block text-[11px] font-medium text-gray-600 mb-1">Email</label>
-                                  <input
-                                    type="email"
-                                    placeholder="player@email.com"
-                                    value={slotForm.player_email}
-                                    onChange={e => setSlotForm({ ...slotForm, player_email: e.target.value })}
-                                    className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-[11px] font-medium text-gray-600 mb-1">Phone</label>
-                                  <input
-                                    type="tel"
-                                    placeholder="(671) 555-1234"
-                                    value={slotForm.player_phone}
-                                    onChange={e => setSlotForm({ ...slotForm, player_phone: e.target.value })}
-                                    className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex justify-end gap-2 pt-1">
-                                <button onClick={() => setEditingSlotId(null)} className="text-xs px-3 py-1.5 rounded-lg text-gray-600 hover:bg-gray-100 font-medium">Cancel</button>
-                                <button
-                                  onClick={() => saveSlot(slot.id)}
-                                  disabled={savingSlot}
-                                  className="text-xs px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center gap-1 font-medium"
-                                >
-                                  <Save className="w-3 h-3" /> Save
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2 p-2.5">
-                              <span className="text-[10px] font-bold text-gray-400 w-5 flex-shrink-0">#{slot.slot_number}</span>
-                              {slot.player_name ? (
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-gray-900 truncate">{slot.player_name}</p>
-                                  <p className="text-xs text-gray-400 truncate">
-                                    {[slot.player_email, slot.player_phone].filter(Boolean).join(' · ') || 'No contact info'}
-                                  </p>
-                                </div>
-                              ) : (
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm text-gray-400 italic">Empty slot</p>
-                                </div>
-                              )}
-                              <button
-                                onClick={() => startEditing(slot)}
-                                className="p-1.5 text-gray-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg flex-shrink-0"
-                                title="Edit player"
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ));
-              })()}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ---------------------------------------------------------------------------
 // Sponsor Modal (Create / Edit)
 // ---------------------------------------------------------------------------
 const SponsorModal: React.FC<{
-  sponsor: Sponsor | null;
-  tournamentId: string;
+  sponsor: AdminSponsor | null;
+  tournamentId: number;
+  teamSize: number;
   courseConfigs: CourseConfig[];
-  tiers: { value: string; label: string; icon: React.ComponentType<{ className?: string }>; color: string }[];
+  tiers: TierOption[];
   onClose: () => void;
   onSuccess: () => void;
-}> = ({ sponsor, tournamentId, courseConfigs, tiers, onClose, onSuccess }) => {
+}> = ({ sponsor, tournamentId, teamSize, courseConfigs, tiers, onClose, onSuccess }) => {
   const { getToken } = useAuth();
   const [saving, setSaving] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
@@ -674,14 +525,14 @@ const SponsorModal: React.FC<{
   const [form, setForm] = useState({
     name: sponsor?.name || '',
     tier: sponsor?.tier || tiers[tiers.length - 1]?.value || 'bronze',
-    logo_url: sponsor?.logo_url || '',
+    logo_url: sponsor?.raw_logo_url || '',
     website_url: sponsor?.website_url || '',
     description: sponsor?.description || '',
     course_key: sponsor?.course_key || '',
     hole_number: sponsor?.hole_number || '',
     active: sponsor?.active ?? true,
     login_email: sponsor?.login_email || '',
-    team_count: Math.floor((sponsor?.slot_count || 0) / 2),
+    slot_count: sponsor?.slot_count || 0,
   });
 
   const handleLogoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -701,9 +552,9 @@ const SponsorModal: React.FC<{
     try {
       const token = await getToken();
       const url = sponsor
-        ? `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournamentId}/sponsors/${sponsor.id}`
-        : `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${tournamentId}/sponsors`;
-      const slotCount = form.team_count * 2;
+        ? `${API_URL}/api/v1/tournaments/${tournamentId}/sponsors/${sponsor.id}`
+        : `${API_URL}/api/v1/tournaments/${tournamentId}/sponsors`;
+      const slotCount = form.slot_count;
       let res: Response;
 
       if (logoFile) {
@@ -740,7 +591,7 @@ const SponsorModal: React.FC<{
         });
       }
 
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || 'Failed to save'); }
+      if (!res.ok) { const data = await res.json().catch(() => null); throw new Error(apiErrorMessage(data, 'Failed to save')); }
       toast.success(sponsor ? 'Sponsor updated' : 'Sponsor created');
       onSuccess();
     } catch (err) {
@@ -753,13 +604,13 @@ const SponsorModal: React.FC<{
       <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">{sponsor ? 'Edit Sponsor' : 'Add Sponsor'}</h2>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-lg hover:bg-gray-100"><X className="w-5 h-5" /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Name *</label>
-            <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full border rounded-lg px-3 py-2" required />
+            <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full min-h-[48px] border rounded-lg px-3 py-2 text-base" required />
           </div>
 
           <div>
@@ -775,7 +626,7 @@ const SponsorModal: React.FC<{
                   hole_number: nextTier === 'hole' ? prev.hole_number : '',
                 }));
               }}
-              className="w-full border rounded-lg px-3 py-2"
+              className="w-full min-h-[48px] border rounded-lg px-3 py-2 text-base"
             >
               {tiers.map(t => (<option key={t.value} value={t.value}>{t.label}</option>))}
             </select>
@@ -788,7 +639,7 @@ const SponsorModal: React.FC<{
                 <select
                   value={form.course_key}
                   onChange={e => setForm({ ...form, course_key: e.target.value, hole_number: '' })}
-                  className="w-full border rounded-lg px-3 py-2"
+                  className="w-full min-h-[48px] border rounded-lg px-3 py-2 text-base"
                   required
                 >
                   <option value="">Select course...</option>
@@ -799,7 +650,7 @@ const SponsorModal: React.FC<{
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Hole Number *</label>
-                <select value={form.hole_number} onChange={e => setForm({ ...form, hole_number: e.target.value })} className="w-full border rounded-lg px-3 py-2" required>
+                <select value={form.hole_number} onChange={e => setForm({ ...form, hole_number: e.target.value })} className="w-full min-h-[48px] border rounded-lg px-3 py-2 text-base" required>
                   <option value="">Select hole...</option>
                   {Array.from({ length: selectedCourse?.hole_count || 0 }, (_, i) => i + 1).map(hole => (
                     <option key={hole} value={hole}>{selectedCourse?.name} {hole}</option>
@@ -812,7 +663,7 @@ const SponsorModal: React.FC<{
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-1">Sponsor Logo</label>
             <div className="space-y-2">
-              <label className="flex items-center justify-center gap-2 px-3 py-2.5 border-2 border-dashed border-neutral-300 rounded-xl cursor-pointer hover:border-brand-400 hover:bg-brand-50/30 transition text-sm text-neutral-500">
+              <label className="flex items-center justify-center gap-2 px-3 py-2.5 border-2 border-dashed border-neutral-300 rounded-xl cursor-pointer hover:border-brand-400 hover:bg-brand-50/30 text-sm text-neutral-500">
                 <Upload className="w-4 h-4" /> {logoFile ? logoFile.name : 'Upload image'}
                 <input type="file" accept="image/*" onChange={handleLogoFileChange} className="hidden" />
               </label>
@@ -821,7 +672,7 @@ const SponsorModal: React.FC<{
                   <p className="text-xs text-neutral-400 mb-1">Or paste a URL:</p>
                   <input type="url" placeholder="https://example.com/logo.png" value={form.logo_url}
                     onChange={e => { setForm({ ...form, logo_url: e.target.value }); setLogoFile(null); setLogoPreview(null); }}
-                    className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
+                    className="w-full min-h-[48px] rounded-xl border border-neutral-200 px-3 py-2 text-base focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
                 </div>
               )}
               {(logoPreview || form.logo_url) && (
@@ -836,12 +687,12 @@ const SponsorModal: React.FC<{
 
           <div>
             <label className="block text-sm font-medium mb-1">Website URL</label>
-            <input type="url" value={form.website_url} onChange={e => setForm({ ...form, website_url: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="https://..." />
+            <input type="url" value={form.website_url} onChange={e => setForm({ ...form, website_url: e.target.value })} className="w-full min-h-[48px] border rounded-lg px-3 py-2 text-base" placeholder="https://..." />
           </div>
 
           <div>
             <label className="block text-sm font-medium mb-1">Description</label>
-            <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className="w-full border rounded-lg px-3 py-2" rows={2} />
+            <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} className="w-full min-h-[48px] border rounded-lg px-3 py-2 text-base" rows={2} />
           </div>
 
           <div>
@@ -850,27 +701,31 @@ const SponsorModal: React.FC<{
             </label>
             <input type="email" placeholder="sponsor@company.com" value={form.login_email || ''}
               onChange={e => setForm({ ...form, login_email: e.target.value })}
-              className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
+              className="w-full min-h-[48px] rounded-xl border border-neutral-200 px-3 py-2 text-base focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-neutral-700 mb-1">
-              Sponsored Teams <span className="text-xs text-neutral-400 ml-1">(each team = 2 players)</span>
+            <label htmlFor="sponsor-slot-count" className="block text-sm font-medium text-neutral-700 mb-1">
+              Player slots <span className="text-xs text-neutral-500 ml-1">(players this sponsor can enter in the portal)</span>
             </label>
-            <input type="number" min="0" max="10" placeholder="0" value={form.team_count || 0}
-              onChange={e => setForm({ ...form, team_count: parseInt(e.target.value) || 0 })}
-              className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
-            {form.team_count > 0 && (<p className="text-xs text-neutral-500 mt-1">= {form.team_count * 2} player slots in the sponsor portal</p>)}
+            <input id="sponsor-slot-count" type="number" min="0" max="100" inputMode="numeric" placeholder="0" value={form.slot_count || 0}
+              onChange={e => setForm({ ...form, slot_count: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              className="w-full min-h-[48px] rounded-xl border border-neutral-200 px-3 py-2 text-base focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
+            <p className="text-xs text-neutral-500 mt-1">
+              {form.slot_count > 0
+                ? `= ${describeSlotTeams(form.slot_count, teamSize)} (${teamSize === 1 ? 'individual players' : `${teamSize} players per team`})`
+                : `Tip: this event uses ${teamSize === 1 ? 'individual players' : `teams of ${teamSize}`}.`}
+            </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="active" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} />
-            <label htmlFor="active" className="text-sm">Active (visible on public pages)</label>
-          </div>
+          <label htmlFor="active" className="flex min-h-[48px] cursor-pointer items-center gap-3">
+            <input type="checkbox" id="active" className="h-5 w-5" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} />
+            <span className="text-base">Active (visible on public pages)</span>
+          </label>
 
           <div className="flex gap-3 pt-4">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50">
+            <button type="button" onClick={onClose} className="flex-1 min-h-[48px] px-4 py-2 border rounded-lg hover:bg-gray-50">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 min-h-[48px] px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50">
               {saving ? 'Saving...' : (sponsor ? 'Update' : 'Create')}
             </button>
           </div>

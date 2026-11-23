@@ -101,9 +101,23 @@ class Sponsor < ApplicationRecord
     token = SecureRandom.urlsafe_base64(32)
     update!(
       access_token: token,
-      access_token_expires_at: Time.current + ACCESS_TOKEN_EXPIRY
+      access_token_expires_at: Time.current + ACCESS_TOKEN_EXPIRY,
+      portal_link_issued_at: Time.current
     )
     token
+  end
+
+  # Admin-issued portal links (email invite or copied link) reuse a still-valid
+  # token and refresh its expiry, so a link the sponsor already received keeps
+  # working when an admin shares the portal a second way.
+  def issue_portal_access_token!
+    return generate_access_token! unless access_token_valid?
+
+    update!(
+      access_token_expires_at: Time.current + ACCESS_TOKEN_EXPIRY,
+      portal_link_issued_at: Time.current
+    )
+    access_token
   end
 
   def generate_portal_session_token!(verified_email:)

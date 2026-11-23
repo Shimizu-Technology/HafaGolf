@@ -1,8 +1,13 @@
 module Api
   module V1
     class SponsorAccessController < BaseController
+      include SponsorPortalSession
+
       skip_before_action :authenticate_user!
       skip_around_action :with_tenant_rls_context
+      before_action :authenticate_sponsor!, only: [:sponsorships, :switch]
+      around_action :with_tenant_rls_context, only: [:sponsorships, :switch]
+      before_action -> { require_feature!(:sponsors, tournament: @sponsor.tournament) }, only: [:sponsorships, :switch]
 
       # POST /api/v1/sponsor_access/request_link
       def request_link
@@ -96,6 +101,55 @@ module Api
           return
         end
 
+        render json: portal_payload(sponsor, email)
+      end
+
+      # GET /api/v1/sponsor_access/sponsorships
+      # Lists every active sponsorship for the verified sponsor email inside the
+      # SAME organization as the current portal session, so a sponsor of several
+      # events can switch between them. Never crosses organizations.
+      def sponsorships
+        siblings = sibling_sponsorships(@sponsor)
+        filled_counts = SponsorSlot.where(sponsor_id: siblings.map(&:id))
+                                   .where("TRIM(COALESCE(player_name, '')) <> ''")
+                                   .group(:sponsor_id).count
+
+        render json: {
+          current_sponsor_id: @sponsor.id,
+          sponsorships: siblings.map do |sponsor|
+            tournament = sponsor.tournament
+            {
+              sponsor_id: sponsor.id,
+              sponsor_name: sponsor.name,
+              tier_display: sponsor.tier_display,
+              slot_count: sponsor.slot_count.to_i,
+              filled_count: filled_counts.fetch(sponsor.id, 0),
+              tournament_name: tournament.name,
+              tournament_year: tournament.year,
+              event_date: tournament.event_date,
+              current: sponsor.id == @sponsor.id
+            }
+          end
+        }
+      end
+
+      # POST /api/v1/sponsor_access/switch { sponsor_id }
+      # Mints a portal session for another sponsorship that shares the verified
+      # email within the same organization.
+      def switch
+        target = sibling_sponsorships(@sponsor).find { |sponsor| sponsor.id == params[:sponsor_id].to_i }
+
+        unless target
+          render json: { error: "That sponsorship is not available for this email." }, status: :not_found
+          return
+        end
+
+        render json: portal_payload(target, @sponsor.login_email.to_s.downcase)
+      end
+
+      private
+
+      def portal_payload(sponsor, email)
         session_token = TenantContext.with_organization(sponsor.tournament.organization_id) do
           sponsor.generate_portal_session_token!(verified_email: email)
         end
@@ -111,7 +165,7 @@ module Api
                  sponsor.logo_url
                end
 
-        render json: {
+        {
           sponsor: {
             id: sponsor.id,
             name: sponsor.name,
@@ -122,15 +176,7 @@ module Api
             logo_url: logo,
             website_url: sponsor.website_url
           },
-          tournament: {
-            name: tournament.name,
-            waiver_enabled: tournament.waiver_enabled,
-            event_date: tournament.event_date,
-            sponsor_edit_deadline: tournament.sponsor_edit_deadline&.iso8601,
-            contact_name: tournament.contact_name,
-            contact_email: tournament.contact_email,
-            contact_phone: tournament.contact_phone
-          },
+          tournament: portal_tournament_json(tournament),
           organization: {
             name: org&.name.presence || 'HafaGolf',
             primary_color: org&.primary_color.presence || '#0f766e',
@@ -138,6 +184,25 @@ module Api
           },
           session_token: session_token
         }
+      end
+
+      # Active sponsorships with the same login email, restricted to the current
+      # sponsor's organization, non-archived events, and events with sponsors enabled.
+      def sibling_sponsorships(sponsor)
+        org = sponsor.tournament.organization
+        email = sponsor.login_email.to_s.strip.downcase
+        siblings = Sponsor.active.includes(:sponsor_tier, tournament: :organization)
+                          .joins(:tournament)
+                          .where(tournaments: { organization_id: org.id })
+                          .where.not(tournaments: { status: 'archived' })
+                          .where("LOWER(sponsors.login_email) = ?", email)
+                          .to_a
+        siblings = siblings.select do |candidate|
+          candidate.tournament.organization_id == org.id &&
+            Features.for(org, candidate.tournament).enabled?(:sponsors)
+        end
+        siblings << sponsor unless siblings.any? { |candidate| candidate.id == sponsor.id }
+        siblings.sort_by { |candidate| [-candidate.tournament.year.to_i, candidate.tournament.name.to_s, candidate.name.to_s] }
       end
     end
   end

@@ -62,6 +62,35 @@ class SponsorSlotSyncer
     true
   end
 
+  # Syncs every team touched by a batch save exactly once (one legacy pair sync per
+  # pair and one Registration sync per real team) inside a single transaction.
+  def sync_slots(slots)
+    slot_numbers = Array(slots).map(&:slot_number).uniq
+    return true if slot_numbers.empty?
+
+    ActiveRecord::Base.transaction(requires_new: true) do
+      @sponsor.lock!
+      all_slots = @sponsor.sponsor_slots.reload.order(:slot_number).to_a
+      by_number = all_slots.index_by(&:slot_number)
+
+      golfer_by_pair = {}
+      slot_numbers.map { |n| ((n - 1) / 2) + 1 }.uniq.sort.each do |pair_number|
+        pair_start = (pair_number - 1) * 2 + 1
+        golfer_by_pair[pair_number] = sync_team(by_number[pair_start], by_number[pair_start + 1], pair_number)
+      end
+
+      team_size = effective_team_size
+      slot_numbers.map { |n| ((n - 1) / team_size) + 1 }.uniq.sort.each do |team_number|
+        range_start = (team_number - 1) * team_size + 1
+        team_slots = (range_start...(range_start + team_size)).filter_map { |n| by_number[n] }
+        bridged_golfer = team_slots.filter_map { |s| golfer_by_pair[((s.slot_number - 1) / 2) + 1] }.first
+        sync_registration_team(team_slots, team_number, bridged_golfer: bridged_golfer)
+      end
+    end
+
+    true
+  end
+
   private
 
   def effective_team_size
@@ -133,6 +162,8 @@ class SponsorSlotSyncer
             name: slot.player_name.strip,
             email: slot.player_email&.strip&.downcase.presence,
             phone: slot.player_phone&.strip.presence,
+            tshirt_size: slot.tshirt_size.presence,
+            handicap: slot.handicap,
             company: @sponsor.name
           }
 
@@ -156,6 +187,8 @@ class SponsorSlotSyncer
             name: slot.player_name.strip,
             email: slot.player_email&.strip&.downcase.presence,
             phone: slot.player_phone&.strip.presence,
+            tshirt_size: slot.tshirt_size.presence,
+            handicap: slot.handicap,
             company: @sponsor.name
           }
         end
@@ -235,6 +268,8 @@ class SponsorSlotSyncer
       partner_name: partner_slot&.player_name&.strip.presence,
       partner_email: partner_slot&.player_email&.strip.presence,
       partner_phone: partner_slot&.player_phone&.strip.presence,
+      tshirt_size: captain_slot&.tshirt_size.presence,
+      partner_tshirt_size: partner_slot&.tshirt_size.presence,
       sponsor_id: @sponsor.id,
       sponsor_name: @sponsor.name,
       payment_type: 'sponsor',

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_23_010000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_23_120000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -491,6 +491,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_010000) do
     t.bigint "sponsor_id", null: false
     t.bigint "tournament_id", null: false
     t.datetime "updated_at", null: false
+    t.string "tshirt_size"
+    t.decimal "handicap", precision: 4, scale: 1
     t.index ["sponsor_id"], name: "index_sponsor_slots_on_sponsor_id"
     t.index ["tournament_id"], name: "index_sponsor_slots_on_tournament_id"
   end
@@ -548,6 +550,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_010000) do
     t.datetime "refunded_at"
     t.string "legacy_source"
     t.string "legacy_id"
+    t.datetime "portal_link_issued_at"
     t.index ["access_token"], name: "index_sponsors_on_access_token", unique: true, where: "(access_token IS NOT NULL)"
     t.index ["sponsor_tier_id"], name: "index_sponsors_on_sponsor_tier_id"
     t.index ["stripe_checkout_session_id"], name: "index_sponsors_on_stripe_checkout_session_id", unique: true, where: "(stripe_checkout_session_id IS NOT NULL)"

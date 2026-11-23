@@ -68,6 +68,8 @@ class ActivityLog < ApplicationRecord
     payout_marked_paid
     payout_voided
     donation_recorded
+    sponsor_portal_link_copied
+    sponsor_portal_invite_sent
   ].freeze
 
   validates :action, presence: true, inclusion: { in: ACTIONS }

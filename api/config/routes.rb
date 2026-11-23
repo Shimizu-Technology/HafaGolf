@@ -60,7 +60,13 @@ Rails.application.routes.draw do
       post 'sponsor_access/request_link' => 'sponsor_access#request_link'
       get 'sponsor_access/verify' => 'sponsor_access#verify'
       post 'sponsor_access/confirm' => 'sponsor_access#confirm'
-      resources :sponsor_slots, only: [:index, :update]
+      get 'sponsor_access/sponsorships' => 'sponsor_access#sponsorships'
+      post 'sponsor_access/switch' => 'sponsor_access#switch'
+      resources :sponsor_slots, only: [:index, :update] do
+        collection do
+          patch :batch, action: :batch_update
+        end
+      end
 
       # ===========================================
       # ADMIN ENDPOINTS (auth required)
@@ -212,9 +218,12 @@ Rails.application.routes.draw do
         resources :sponsors, only: [:index, :show, :create, :update, :destroy] do
           collection do
             get :by_hole
+            get :manage
             post :reorder
           end
           member do
+            post :portal_link
+            post :send_portal_invite
             get :slots
             patch 'slots/:slot_id', action: :update_slot, as: :update_slot
           end
