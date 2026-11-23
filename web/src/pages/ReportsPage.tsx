@@ -1,6 +1,6 @@
 import { useLatestRequest } from '../hooks/useLatestRequest';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
   ClipboardList,
   DollarSign,
@@ -9,10 +9,12 @@ import {
   Landmark,
   List,
   Phone,
+  Printer,
   RefreshCw,
   Search,
   UserCheck,
 } from 'lucide-react';
+import { adminEventPath } from '../utils/adminRoutes';
 import * as XLSX from 'xlsx';
 import { PayoutStatementPanel } from '../components/PayoutStatementPanel';
 import {
@@ -369,6 +371,15 @@ export function ReportsPage() {
           <p className="text-xs sm:text-sm text-gray-500 mt-0.5">View and export event data</p>
         </div>
         <div className="flex items-center gap-2">
+          {activeTournament && (
+            <Link
+              to={adminEventPath(activeTournament.slug, 'printables')}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+            >
+              <Printer size={15} />
+              <span className="hidden sm:inline">Printables Pack</span>
+            </Link>
+          )}
           <button
             onClick={fetchData}
             className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition"

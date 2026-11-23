@@ -98,6 +98,30 @@
   }
 }
 
+@media print {
+  @page {
+    margin: 0.4in;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .print-break-after {
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+
 @layer base {
   /* Improve date/time inputs on mobile */
   input[type="date"],

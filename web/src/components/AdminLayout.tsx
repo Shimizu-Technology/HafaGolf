@@ -16,6 +16,7 @@ import {
   Home,
   LayoutDashboard,
   Menu,
+  Printer,
   Settings,
   ShieldCheck,
   Ticket,
@@ -216,6 +217,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
               icon: ClipboardList,
               match: () => routeSection === 'scoring',
             },
+            {
+              label: 'Printables',
+              path: adminEventPath(activeTournament.slug, 'printables'),
+              icon: Printer,
+              match: () => routeSection === 'printables',
+            },
             ...(eventRaffleEnabled
               ? [
                   {
@@ -272,6 +279,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           return can('manage_groups');
         case 'Scoring':
           return can('enter_scores');
+        case 'Printables':
+          return can('manage_groups') || can('view_reports') || can('check_in');
         case 'Raffle':
           return can('raffle_sell') || can('raffle_draw') || can('manage_raffle_prizes');
         case 'Sponsors':
@@ -355,7 +364,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       <div data-static-flow data-admin-ui data-testid="volunteer-station-shell" className="min-h-screen bg-neutral-100">
         <header
           data-testid="volunteer-station-bar"
-          className="sticky top-0 z-40 border-b border-brand-800/15 bg-brand-600 text-brand-foreground shadow-sm"
+          className="sticky top-0 z-40 border-b border-brand-800/15 bg-brand-600 text-brand-foreground shadow-sm print:hidden"
         >
           <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
@@ -429,7 +438,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   return (
     <div data-static-flow data-admin-ui className="min-h-screen bg-neutral-100">
-      <header className="sticky top-0 z-40 border-b border-brand-800/10 bg-brand-600 text-brand-foreground shadow-sm">
+      <header className="sticky top-0 z-40 border-b border-brand-800/10 bg-brand-600 text-brand-foreground shadow-sm print:hidden">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 lg:px-6">
           <div className="flex items-center gap-3">
             <button
@@ -530,13 +539,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-7xl gap-6 px-4 py-4 lg:px-6 lg:py-6">
+      <div className="mx-auto flex max-w-7xl gap-6 px-4 py-4 lg:px-6 lg:py-6 print:max-w-none print:p-0">
         {mobileMenuOpen && (
-          <div className="fixed inset-0 z-30 bg-black/30 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
+          <div className="print:hidden fixed inset-0 z-30 bg-black/30 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
         )}
 
         <aside
-          className={`fixed inset-y-0 left-0 z-40 w-[88vw] max-w-sm transform border-r border-neutral-200 bg-white px-4 py-4 shadow-xl transition-all duration-200 overflow-y-auto lg:sticky lg:top-[73px] lg:z-auto lg:max-w-none lg:translate-x-0 lg:rounded-3xl lg:border lg:shadow-sm lg:overflow-visible lg:self-start ${
+          className={`print:hidden fixed inset-y-0 left-0 z-40 w-[88vw] max-w-sm transform border-r border-neutral-200 bg-white px-4 py-4 shadow-xl transition-all duration-200 overflow-y-auto lg:sticky lg:top-[73px] lg:z-auto lg:max-w-none lg:translate-x-0 lg:rounded-3xl lg:border lg:shadow-sm lg:overflow-visible lg:self-start ${
             sidebarCollapsed ? 'lg:w-16 lg:px-2' : 'lg:w-72'
           } ${
             mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
@@ -682,7 +691,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         <main className="min-w-0 flex-1 overflow-x-clip">{children}</main>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-200 bg-white/95 backdrop-blur lg:hidden">
+      <nav className="print:hidden fixed inset-x-0 bottom-0 z-30 border-t border-neutral-200 bg-white/95 backdrop-blur lg:hidden">
         {(() => {
           const mobileItems = organizationNav.filter((item) => item.label !== 'Activity Log');
           const gridColsClass =

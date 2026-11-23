@@ -173,12 +173,20 @@ class RbacAndSecurityHardeningTest < ActionDispatch::IntegrationTest
     assert_nil t_body["tournaments"].first["revenue"]
     assert_nil t_body.dig("stats", "total_revenue")
 
-    # Tournament detail strips revenue AND per-golfer payment_amount_cents on @t1; 403 on @t2
+    # Tournament detail strips revenue AND per-golfer payment_amount_cents on @t1,
+    # while exposing waiver_signed & waiver_accepted_at for check-in & Printables backup sheet; 403 on @t2
     get "/api/v1/admin/organizations/#{@org.slug}/tournaments/#{@t1.slug}", headers: headers_for(@checkin_vol)
     assert_response :success
     detail = JSON.parse(response.body)
     assert_nil detail.dig("stats", "revenue")
     assert_nil detail["golfers"].first["payment_amount_cents"]
+    assert_includes [true, false], detail["golfers"].first["waiver_signed"]
+
+    # Check-in volunteer can read sponsors/manage on scoped @t1 (for Printables signage) but not @t2
+    get "/api/v1/tournaments/#{@t1.id}/sponsors/manage", headers: headers_for(@checkin_vol)
+    assert_response :success
+    get "/api/v1/tournaments/#{@t2.id}/sponsors/manage", headers: headers_for(@checkin_vol)
+    assert_response :forbidden
 
     get "/api/v1/admin/organizations/#{@org.slug}/tournaments/#{@t2.slug}", headers: headers_for(@checkin_vol)
     assert_response :forbidden
