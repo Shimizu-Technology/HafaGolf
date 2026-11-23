@@ -28,24 +28,23 @@ describe('selectAdminOrganization', () => {
 });
 
 describe('shouldShowPublicOrganizationLoading', () => {
-  it('holds rendering before initial host-based tenant resolution sets isLoading', () => {
-    expect(shouldShowPublicOrganizationLoading(null, null, false, null)).toBe(true);
-    expect(shouldShowPublicOrganizationLoading(null, null, true, null)).toBe(true);
+  it('holds rendering before initial host-based tenant resolution completes, even with cached org', () => {
+    expect(shouldShowPublicOrganizationLoading('host:fd-golf.example.com', null, false)).toBe(true);
+    expect(shouldShowPublicOrganizationLoading('host:fd-golf.example.com', null, true)).toBe(true);
   });
 
-  it('releases loading once organization resolves for the current host or slug', () => {
-    expect(shouldShowPublicOrganizationLoading(alpha, null, false, null)).toBe(false);
-    expect(shouldShowPublicOrganizationLoading(alpha, 'alpha-golf', false, null)).toBe(false);
+  it('releases loading once resolution completes for the current host or slug', () => {
+    expect(shouldShowPublicOrganizationLoading('host:fd-golf.example.com', 'host:fd-golf.example.com', false)).toBe(false);
+    expect(shouldShowPublicOrganizationLoading('slug:alpha-golf', 'slug:alpha-golf', false)).toBe(false);
   });
 
-  it('holds rendering while switching to a different explicit org slug', () => {
-    expect(shouldShowPublicOrganizationLoading(alpha, 'beta-charity', false, null)).toBe(true);
-    expect(shouldShowPublicOrganizationLoading(alpha, 'beta-charity', true, null)).toBe(true);
+  it('holds rendering when navigating to a different explicit org slug or host target', () => {
+    expect(shouldShowPublicOrganizationLoading('slug:beta-charity', 'slug:alpha-golf', false)).toBe(true);
+    expect(shouldShowPublicOrganizationLoading('host:other.example.com', 'host:fd-golf.example.com', false)).toBe(true);
   });
 
-  it('stops loading and shows error state when tenant resolution fails', () => {
-    expect(shouldShowPublicOrganizationLoading(null, null, false, 'Organization not found')).toBe(false);
-    expect(shouldShowPublicOrganizationLoading(alpha, 'beta-charity', false, 'Organization not found')).toBe(false);
+  it('keeps loading active if store reports isLoading while refetching the same target', () => {
+    expect(shouldShowPublicOrganizationLoading('slug:alpha-golf', 'slug:alpha-golf', true)).toBe(true);
   });
 });
 

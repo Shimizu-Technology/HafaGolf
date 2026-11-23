@@ -41,20 +41,17 @@ export function selectAdminOrganization(
 
 /**
  * Determines whether a public OrganizationProvider should hold rendering children
- * until host-based or explicit-slug tenant resolution completes, preventing child
- * pages from firing premature `/organizations/default/...` requests on first paint.
+ * until host-based or explicit-slug tenant resolution completes for the current target,
+ * preventing child pages from firing premature `/organizations/default/...` requests or
+ * flashing a previously persisted organization from localStorage.
  */
 export function shouldShowPublicOrganizationLoading(
-  organization: Organization | null,
-  explicitSlug: string | null,
-  isLoading: boolean,
-  error: string | null
+  currentTargetKey: string,
+  resolvedTargetKey: string | null,
+  isLoading: boolean
 ): boolean {
-  const slugMismatch = Boolean(explicitSlug && organization && organization.slug !== explicitSlug);
-  const missingTargetOrg = !organization || slugMismatch;
-  if (!missingTargetOrg) return false;
-  if (isLoading) return true;
-  return !error;
+  if (resolvedTargetKey !== currentTargetKey) return true;
+  return isLoading;
 }
 
 /**
@@ -89,13 +86,32 @@ export function OrganizationProvider({
     requestedSlug: string | null;
     error: string | null;
   } | null>(null);
+  const publicTargetKey = explicitSlug
+    ? `slug:${explicitSlug}`
+    : `host:${typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : ''}`;
+  const [publicResolution, setPublicResolution] = useState<{
+    targetKey: string;
+    error: string | null;
+  } | null>(null);
   const adminResolutionMatches = Boolean(adminResolution && (
     adminResolution.requestedSlug === explicitSlug || (!explicitSlug && !adminResolution.error)
   ));
   const adminLoading = !adminResolutionMatches;
   const adminError = adminResolutionMatches ? adminResolution?.error : null;
+  const publicLoading = shouldShowPublicOrganizationLoading(
+    publicTargetKey,
+    publicResolution?.targetKey ?? null,
+    isLoading
+  );
+  const publicError = publicResolution?.targetKey === publicTargetKey
+    ? publicResolution.error || (error && !organization ? error : null)
+    : null;
 
-  useApplyBranding(mode === 'admin' && (adminLoading || adminError) ? null : organization);
+  useApplyBranding(
+    mode === 'admin'
+      ? (adminLoading || adminError ? null : organization)
+      : (publicLoading || publicError ? null : organization)
+  );
 
   useEffect(() => {
     if (mode !== 'admin' || adminResolutionMatches) return;
@@ -146,10 +162,16 @@ export function OrganizationProvider({
       try {
         if (explicitSlug) {
           const response = await api.get<Organization>(`/organizations/${explicitSlug}`);
-          if (!cancelled) setOrganization(response.data);
+          if (!cancelled) {
+            setOrganization(response.data);
+            setPublicResolution({ targetKey: publicTargetKey, error: null });
+          }
         } else {
           const tenant = await api.resolveTenant();
-          if (!cancelled) setOrganization(tenant.organization as Organization);
+          if (!cancelled) {
+            setOrganization(tenant.organization as Organization);
+            setPublicResolution({ targetKey: publicTargetKey, error: null });
+          }
         }
       } catch (err: unknown) {
         if (cancelled) return;
@@ -157,11 +179,13 @@ export function OrganizationProvider({
         const message = err instanceof Error ? err.message : 'Failed to load organization';
         if (message.includes('not found') || message.includes('404')) {
           setError('Organization not found');
+          setPublicResolution({ targetKey: publicTargetKey, error: 'Organization not found' });
           if (fallbackPath) {
             navigate(fallbackPath, { replace: true });
           }
         } else {
           setError(message);
+          setPublicResolution({ targetKey: publicTargetKey, error: message });
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -173,10 +197,7 @@ export function OrganizationProvider({
     return () => {
       cancelled = true;
     };
-  }, [explicitSlug, fallbackPath, mode, navigate, setError, setLoading, setOrganization]);
-
-  const publicLoading = shouldShowPublicOrganizationLoading(organization, explicitSlug, isLoading, error);
-  const publicError = error && (!organization || Boolean(explicitSlug && organization.slug !== explicitSlug));
+  }, [explicitSlug, fallbackPath, mode, navigate, publicTargetKey, setError, setLoading, setOrganization]);
 
   if (mode === 'admin' ? adminLoading : publicLoading) {
     return (
