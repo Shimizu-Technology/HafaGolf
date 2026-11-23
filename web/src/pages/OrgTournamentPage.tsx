@@ -118,7 +118,7 @@ export function OrgTournamentPage() {
           <h1 className="text-2xl font-semibold text-neutral-900 tracking-tight">Tournament Not Found</h1>
           <p className="mt-3 text-neutral-500 leading-relaxed">{error || 'The tournament does not exist.'}</p>
           <div className="mt-6">
-            <ActionButton to="/" variant="primary" pack={pack} showArrow={false}>
+            <ActionButton to={withPreservedOrgParam('/', location.search)} variant="primary" pack={pack} showArrow={false}>
               Back to Tournaments
             </ActionButton>
           </div>

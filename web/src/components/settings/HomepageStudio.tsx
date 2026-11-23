@@ -106,7 +106,8 @@ export function HomepageStudio({
     }
     if (Object.keys(eventPatch).length > 0 || nextThemePreset) {
       if (onChangeEventConfig && eventConfig !== undefined) {
-        onChangeEventConfig({ ...(eventConfig || {}), ...eventPatch }, nextThemePreset);
+        const { landing_mode: _ignoredEventLandingMode, ...cleanEventConfig } = eventConfig || {};
+        onChangeEventConfig({ ...cleanEventConfig, ...eventPatch }, nextThemePreset);
       } else {
         onChangeOrgConfig({ ...orgConfig, ...patch });
       }

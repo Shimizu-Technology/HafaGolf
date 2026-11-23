@@ -180,6 +180,16 @@ export function MemorialFormalHero({
           )}
 
           {action && <div className="mt-6 flex flex-wrap items-center justify-center gap-3">{action}</div>}
+
+          {render.showSplitPhoto && photoUrl && (
+            <div className="mt-7 w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200/90 bg-white/90 p-2.5 shadow-sm">
+              <img
+                src={photoUrl}
+                alt={`${title} event artwork`}
+                className="aspect-[16/10] w-full rounded-xl bg-white object-contain"
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>

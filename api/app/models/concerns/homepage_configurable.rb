@@ -75,6 +75,8 @@ module HomepageConfigurable
     return unless homepage_config.is_a?(Hash)
 
     normalized = homepage_config.deep_stringify_keys.slice(*ALLOWED_KEYS)
+    # landing_mode is organization-owned so per-event overrides cannot hijack root `/` routing.
+    normalized.delete('landing_mode') if is_a?(Tournament)
 
     %w[archetype landing_mode hero_surface artwork_display logo_display].each do |key|
       if normalized.key?(key)

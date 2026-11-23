@@ -300,8 +300,11 @@ export function resolveEffectiveHeroRender(
     hasPhoto && artwork !== 'none' && (artwork === 'full_bleed_bg' || (config.hero_surface === 'photo_scrim' && artwork !== 'showcase_split' && artwork !== 'emblem_lockup'));
   const showSplitPhoto = hasPhoto && !showFullBleedPhoto && artwork === 'showcase_split';
   const showEmblem = artwork !== 'none';
-  const surface: HeroSurface =
-    config.hero_surface === 'photo_scrim' && !showFullBleedPhoto ? 'brand_gradient' : config.hero_surface;
+  const surface: HeroSurface = showFullBleedPhoto
+    ? 'photo_scrim'
+    : config.hero_surface === 'photo_scrim'
+    ? 'brand_gradient'
+    : config.hero_surface;
 
   return {
     surface,
