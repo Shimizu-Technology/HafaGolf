@@ -307,6 +307,35 @@ module Api
         assert_nil pc.webhook_endpoint_token
         assert ActivityLog.exists?(organization: @org, action: "settings_updated")
       end
+
+      test "overview sorts mixed string, nil, and unparseable event_date values without crashing" do
+        @tournament.update!(event_date: "January 9, 2026")
+        @org.tournaments.create!(
+          name: "Memorial Classic 2027 Draft",
+          slug: "memorial-classic-2027-draft",
+          year: 2027,
+          status: "draft",
+          event_date: nil,
+          entry_fee: 15_000,
+          registration_open: false
+        )
+        @org.tournaments.create!(
+          name: "Memorial Classic TBD",
+          slug: "memorial-classic-tbd",
+          year: 2028,
+          status: "draft",
+          event_date: "Spring TBD",
+          entry_fee: 15_000,
+          registration_open: false
+        )
+
+        get "/api/v1/admin/platform/overview", headers: headers_for(@super_admin)
+        assert_response :success
+        body = JSON.parse(response.body)
+        org_row = body["organizations"].find { |o| o["slug"] == @org.slug }
+        assert_not_nil org_row
+        assert_equal 3, org_row["tournament_count"]
+      end
     end
   end
 end

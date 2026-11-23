@@ -39,7 +39,7 @@ module Api
           settlements_rows = []
           org_rows = orgs.map do |org|
             payment_config = org.effective_payment_config
-            tournaments = org.tournaments.sort_by { |t| [t.event_date || Date.new(1970, 1, 1), t.id] }.reverse
+            tournaments = org.tournaments.sort_by { |t| [sortable_event_date(t.event_date), t.id] }.reverse
             active_tournaments = tournaments.select { |t| %w[open in_progress].include?(t.status) }
             # Sort preloaded domains in memory to avoid per-org N+1 queries
             domains = org.organization_domains.sort_by { |d| [d.is_primary ? 0 : 1, d.hostname.to_s] }
@@ -432,6 +432,15 @@ module Api
         else
           :invalid
         end
+      end
+
+      def sortable_event_date(raw)
+        return Date.new(1970, 1, 1) if raw.blank?
+        return raw.to_date if raw.respond_to?(:to_date) && !raw.is_a?(String)
+
+        Date.parse(raw.to_s)
+      rescue Date::Error, ArgumentError
+        Date.new(1970, 1, 1)
       end
 
       def normalize_feature_overrides(raw)
