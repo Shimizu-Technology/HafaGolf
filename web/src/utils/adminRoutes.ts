@@ -5,6 +5,7 @@ export type AdminEventSection =
   | 'checkin'
   | 'groups'
   | 'scoring'
+  | 'printables'
   | 'raffle'
   | 'sponsors'
   | 'employee-numbers'
@@ -35,6 +36,8 @@ export function adminEventPath(slug: string, section: AdminEventSection = 'overv
       return `${base}/groups`;
     case 'scoring':
       return `${base}/scoring`;
+    case 'printables':
+      return `${base}/printables`;
     case 'raffle':
       return `${base}/raffle`;
     case 'sponsors':
@@ -80,6 +83,8 @@ export function getAdminEventSection(pathname: string): AdminEventSection | null
       return 'groups';
     case 'scoring':
       return 'scoring';
+    case 'printables':
+      return 'printables';
     case 'raffle':
       return 'raffle';
     case 'sponsors':

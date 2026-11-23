@@ -1,6 +1,7 @@
 import { useLatestRequest } from '../hooks/useLatestRequest';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
+import { adminEventPath } from '../utils/adminRoutes';
 import { useAuth } from '@clerk/react';
 import { useOrganization } from '../components/OrganizationProvider';
 import {
@@ -29,6 +30,7 @@ import {
   Flag,
   GripVertical,
   Loader2,
+  Printer,
   Search,
   Shuffle,
   Trash2,
@@ -1158,6 +1160,15 @@ export const GroupManagementPage: React.FC = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {tournamentSlug && (
+              <Link
+                to={adminEventPath(tournamentSlug, 'printables')}
+                className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:border-brand-200 hover:text-brand-700"
+              >
+                <Printer className="h-4 w-4" />
+                Printables Pack
+              </Link>
+            )}
             {multiCourseSetup && (
               <button
                 onClick={() => setAllCourseSectionsCollapsed(!allCoursesCollapsed)}
