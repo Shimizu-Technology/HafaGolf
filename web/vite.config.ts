@@ -49,6 +49,11 @@ export default defineConfig({
         globIgnores: ['**/AdminRoutesApp-*.js', '**/admin-*.js'],
         runtimeCaching: [
           {
+            // Keep checked ticket numbers and results out of the service worker cache.
+            urlPattern: ({ url }) => /^\/api\/v1\/tournaments\/[^/]+\/raffle\/check_ticket(?:\.[^/]+)?\/?$/.test(url.pathname),
+            handler: 'NetworkOnly',
+          },
+          {
             urlPattern: /^https:\/\/.*\.onrender\.com\/api\/.*/i,
             handler: 'NetworkFirst',
             options: {

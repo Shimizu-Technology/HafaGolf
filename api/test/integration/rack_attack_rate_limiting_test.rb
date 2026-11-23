@@ -66,4 +66,24 @@ class RackAttackRateLimitingTest < ActionDispatch::IntegrationTest
     post "/api/v1/employee_numbers/validate.xml", params: { employee_number: "TEST" }, env: ip_env
     assert_response :too_many_requests
   end
+
+  test "throttles ticket checks per IP including format suffixes and HEAD" do
+    path = "/api/v1/tournaments/#{tournaments(:tournament_one).id}/raffle/check_ticket"
+    ip = { "REMOTE_ADDR" => "10.10.40.40" }
+    params = { ticket_number: "TIX-0001" }
+
+    29.times do
+      get path, params: params, env: ip
+      assert_response :ok
+    end
+    head "#{path}.json", params: params, env: ip
+    assert_response :ok
+
+    get "#{path}/", params: params, env: ip
+    assert_response :too_many_requests
+
+    get path, params: params, env: { "REMOTE_ADDR" => "10.10.40.41" }
+    assert_response :ok
+  end
+
 end

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { createConsumer } from '@rails/actioncable';
+import { useMotionOk } from '../hooks/useMotionOk';
 import { useVisibilityPolling } from '../hooks/useVisibilityPolling';
 import { useOrganization } from '../components/OrganizationProvider';
 import {
@@ -15,14 +16,15 @@ import {
   PartyPopper,
   Search,
   Loader2,
-  ChevronDown,
-  ChevronUp,
+  Monitor,
+  MonitorOff,
   Check,
   X,
   Pin,
   Timer,
   ArrowRight,
 } from 'lucide-react';
+import { RaffleTicketCheck } from '../components/RaffleTicketCheck';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
 import { getDefaultOrgSlug } from '../utils/tenant';
 import {
@@ -83,6 +85,9 @@ const TIER_RANK = TIERS.reduce<Record<string, number>>((acc, tier, index) => {
   return acc;
 }, {});
 const PUBLIC_PRIZES_PER_PAGE = 12;
+const formatPrizeValue = (value: number) => value.toLocaleString('en-US', {
+  style: 'currency', currency: 'USD', minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+});
 const SPINNING_TICKET_COUNT = 16;
 const SPINNING_TICKET_ROTATE_STEP = 8;
 const FALLBACK_SPINNING_TICKETS = ['TIX-0001', 'TIX-0002', 'TIX-0003', 'TIX-0004'];
@@ -94,74 +99,72 @@ type PublicPrizeSort = 'tier' | 'position' | 'name' | 'value_desc' | 'value_asc'
 // Tier styling helpers
 // ---------------------------------------------------------------------------
 
-function getTierBadge(tier: string, tierDisplay: string) {
-  const config: Record<string, { bg: string; text: string; icon: React.ReactNode }> = {
-    grand: {
-      bg: 'bg-amber-500',
-      text: 'text-white',
-      icon: <Trophy className="w-3.5 h-3.5" />,
-    },
-    platinum: {
-      bg: 'bg-slate-500',
-      text: 'text-white',
-      icon: <Star className="w-3.5 h-3.5" />,
-    },
-    gold: {
-      bg: 'bg-amber-500',
-      text: 'text-white',
-      icon: <Sparkles className="w-3.5 h-3.5" />,
-    },
-    silver: {
-      bg: 'bg-neutral-400',
-      text: 'text-white',
-      icon: <Star className="w-3.5 h-3.5" />,
-    },
-  };
+const TIER_STYLES = {
+  grand: { Icon: Trophy, pill: 'bg-amber-100 text-amber-950', art: 'bg-amber-50 text-amber-900' },
+  platinum: { Icon: Star, pill: 'bg-indigo-100 text-indigo-950', art: 'bg-indigo-50 text-indigo-900' },
+  gold: { Icon: Sparkles, pill: 'bg-yellow-100 text-yellow-950', art: 'bg-yellow-50 text-yellow-900' },
+  silver: { Icon: Star, pill: 'bg-slate-200 text-slate-950', art: 'bg-slate-100 text-slate-700' },
+  standard: { Icon: Gift, pill: 'bg-brand-100 text-brand-900', art: 'bg-brand-50 text-brand-700' },
+};
 
-  const c = config[tier] || {
-    bg: 'bg-brand-600',
-    text: 'text-brand-foreground',
-    icon: <Gift className="w-3.5 h-3.5" />,
-  };
+function prizeTier(tier: string) {
+  return TIER_STYLES[tier as keyof typeof TIER_STYLES] || TIER_STYLES.standard;
+}
 
+function TierBadge({ prize, large = false }: { prize: Prize; large?: boolean }) {
+  const { Icon, pill } = prizeTier(prize.tier);
   return (
-    <span className={`inline-flex items-center gap-1 ${c.bg} ${c.text} text-xs font-semibold px-2.5 py-1 rounded-full`}>
-      {c.icon}
-      {tierDisplay}
+    <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 font-semibold ${pill} ${large ? 'text-base' : 'text-sm'}`}>
+      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      {prize.tier_display}
     </span>
   );
 }
 
-function getTierPlaceholderBg(tier: string) {
-  switch (tier) {
-    case 'grand':
-      return 'bg-gradient-to-br from-amber-50 to-orange-50';
-    case 'platinum':
-      return 'bg-gradient-to-br from-slate-50 to-slate-100';
-    case 'gold':
-      return 'bg-gradient-to-br from-amber-50 to-yellow-50';
-    case 'silver':
-      return 'bg-gradient-to-br from-neutral-50 to-neutral-100';
-    default:
-      return 'bg-gradient-to-br from-neutral-50 to-neutral-100/50';
+function PrizeArtwork({ prize, eager = false }: { prize: Prize; eager?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  const { Icon, art } = prizeTier(prize.tier);
+  if (prize.image_url && !failed) {
+    return (
+      <img
+        src={prize.image_url}
+        alt=""
+        className="h-full w-full bg-white object-contain p-3"
+        loading={eager ? 'eager' : 'lazy'}
+        onError={() => setFailed(true)}
+      />
+    );
   }
+
+  return (
+    <div className={`grid h-full place-items-center ${art}`}>
+      <span className="grid h-20 w-20 place-items-center rounded-full border border-current/20 bg-white/60">
+        <Icon className="h-10 w-10" strokeWidth={1.5} aria-hidden="true" />
+      </span>
+    </div>
+  );
 }
 
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
+function SponsorLogo({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  return failed ? null : (
+    <img src={url} alt="" loading="lazy" onError={() => setFailed(true)} className="h-5 max-w-12 shrink-0 object-contain" />
+  );
+}
 
 export const RaffleBoardPage: React.FC = () => {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const displayMode = searchParams.get('display');
+  const isTvMode = displayMode === 'tv' || displayMode === 'projector';
+  const modeButtonRef = useRef<HTMLButtonElement>(null);
+  const focusModeButton = useRef(false);
+  const motionOk = useMotionOk();
   const { organization } = useOrganization();
   const orgSlug = organization?.slug || getDefaultOrgSlug();
   const [data, setData] = useState<RaffleBoardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [ticketEmail, setTicketEmail] = useState('');
-  const [myTickets, setMyTickets] = useState<{ ticket_number: string; is_winner: boolean }[] | null>(null);
-  const [ticketLoading, setTicketLoading] = useState(false);
-  const [showMyTickets, setShowMyTickets] = useState(false);
   const [prizeSearch, setPrizeSearch] = useState('');
   const [tierFilter, setTierFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<PublicPrizeStatusFilter>('');
@@ -176,6 +179,24 @@ export const RaffleBoardPage: React.FC = () => {
   const [spinSampleOffset, setSpinSampleOffset] = useState(0);
   const revealTimeoutRef = useRef<number | null>(null);
   const drawSafetyTimeoutRef = useRef<number | null>(null);
+  const drawStartRef = useRef<{ drawId: string; startedAt: number } | null>(null);
+
+  const changeDisplayMode = useCallback((tv: boolean) => {
+    focusModeButton.current = true;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (tv) next.set('display', 'tv');
+      else next.delete('display');
+      return next;
+    }, { replace: true, preventScrollReset: true });
+  }, [setSearchParams]);
+
+  useEffect(() => {
+    if (focusModeButton.current && modeButtonRef.current) {
+      modeButtonRef.current.focus();
+      focusModeButton.current = false;
+    }
+  }, [isTvMode, loading, error]);
 
   const toggleHoldWinnerMode = useCallback(() => {
     setSpotlightPrefs((current) => toggleLocalHoldPreference(current));
@@ -194,6 +215,7 @@ export const RaffleBoardPage: React.FC = () => {
 
   const dismissLiveDraw = useCallback(() => {
     clearLiveDrawTimers();
+    drawStartRef.current = null;
     setLiveDraw(null);
   }, [clearLiveDrawTimers]);
 
@@ -282,88 +304,65 @@ export const RaffleBoardPage: React.FC = () => {
         }) {
           if (event.action === 'spotlight_cleared') {
             clearLiveDrawTimers();
+            drawStartRef.current = null;
             setLiveDraw(transitionSpotlightOnCleared());
             return;
           }
 
-          if (event.action === 'draw_started' && event.draw_id && event.prize) {
-            const drawId = event.draw_id;
-            clearLiveDrawTimers();
+          const { action, draw_id: drawId, prize } = event;
+          if (!drawId || !prize) return;
+          if (action !== 'draw_started' && action !== 'prize_won' && action !== 'winner_revealed') return;
+
+          clearLiveDrawTimers();
+          const previous = drawStartRef.current;
+          const isNewDraw = action === 'draw_started' || previous?.drawId !== drawId;
+          const startedAt = isNewDraw ? Date.now() : previous.startedAt;
+          if (isNewDraw) {
+            drawStartRef.current = { drawId, startedAt };
             setSpinSampleOffset(0);
-            setLiveDraw(
-              transitionSpotlightOnDrawStarted({
-                drawId,
-                prizeId: event.prize.id,
-                prizeName: event.prize.name,
-                eligibleTicketCount: event.eligible_ticket_count || 0,
-                previewTicketSampleCount: event.preview_ticket_sample_count || event.preview_ticket_numbers?.length || 0,
-                previewTicketSampleIsSample: event.preview_ticket_sample_is_sample === true,
-                previewTicketNumbers: event.preview_ticket_numbers || [],
-                startedAt: Date.now(),
-              })
-            );
+            setLiveDraw(transitionSpotlightOnDrawStarted({
+              drawId,
+              prizeId: prize.id,
+              prizeName: prize.name,
+              eligibleTicketCount: event.eligible_ticket_count || 0,
+              previewTicketSampleCount: event.preview_ticket_sample_count || event.preview_ticket_numbers?.length || 0,
+              previewTicketSampleIsSample: event.preview_ticket_sample_is_sample === true,
+              previewTicketNumbers: event.preview_ticket_numbers || [],
+              startedAt,
+            }));
+          }
+
+          if (action === 'draw_started') {
             drawSafetyTimeoutRef.current = window.setTimeout(() => {
+              drawStartRef.current = null;
               setLiveDraw((current) => (
                 current?.drawId === drawId && current.phase === 'spinning' ? null : current
               ));
               void fetchData();
             }, 15000);
+            return;
           }
 
-          if (event.action === 'prize_won' && event.draw_id && event.prize) {
-            const drawId = event.draw_id;
-            const prize = event.prize;
-            const eligibleTicketCount = event.eligible_ticket_count || 0;
-            const previewTicketSampleCount = event.preview_ticket_sample_count || 0;
-            const previewTicketSampleIsSample = event.preview_ticket_sample_is_sample === true;
-            if (typeof event.hold_on_screen === 'boolean') {
-              setSpotlightPrefs((current) =>
-                applyServerHoldPreference(current, event.hold_on_screen)
-              );
-            }
-            if (drawSafetyTimeoutRef.current) {
-              window.clearTimeout(drawSafetyTimeoutRef.current);
-              drawSafetyTimeoutRef.current = null;
-            }
-            setLiveDraw((current) => {
-              const startedAt = current?.drawId === drawId ? current.startedAt : Date.now();
-              const elapsed = Date.now() - startedAt;
-              const revealDelay = Math.max(0, 3600 - elapsed);
-
-              if (revealTimeoutRef.current) {
-                window.clearTimeout(revealTimeoutRef.current);
-                revealTimeoutRef.current = null;
-              }
-              revealTimeoutRef.current = window.setTimeout(() => {
-                setSpinSampleOffset(0);
-                setLiveDraw((latest) =>
-                  transitionSpotlightOnWinnerRevealed(latest, {
-                    drawId,
-                    winnerName: prize.winner_name,
-                    winnerTicketNumber: prize.winning_ticket?.ticket_number,
-                  })
-                );
-                void fetchData();
-              }, revealDelay);
-
-              return current || transitionSpotlightOnDrawStarted({
+          setSpotlightPrefs((current) => applyServerHoldPreference(current, event.hold_on_screen));
+          const elapsed = Date.now() - startedAt;
+          revealTimeoutRef.current = window.setTimeout(() => {
+            setSpinSampleOffset(0);
+            setLiveDraw((latest) =>
+              transitionSpotlightOnWinnerRevealed(latest, {
                 drawId,
-                prizeId: prize.id,
-                prizeName: prize.name,
-                eligibleTicketCount,
-                previewTicketSampleCount,
-                previewTicketSampleIsSample,
-                previewTicketNumbers: [],
-                startedAt,
-              });
-            });
-          }
+                winnerName: prize.winner_name,
+                winnerTicketNumber: prize.winning_ticket?.ticket_number,
+              })
+            );
+            void fetchData();
+          }, Math.max(0, 3600 - elapsed));
         },
       }
     );
 
     return () => {
       clearLiveDrawTimers();
+      drawStartRef.current = null;
       setCableConnected(false);
       subscription.unsubscribe();
       consumer.disconnect();
@@ -435,19 +434,19 @@ export const RaffleBoardPage: React.FC = () => {
   }, [liveDraw, holdWinnerOnScreen]);
 
   useEffect(() => {
-    if (!liveDraw) return;
+    if (!isTvMode && !liveDraw) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        dismissLiveDraw();
-      }
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (isTvMode) changeDisplayMode(false);
+      else dismissLiveDraw();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [liveDraw, dismissLiveDraw]);
+  }, [isTvMode, liveDraw, changeDisplayMode, dismissLiveDraw]);
 
   useEffect(() => {
-    if (liveDraw?.phase !== 'spinning') return;
+    if (!motionOk || liveDraw?.phase !== 'spinning') return;
     const previewCount = liveDraw.previewTicketNumbers.length;
     if (previewCount <= SPINNING_TICKET_COUNT) return;
 
@@ -456,7 +455,7 @@ export const RaffleBoardPage: React.FC = () => {
     }, 520);
 
     return () => window.clearInterval(interval);
-  }, [liveDraw?.phase, liveDraw?.drawId, liveDraw?.previewTicketNumbers.length]);
+  }, [motionOk, liveDraw?.phase, liveDraw?.drawId, liveDraw?.previewTicketNumbers.length]);
 
   const formatCountdown = (drawTime: string) => {
     const now = new Date();
@@ -472,26 +471,17 @@ export const RaffleBoardPage: React.FC = () => {
     return `${hours}h ${minutes}m`;
   };
 
-  const lookupTickets = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ticketEmail.trim() || !data?.tournament?.id) return;
-    setTicketLoading(true);
-    try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/tournaments/${data.tournament.id}/raffle/tickets?query=${encodeURIComponent(ticketEmail.trim())}`
-      );
-      if (res.ok) {
-        const result = await res.json();
-        setMyTickets(result.tickets || []);
-      } else {
-        setMyTickets([]);
-      }
-    } catch {
-      setMyTickets([]);
-    } finally {
-      setTicketLoading(false);
-    }
-  };
+  const exitTvButton = (
+    <button
+      ref={modeButtonRef}
+      type="button"
+      onClick={() => changeDisplayMode(false)}
+      className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-400 bg-slate-800 px-4 text-base font-semibold text-white hover:bg-slate-700"
+    >
+      <MonitorOff className="h-5 w-5" aria-hidden="true" />
+      Exit TV Mode
+    </button>
+  );
 
   // ---------------------------------------------------------------------------
   // Loading state
@@ -517,12 +507,14 @@ export const RaffleBoardPage: React.FC = () => {
           <Gift className="w-12 h-12 text-neutral-300 mx-auto mb-6" strokeWidth={1.5} />
           <h1 className="text-2xl font-semibold text-neutral-900 tracking-tight">Raffle Unavailable</h1>
           <p className="mt-3 text-neutral-500 leading-relaxed">{error}</p>
+          {isTvMode ? <div className="mt-6">{exitTvButton}</div> : (
           <Link
             to={`/${tournamentSlug}`}
             className="inline-flex items-center gap-2 mt-6 px-6 py-2.5 text-sm font-semibold text-brand-foreground bg-brand-600 rounded-full transition-colors hover:bg-brand-700"
           >
             Back to Tournament
           </Link>
+          )}
         </div>
       </div>
     );
@@ -542,6 +534,7 @@ export const RaffleBoardPage: React.FC = () => {
           <p className="mt-3 text-neutral-500 leading-relaxed">
             The raffle for {tournament.name} is not active yet. Check back closer to the event!
           </p>
+          {isTvMode ? <div className="mt-6">{exitTvButton}</div> : (
           <Link
             to={`/${tournamentSlug}`}
             className="inline-flex items-center gap-2 mt-6 px-6 py-2.5 text-sm font-semibold text-brand-foreground bg-brand-600 rounded-full transition-colors hover:bg-brand-700"
@@ -549,6 +542,7 @@ export const RaffleBoardPage: React.FC = () => {
             <ChevronLeft className="w-4 h-4" />
             Back to Tournament
           </Link>
+          )}
         </div>
       </div>
     );
@@ -557,6 +551,127 @@ export const RaffleBoardPage: React.FC = () => {
   // ---------------------------------------------------------------------------
   // Main render
   // ---------------------------------------------------------------------------
+  if (isTvMode) {
+    const spotlightPrize = prizes.find((prize) => prize.id === liveDraw?.prizeId);
+    const availablePrizes = prizes.filter((prize) => !prize.won);
+    const recentWinners = prizes
+      .filter((prize) => prize.won && prize.winner)
+      .sort((a, b) => (b.winner?.won_at || '').localeCompare(a.winner?.won_at || ''))
+      .slice(0, 6);
+
+    return (
+      <div className="min-h-screen bg-slate-950 text-white">
+        <main className="mx-auto max-w-screen-2xl space-y-8 px-4 py-6 sm:px-8 lg:px-12">
+          <header className="flex flex-wrap items-start justify-between gap-4">
+            <h1 className="min-w-0 flex-1 basis-72 break-words text-3xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+              {tournament.name} Raffle
+            </h1>
+            {exitTvButton}
+          </header>
+
+          <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-4">
+            {([
+              ['Prizes', stats.total_prizes],
+              ['Won', stats.prizes_won],
+              ['Remaining', stats.prizes_remaining],
+              ['Tickets sold', stats.total_tickets_sold],
+            ] as const).map(([label, count]) => (
+              <div key={label} className="min-w-0 rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 sm:px-5">
+                <dt className="text-base font-medium text-slate-300 sm:text-xl">{label}</dt>
+                <dd className="break-words text-3xl font-bold tabular-nums sm:text-5xl">{count.toLocaleString()}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <section aria-label="Live raffle draw spotlight" className="min-w-0 rounded-3xl border border-amber-300/50 bg-slate-900 px-4 py-8 text-center sm:px-10 lg:py-12">
+            {!liveDraw ? (
+              <>
+                <Ticket className="mx-auto h-12 w-12 text-amber-300" aria-hidden="true" />
+                <h2 className="mt-3 text-3xl font-bold sm:text-5xl">Live Raffle Draw</h2>
+                <p className="mt-2 text-lg text-slate-300 sm:text-2xl">
+                  {stats.prizes_remaining > 0 ? 'Waiting for the next draw' : 'All prizes have been drawn'}
+                </p>
+              </>
+            ) : liveDraw.phase === 'spinning' ? (
+              <>
+                <p className="text-xl font-semibold text-amber-200 sm:text-3xl">Drawing now</p>
+                <h2 className="mt-2 break-words text-4xl font-bold sm:text-6xl">{liveDraw.prizeName}</h2>
+                <p className="mt-3 text-lg text-slate-200 sm:text-2xl">
+                  {liveDraw.eligibleTicketCount.toLocaleString()} eligible tickets
+                </p>
+                {liveDraw.previewTicketNumbers.length > 0 && (
+                  <div aria-hidden="true" className="mx-auto mt-6 grid max-w-5xl grid-cols-2 gap-2 sm:grid-cols-4">
+                    {spinningTicketNumbers.slice(0, 8).map((number) => (
+                      <span key={number} className="min-w-0 break-words rounded-lg bg-slate-800 px-1 py-3 font-mono text-base font-semibold text-white motion-safe:animate-pulse sm:text-2xl lg:text-3xl">
+                        {number}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className={`mx-auto grid max-w-6xl items-center gap-6 ${spotlightPrize ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)]' : ''}`}>
+                {spotlightPrize && (
+                  <div className="mx-auto h-40 w-full max-w-sm overflow-hidden rounded-2xl sm:h-52 lg:h-72">
+                    <PrizeArtwork key={spotlightPrize.image_url} prize={spotlightPrize} eager />
+                  </div>
+                )}
+                <div className="min-w-0 break-words">
+                  <p className="text-xl font-bold uppercase tracking-widest text-amber-200 sm:text-3xl">Winner</p>
+                  <h2 data-testid="spotlight-winner-name" className="mt-2 text-4xl font-extrabold leading-tight sm:text-6xl lg:text-8xl">
+                    {liveDraw.winnerName}
+                  </h2>
+                  {liveDraw.winnerTicketNumber && (
+                    <p className="mt-3 font-mono text-2xl font-semibold text-amber-200 sm:text-4xl">#{liveDraw.winnerTicketNumber}</p>
+                  )}
+                  <p className="mt-3 text-2xl font-semibold text-slate-200 sm:text-4xl">{liveDraw.prizeName}</p>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {recentWinners.length > 0 && (
+            <section aria-labelledby="tv-winners-title">
+              <h2 id="tv-winners-title" className="mb-4 text-2xl font-bold sm:text-4xl">Recent winners</h2>
+              <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {recentWinners.map((prize) => (
+                  <li key={prize.id} className="min-w-0 break-words rounded-xl border border-slate-700 bg-slate-900 p-4">
+                    <p className="text-xl font-bold sm:text-3xl">{prize.winner?.name}</p>
+                    <p className="mt-1 text-lg text-slate-200 sm:text-2xl">{prize.name}</p>
+                    {prize.winner?.ticket_number && (
+                      <p className="mt-1 font-mono text-lg text-amber-200 sm:text-xl">#{prize.winner.ticket_number}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {availablePrizes.length > 0 && (
+            <section aria-labelledby="tv-prizes-title">
+              <h2 id="tv-prizes-title" className="mb-4 text-2xl font-bold sm:text-4xl">Prizes still to draw</h2>
+              <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {availablePrizes.map((prize) => (
+                  <li key={prize.id} className="min-w-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                    <div className="h-40">
+                      <PrizeArtwork key={prize.image_url} prize={prize} />
+                    </div>
+                    <div className="space-y-2 break-words p-4">
+                      <TierBadge prize={prize} large />
+                      <p className="text-xl font-bold sm:text-2xl">{prize.name}</p>
+                      {prize.value_dollars > 0 && <p className="text-xl font-semibold">{formatPrizeValue(prize.value_dollars)}</p>}
+                      {prize.sponsor_name && <p className="text-lg text-slate-200">Sponsored by {prize.sponsor_name}</p>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-neutral-100 text-neutral-900">
       <SignedInAdminBar />
@@ -567,7 +682,7 @@ export const RaffleBoardPage: React.FC = () => {
           aria-modal="true"
           aria-label="Live raffle draw spotlight"
         >
-          <div className="relative w-full max-w-4xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+          <div className="relative w-full max-h-[calc(100dvh-3rem)] max-w-4xl overflow-auto rounded-3xl bg-white shadow-2xl">
             <button
               type="button"
               onClick={dismissLiveDraw}
@@ -619,7 +734,7 @@ export const RaffleBoardPage: React.FC = () => {
                       {spinningTicketNumbers.map((ticketNumber, index) => (
                         <div
                           key={`${liveDraw.drawId}-${spinSampleOffset}-${ticketNumber}-${index}`}
-                          className={`${index >= 8 ? 'hidden sm:block' : ''} rounded-2xl border border-white/10 bg-white/10 px-3 py-3 text-center font-mono text-sm font-semibold text-white shadow-sm animate-pulse`}
+                          className={`${index >= 8 ? 'hidden sm:block' : ''} rounded-2xl border border-white/10 bg-white/10 px-3 py-3 text-center font-mono text-sm font-semibold text-white shadow-sm motion-safe:animate-pulse`}
                           style={{ animationDelay: `${(index % 8) * 90}ms`, animationDuration: '700ms' }}
                         >
                           {ticketNumber}
@@ -628,7 +743,7 @@ export const RaffleBoardPage: React.FC = () => {
                     </div>
                   </div>
                   <div className="mt-5 flex items-center justify-center gap-3 text-sm font-medium text-neutral-600">
-                    <Loader2 className="h-5 w-5 animate-spin text-brand-600" />
+                    <Loader2 className="h-5 w-5 motion-safe:animate-spin text-brand-600" />
                     Shuffling {liveDraw.eligibleTicketCount.toLocaleString()} ticket{liveDraw.eligibleTicketCount === 1 ? '' : 's'} in this draw
                   </div>
                 </>
@@ -702,8 +817,8 @@ export const RaffleBoardPage: React.FC = () => {
       {/* ================================================================= */}
       <div className="relative bg-gradient-to-br from-brand-600 via-brand-700 to-brand-900 text-brand-foreground">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0 flex-1 basis-64">
               <Link
                 to={`/${tournamentSlug}`}
                 className="inline-flex items-center gap-1 text-white/70 hover:text-white text-sm transition-colors mb-2"
@@ -713,13 +828,13 @@ export const RaffleBoardPage: React.FC = () => {
               </Link>
               <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight flex items-center gap-2 sm:gap-3">
                 <Gift className="w-6 h-6 sm:w-7 sm:h-7 text-accent-300 shrink-0" strokeWidth={1.5} />
-                <span className="truncate">{tournament.name} Raffle</span>
+                <span className="min-w-0 break-words">{tournament.name} Raffle</span>
               </h1>
               {tournament.raffle_description && (
                 <p className="mt-2 text-white/70 text-sm sm:text-base max-w-xl">{tournament.raffle_description}</p>
               )}
             </div>
-            <div className="flex items-center gap-2 sm:gap-3 shrink-0 mt-6">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 sm:mt-6">
               {tournament.raffle_draw_time && (
                 <div className="text-right hidden sm:block">
                   <p className="text-white/60 text-xs">Drawing in</p>
@@ -730,9 +845,18 @@ export const RaffleBoardPage: React.FC = () => {
                 </div>
               )}
               <button
+                ref={modeButtonRef}
+                type="button"
+                onClick={() => changeDisplayMode(true)}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-white/40 bg-white/15 px-3 text-base font-semibold text-white hover:bg-white/25"
+              >
+                <Monitor className="h-5 w-5 shrink-0" aria-hidden="true" />
+                TV / Projector Mode
+              </button>
+              <button
                 type="button"
                 onClick={toggleHoldWinnerMode}
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                className={`inline-flex min-h-[44px] items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
                   holdWinnerOnScreen
                     ? 'bg-white/20 text-white hover:bg-white/30'
                     : 'bg-white/10 text-white/80 hover:bg-white/20'
@@ -759,7 +883,7 @@ export const RaffleBoardPage: React.FC = () => {
               </button>
               <button
                 onClick={fetchData}
-                className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
+                className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
                 aria-label="Refresh"
               >
                 <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -788,7 +912,7 @@ export const RaffleBoardPage: React.FC = () => {
               <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center shrink-0">
                 <Gift className="w-5 h-5 text-accent-500" strokeWidth={1.5} />
               </div>
-              <div>
+              <div className="min-w-0 break-words">
                 <p className="text-xl sm:text-2xl font-bold text-neutral-900">{stats.total_prizes}</p>
                 <p className="text-xs text-neutral-500">Prizes</p>
               </div>
@@ -797,7 +921,7 @@ export const RaffleBoardPage: React.FC = () => {
               <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center shrink-0">
                 <Trophy className="w-5 h-5 text-emerald-600" strokeWidth={1.5} />
               </div>
-              <div>
+              <div className="min-w-0 break-words">
                 <p className="text-xl sm:text-2xl font-bold text-neutral-900">{stats.prizes_won}</p>
                 <p className="text-xs text-neutral-500">Won</p>
               </div>
@@ -806,7 +930,7 @@ export const RaffleBoardPage: React.FC = () => {
               <div className="w-10 h-10 rounded-xl bg-brand-600/10 flex items-center justify-center shrink-0">
                 <Star className="w-5 h-5 text-brand-600" strokeWidth={1.5} />
               </div>
-              <div>
+              <div className="min-w-0 break-words">
                 <p className="text-xl sm:text-2xl font-bold text-neutral-900">{stats.prizes_remaining}</p>
                 <p className="text-xs text-neutral-500">Remaining</p>
               </div>
@@ -815,7 +939,7 @@ export const RaffleBoardPage: React.FC = () => {
               <div className="w-10 h-10 rounded-xl bg-neutral-100 flex items-center justify-center shrink-0">
                 <Ticket className="w-5 h-5 text-neutral-600" strokeWidth={1.5} />
               </div>
-              <div>
+              <div className="min-w-0 break-words">
                 <p className="text-xl sm:text-2xl font-bold text-neutral-900">{stats.total_tickets_sold}</p>
                 <p className="text-xs text-neutral-500">Tickets Sold</p>
               </div>
@@ -828,95 +952,27 @@ export const RaffleBoardPage: React.FC = () => {
       {/* MAIN CONTENT                                                       */}
       {/* ================================================================= */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {/* Check My Tickets */}
-        <div className="mb-6 sm:mb-8">
-          <button
-            onClick={() => setShowMyTickets(!showMyTickets)}
-            className="flex items-center gap-2 text-sm font-medium text-neutral-600 hover:text-neutral-900 transition-colors"
-          >
-            <div className="w-8 h-8 rounded-lg bg-brand-600/10 flex items-center justify-center">
-              <Ticket className="w-4 h-4 text-brand-600" strokeWidth={1.5} />
-            </div>
-            Check My Tickets
-            {showMyTickets
-              ? <ChevronUp className="w-4 h-4 text-neutral-400" />
-              : <ChevronDown className="w-4 h-4 text-neutral-400" />
-            }
-          </button>
-
-          {showMyTickets && (
-            <div className="mt-3 bg-white rounded-2xl border border-neutral-200 p-4 sm:p-6">
-              <form onSubmit={lookupTickets} className="flex flex-col sm:flex-row gap-3">
-                <div className="flex-1 relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
-                  <input
-                    type="text"
-                    value={ticketEmail}
-                    onChange={(e) => setTicketEmail(e.target.value)}
-                    placeholder="Enter your email, phone, or ticket #..."
-                    className="w-full pl-10 pr-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20 transition-colors"
-                    required
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={ticketLoading}
-                  className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-brand-600 text-brand-foreground text-sm font-semibold rounded-xl hover:bg-brand-700 disabled:opacity-50 transition-colors shrink-0"
-                >
-                  {ticketLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                  Look Up
-                </button>
-              </form>
-
-              {myTickets !== null && (
-                <div className="mt-4 pt-4 border-t border-neutral-100">
-                  {myTickets.length === 0 ? (
-                    <p className="text-sm text-neutral-500">No tickets found. Try searching by email, phone number, or ticket number.</p>
-                  ) : (
-                    <div>
-                      <p className="text-sm text-neutral-600 mb-3">
-                        You have <strong className="text-neutral-900">{myTickets.length}</strong> ticket{myTickets.length !== 1 ? 's' : ''}
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {myTickets.map((t, i) => (
-                          <span
-                            key={i}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-mono font-medium ${
-                              t.is_winner
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                : 'bg-neutral-100 text-neutral-700 border border-neutral-200'
-                            }`}
-                          >
-                            #{t.ticket_number}
-                            {t.is_winner && <Trophy className="w-3.5 h-3.5 text-amber-500" />}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <RaffleTicketCheck key={tournament.id} tournamentId={tournament.id} />
 
         {/* Prize Filters */}
         <div className="mb-5 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
-          <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto_auto]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
               <input
                 type="text"
                 value={prizeSearch}
                 onChange={(e) => setPrizeSearch(e.target.value)}
-                placeholder="Search prizes or sponsors..."
-                className="w-full rounded-xl border border-neutral-200 bg-neutral-50 py-3 pl-10 pr-4 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+                placeholder="Search prizes or sponsors…"
+                aria-label="Search prizes or sponsors"
+                className="min-h-[44px] w-full min-w-0 rounded-xl border border-neutral-200 bg-neutral-50 py-3 pl-10 pr-4 text-base focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
               />
             </div>
             <select
+              aria-label="Prize tier"
               value={tierFilter}
               onChange={(e) => setTierFilter(e.target.value)}
-              className="rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+              className="min-h-[44px] w-full min-w-0 rounded-xl border border-neutral-200 bg-white px-3 py-3 text-base focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
             >
               <option value="">All tiers</option>
               {TIERS.map((tier) => (
@@ -924,18 +980,20 @@ export const RaffleBoardPage: React.FC = () => {
               ))}
             </select>
             <select
+              aria-label="Prize status"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as PublicPrizeStatusFilter)}
-              className="rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+              className="min-h-[44px] w-full min-w-0 rounded-xl border border-neutral-200 bg-white px-3 py-3 text-base focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
             >
               <option value="">All prizes</option>
               <option value="available">Available</option>
               <option value="won">Won</option>
             </select>
             <select
+              aria-label="Sort prizes"
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as PublicPrizeSort)}
-              className="rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+              className="min-h-[44px] w-full min-w-0 rounded-xl border border-neutral-200 bg-white px-3 py-3 text-base focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
             >
               <option value="tier">Sort by tier</option>
               <option value="position">Sort by list order</option>
@@ -958,7 +1016,7 @@ export const RaffleBoardPage: React.FC = () => {
                   setStatusFilter('');
                   setSortBy('tier');
                 }}
-                className="font-medium text-brand-600 hover:text-brand-700"
+                className="min-h-[44px] text-base font-medium text-brand-600 hover:text-brand-700"
               >
                 Reset filters
               </button>
@@ -983,30 +1041,18 @@ export const RaffleBoardPage: React.FC = () => {
               <div
                 key={prize.id}
                 className={`relative flex flex-col bg-white rounded-2xl border border-neutral-200 overflow-hidden transition-all duration-200 ${
-                  prize.won ? 'opacity-75' : 'hover:shadow-lg hover:-translate-y-0.5'
+                  prize.won ? 'border-neutral-300' : 'hover:shadow-md'
                 }`}
               >
-                {/* Prize Image or Placeholder */}
-                <div className="relative h-44 bg-white sm:h-48">
-                  {prize.image_url ? (
-                    <img
-                      src={prize.image_url}
-                      alt={prize.name}
-                      className="h-full w-full object-contain p-3"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className={`flex h-full w-full items-center justify-center ${getTierPlaceholderBg(prize.tier)}`}>
-                      <Gift className="w-10 h-10 text-neutral-300" strokeWidth={1.5} />
-                    </div>
-                  )}
+                <div className="relative h-44 sm:h-48">
+                  <PrizeArtwork key={prize.image_url} prize={prize} />
                   <div className="absolute top-3 left-3">
-                    {getTierBadge(prize.tier, prize.tier_display)}
+                    <TierBadge prize={prize} />
                   </div>
                 </div>
 
                 {/* Prize Info — flex-1 so cards stretch equally */}
-                <div className="flex flex-col flex-1 p-4 sm:p-5">
+                <div className="flex min-w-0 flex-1 flex-col break-words p-4 sm:p-5">
                   <h3 className="text-base font-bold text-neutral-900 leading-snug">{prize.name}</h3>
                   {prize.description && (
                     <p className="text-sm text-neutral-500 mt-1 line-clamp-2">{prize.description}</p>
@@ -1015,16 +1061,8 @@ export const RaffleBoardPage: React.FC = () => {
                   {/* Sponsor */}
                   {prize.sponsor_name && (
                     <div className="flex items-center gap-1.5 mt-2">
-                      {prize.sponsor_logo_url ? (
-                        <img
-                          src={prize.sponsor_logo_url}
-                          alt={prize.sponsor_name}
-                          className="h-4 object-contain"
-                        />
-                      ) : null}
-                      <span className="text-xs text-neutral-400">
-                        {prize.sponsor_logo_url ? prize.sponsor_name : `Sponsored by ${prize.sponsor_name}`}
-                      </span>
+                      {prize.sponsor_logo_url && <SponsorLogo key={prize.sponsor_logo_url} url={prize.sponsor_logo_url} />}
+                      <span className="min-w-0 text-sm text-neutral-600">Sponsored by {prize.sponsor_name}</span>
                     </div>
                   )}
 
@@ -1035,7 +1073,7 @@ export const RaffleBoardPage: React.FC = () => {
                   {prize.value_dollars > 0 && (
                     <div className="mt-4 pt-3 border-t border-neutral-100">
                       <p className="text-lg font-bold text-neutral-900">
-                        ${prize.value_dollars.toLocaleString()}
+                        {formatPrizeValue(prize.value_dollars)}
                         <span className="text-sm font-normal text-neutral-400 ml-1">value</span>
                       </p>
                     </div>
@@ -1044,11 +1082,10 @@ export const RaffleBoardPage: React.FC = () => {
 
                 {/* Winner Overlay */}
                 {prize.won && prize.winner && (
-                  <div className="absolute inset-0 bg-neutral-900/85 flex flex-col items-center justify-center text-white p-4 backdrop-blur-sm">
-                    <PartyPopper className="w-10 h-10 text-accent-300 mb-3" />
-                    <p className="text-xs uppercase tracking-widest text-accent-300 font-semibold mb-1">Winner</p>
-                    <p className="text-xl font-bold text-center">{prize.winner.name}</p>
-                    <p className="text-sm text-white/60 mt-1 font-mono">
+                  <div className="flex min-w-0 flex-col items-start break-words border-t border-neutral-200 bg-neutral-900 p-4 text-white">
+                    <p className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-accent-300"><PartyPopper className="h-4 w-4" aria-hidden="true" /> Winner</p>
+                    <p className="w-full text-lg font-bold">{prize.winner.name}</p>
+                    <p className="w-full text-sm text-white/80 mt-1 font-mono">
                       Ticket #{prize.winner.ticket_number}
                     </p>
                     {prize.claimed && (
@@ -1065,7 +1102,7 @@ export const RaffleBoardPage: React.FC = () => {
         )}
 
         {visiblePrizes.length > PUBLIC_PRIZES_PER_PAGE && (
-          <div className="mt-5 flex items-center justify-between rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
             <p className="text-sm text-neutral-500">
               Page {page} of {totalPages}
             </p>
@@ -1074,7 +1111,7 @@ export const RaffleBoardPage: React.FC = () => {
                 type="button"
                 onClick={() => setPage((current) => Math.max(1, current - 1))}
                 disabled={page <= 1}
-                className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-neutral-200 px-3 py-2 text-base font-medium text-neutral-600 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ChevronLeft className="h-4 w-4" />
                 Previous
@@ -1083,7 +1120,7 @@ export const RaffleBoardPage: React.FC = () => {
                 type="button"
                 onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
                 disabled={page >= totalPages}
-                className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-neutral-200 px-3 py-2 text-base font-medium text-neutral-600 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next
               </button>
@@ -1096,7 +1133,7 @@ export const RaffleBoardPage: React.FC = () => {
       {/* FOOTER                                                             */}
       {/* ================================================================= */}
       <footer className="border-t border-neutral-200 mt-8">
-        <div className="max-w-5xl mx-auto px-6 lg:px-8 py-6 flex items-center justify-between text-sm text-neutral-400">
+        <div className="max-w-5xl mx-auto px-6 lg:px-8 py-6 flex flex-wrap items-center justify-between gap-2 text-sm text-neutral-500">
           <p>
             Powered by <span className="font-medium text-neutral-600">Shimizu Technology</span>
           </p>

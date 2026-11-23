@@ -10,10 +10,10 @@ module Api
 
       MAX_PRIZE_IMAGE_SIZE = 5.megabytes
 
-      skip_before_action :authenticate_user!, only: [:prizes, :tickets, :board]
+      skip_before_action :authenticate_user!, only: [:prizes, :tickets, :board, :check_ticket]
       skip_around_action :with_tenant_rls_context, only: [:draw, :draw_all, :claim_prize, :resend_winner_notification]
       before_action :set_tournament
-      before_action :authorize_public_tournament_access!, only: [:prizes, :tickets, :board]
+      before_action :authorize_public_tournament_access!, only: [:prizes, :tickets, :board, :check_ticket]
       before_action :authorize_tournament_admin!, only: [
         :create_prize, :update_prize, :destroy_prize,
         :draw_readiness, :clear_spotlight,
@@ -70,6 +70,45 @@ module Api
             total_tickets_sold: @tournament.raffle_tickets.paid.with_eligible_participant.count
           },
           last_updated: Time.current.iso8601
+        }
+      end
+
+      # GET /api/v1/tournaments/:tournament_id/raffle/check_ticket
+      def check_ticket
+        response.set_header("Cache-Control", "no-store")
+        input = params[:ticket_number]
+        number = input.strip.downcase if input.is_a?(String)
+        return render json: { error: 'Ticket number is required' }, status: :bad_request if number.blank?
+
+        tickets = @tournament.raffle_tickets
+        ticket = tickets.find_by("LOWER(ticket_number) = ?", number)
+        eligible = ticket.present? && tickets.paid.with_eligible_participant.exists?(ticket.id)
+        prize = @tournament.raffle_prizes.won.find_by(winning_ticket_id: ticket.id) if eligible
+        status = if prize
+          "winner"
+        elsif eligible
+          "entered"
+        elsif ticket
+          "ineligible"
+        else
+          "not_found"
+        end
+
+        render json: {
+          found: ticket.present?,
+          ticket_number: ticket&.ticket_number || number,
+          eligible: eligible,
+          status: status,
+          prize: prize && {
+            id: prize.id,
+            name: prize.name,
+            tier: prize.tier,
+            tier_display: prize.tier_display,
+            value_dollars: prize.value_dollars,
+            sponsor_name: prize.sponsor_name,
+            claimed: prize.claimed?,
+            claimed_at: prize.claimed_at&.iso8601
+          }
         }
       end
 
@@ -355,26 +394,48 @@ module Api
       end
 
       # POST /api/v1/tournaments/:tournament_id/raffle/prizes/:id/claim
-      # Admin - mark prize as claimed
+      # Admin - set or clear the claim on a won prize
       def claim_prize
-        claimed_payload = nil
-        with_user_rls_context do
+        return unless verify_tenant_match!(@tournament.organization_id, status: :not_found, message: 'Tournament not found')
+
+        claimed = params.fetch(:claimed, true)
+        unless [true, false, "true", "false"].include?(claimed)
+          return render json: { error: 'Claimed must be true or false' }, status: :bad_request
+        end
+        claimed = ActiveModel::Type::Boolean.new.cast(claimed)
+
+        claimed_payload = with_user_rls_context do
           prize = @tournament.raffle_prizes.find(params[:id])
 
-          if prize.claim!
-            ActivityLog.log(
-              admin: current_user, action: 'raffle_prize_claimed', target: prize,
-              details: "Marked #{prize.name} as claimed by #{prize.winner_name}",
-              tournament: @tournament
-            )
-            claimed_payload = { prize: prize_response(prize), message: 'Prize marked as claimed' }
+          prize.with_lock do
+            next unless prize.won?
+
+            if prize.claimed? != claimed
+              if claimed
+                prize.claim!
+              else
+                prize.update!(claimed: false, claimed_at: nil)
+              end
+              ActivityLog.log(
+                admin: current_user,
+                action: claimed ? 'raffle_prize_claimed' : 'raffle_prize_unclaimed',
+                target: prize,
+                details: claimed ? "Marked #{prize.name} as claimed" : "Marked #{prize.name} as unclaimed",
+                tournament: @tournament
+              )
+            end
+
+            {
+              prize: prize_response(prize).merge(claimed_at: prize.claimed_at&.iso8601),
+              message: claimed ? 'Prize marked as claimed' : 'Prize marked as unclaimed'
+            }
           end
         end
 
         if claimed_payload
           render json: claimed_payload
         else
-          render json: { error: 'Cannot claim prize' }, status: :unprocessable_entity
+          render json: { error: 'Only won prizes can be marked as claimed or unclaimed' }, status: :unprocessable_entity
         end
       end
 

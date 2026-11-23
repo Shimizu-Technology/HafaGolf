@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef } from 'react';
+import { useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 
@@ -7,6 +7,7 @@ export interface Confirmation {
   description: string;
   confirmLabel: string;
   tone?: 'danger' | 'default';
+  children?: ReactNode;
 }
 
 interface ConfirmDialogProps extends Confirmation {
@@ -15,7 +16,7 @@ interface ConfirmDialogProps extends Confirmation {
 }
 
 export function ConfirmDialog({
-  title, description, confirmLabel, tone = 'default', onCancel, onConfirm,
+  title, description, confirmLabel, tone = 'default', children, onCancel, onConfirm,
 }: ConfirmDialogProps) {
   const titleId = useId();
   const descriptionId = useId();
@@ -61,6 +62,7 @@ export function ConfirmDialog({
         </div>
         <h2 id={titleId} className="text-lg font-semibold">{title}</h2>
         <p id={descriptionId} className="mt-2 break-words text-base text-gray-600">{description}</p>
+        {children}
         <div className="mt-5 grid gap-2 sm:flex sm:justify-end">
           <button type="button" ref={cancelRef} onClick={onCancel}
             className="min-h-[48px] rounded-xl border border-gray-300 px-4 font-semibold hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
