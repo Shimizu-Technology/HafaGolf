@@ -4,7 +4,7 @@ module Api
   module V1
     class PaymentReportsController < BaseController
       before_action :set_tournament
-      before_action :authorize_volunteer_or_admin!
+      before_action :authorize_reports_access!
 
       def show
         golfers = @tournament.golfers.includes(:sponsor, :payment_verified_by).order(:created_at)
@@ -38,8 +38,8 @@ module Api
         @tournament = Tournament.find(params[:tournament_id])
       end
 
-      def authorize_volunteer_or_admin!
-        require_volunteer_or_admin!(@tournament.organization)
+      def authorize_reports_access!
+        require_any_capability!(:view_reports, :manage_finances, tournament: @tournament)
       end
 
       def registration_payment_row(golfer)

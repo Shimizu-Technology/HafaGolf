@@ -3,7 +3,8 @@ module Api
     class GroupsController < BaseController
       class PlacementError < StandardError; end
 
-      before_action :authorize_collection_tournament_access!, only: [:index, :create, :batch_create, :auto_assign, :place_golfer]
+      before_action :authorize_collection_read_access!, only: [:index]
+      before_action :authorize_collection_tournament_access!, only: [:create, :batch_create, :auto_assign, :place_golfer]
       before_action :authorize_group_access!, only: [:show, :update, :destroy, :set_hole, :add_golfer, :merge_into, :remove_golfer]
       before_action :authorize_update_positions_access!, only: [:update_positions]
 
@@ -587,11 +588,18 @@ module Api
         }
       end
 
+      def authorize_collection_read_access!
+        tournament = find_tournament
+        return render_tournament_required unless tournament
+
+        require_any_capability!(:manage_groups, :enter_scores, :check_in, :view_reports, tournament: tournament)
+      end
+
       def authorize_collection_tournament_access!
         tournament = find_tournament
         return render_tournament_required unless tournament
 
-        require_tournament_admin!(tournament)
+        require_capability!(:manage_groups, tournament: tournament)
       end
 
       def authorize_group_access!

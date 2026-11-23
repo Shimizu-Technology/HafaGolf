@@ -44,7 +44,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const { user } = useUser();
   const { organization, accessibleOrganizations } = useOrganization();
   const { tournaments, currentTournament, setCurrentTournament, isLoading } = useTournament();
-  const { isVolunteer, isSuperAdmin } = useAdmin();
+  const { isVolunteer, isSuperAdmin, isStationOnly, stationMode, orgRoleLabel, can } = useAdmin();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -170,80 +170,117 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     },
   ];
 
-  const organizationNav = isVolunteer
-    ? allOrganizationNav.filter((item) => item.label === 'Dashboard')
-    : allOrganizationNav;
+  const organizationNav = useMemo(() => {
+    if (isVolunteer) {
+      return allOrganizationNav.filter((item) => item.label === 'Dashboard');
+    }
+    return allOrganizationNav.filter((item) => {
+      if (item.label === 'Settings') return can('manage_settings');
+      if (item.label === 'Sponsors') return can('manage_sponsors');
+      if (item.label === 'Activity Log') return can('view_reports') || can('manage_settings') || can('manage_golfers');
+      return true;
+    });
+  }, [allOrganizationNav, can, isVolunteer]);
 
-  const VOLUNTEER_SECTIONS = new Set(['Check-In', 'Raffle']);
+  const allEventNav: NavItem[] = useMemo(
+    () =>
+      activeTournament
+        ? [
+            {
+              label: 'Registrations',
+              path: adminEventPath(activeTournament.slug),
+              icon: ClipboardList,
+              match: (pathname) => pathname === adminEventPath(activeTournament.slug) || routeSection === 'registrations',
+            },
+            {
+              label: 'Payments',
+              path: adminEventPath(activeTournament.slug, 'payments'),
+              icon: CreditCard,
+              match: () => routeSection === 'payments',
+            },
+            {
+              label: 'Check-In',
+              path: adminEventPath(activeTournament.slug, 'checkin'),
+              icon: ShieldCheck,
+              match: () => routeSection === 'checkin',
+            },
+            {
+              label: 'Hole Assignment',
+              path: adminEventPath(activeTournament.slug, 'groups'),
+              icon: Flag,
+              match: () => routeSection === 'groups',
+            },
+            {
+              label: 'Scoring',
+              path: adminEventPath(activeTournament.slug, 'scoring'),
+              icon: ClipboardList,
+              match: () => routeSection === 'scoring',
+            },
+            ...(eventRaffleEnabled
+              ? [
+                  {
+                    label: 'Raffle',
+                    path: adminEventPath(activeTournament.slug, 'raffle'),
+                    icon: Ticket,
+                    match: () => routeSection === 'raffle',
+                  },
+                ]
+              : []),
+            ...(eventSponsorsEnabled
+              ? [
+                  {
+                    label: 'Sponsors',
+                    path: adminEventPath(activeTournament.slug, 'sponsors'),
+                    icon: HandCoins,
+                    match: () => routeSection === 'sponsors',
+                  },
+                ]
+              : []),
+            ...(eventEmployeePricingEnabled
+              ? [
+                  {
+                    label: 'Employee Numbers',
+                    path: adminEventPath(activeTournament.slug, 'employee-numbers'),
+                    icon: BadgeCheck,
+                    match: () => routeSection === 'employee-numbers',
+                  },
+                ]
+              : []),
+            {
+              label: 'Reports',
+              path: adminEventPath(activeTournament.slug, 'reports'),
+              icon: BarChart3,
+              match: () => routeSection === 'reports',
+            },
+          ]
+        : [],
+    [activeTournament, eventEmployeePricingEnabled, eventRaffleEnabled, eventSponsorsEnabled, routeSection]
+  );
 
-  const allEventNav: NavItem[] = activeTournament
-    ? [
-        {
-          label: 'Registrations',
-          path: adminEventPath(activeTournament.slug),
-          icon: ClipboardList,
-          match: (pathname) => pathname === adminEventPath(activeTournament.slug) || routeSection === 'registrations',
-        },
-        {
-          label: 'Payments',
-          path: adminEventPath(activeTournament.slug, 'payments'),
-          icon: CreditCard,
-          match: () => routeSection === 'payments',
-        },
-        {
-          label: 'Check-In',
-          path: adminEventPath(activeTournament.slug, 'checkin'),
-          icon: ShieldCheck,
-          match: () => routeSection === 'checkin',
-        },
-        {
-          label: 'Hole Assignment',
-          path: adminEventPath(activeTournament.slug, 'groups'),
-          icon: Flag,
-          match: () => routeSection === 'groups',
-        },
-        ...(eventRaffleEnabled
-          ? [
-              {
-                label: 'Raffle',
-                path: adminEventPath(activeTournament.slug, 'raffle'),
-                icon: Ticket,
-                match: () => routeSection === 'raffle',
-              },
-            ]
-          : []),
-        ...(eventSponsorsEnabled
-          ? [
-              {
-                label: 'Sponsors',
-                path: adminEventPath(activeTournament.slug, 'sponsors'),
-                icon: HandCoins,
-                match: () => routeSection === 'sponsors',
-              },
-            ]
-          : []),
-        ...(eventEmployeePricingEnabled
-          ? [
-              {
-                label: 'Employee Numbers',
-                path: adminEventPath(activeTournament.slug, 'employee-numbers'),
-                icon: BadgeCheck,
-                match: () => routeSection === 'employee-numbers',
-              },
-            ]
-          : []),
-        {
-          label: 'Reports',
-          path: adminEventPath(activeTournament.slug, 'reports'),
-          icon: BarChart3,
-          match: () => routeSection === 'reports',
-        },
-      ]
-    : [];
-
-  const eventNav = isVolunteer
-    ? allEventNav.filter((item) => VOLUNTEER_SECTIONS.has(item.label))
-    : allEventNav;
+  const eventNav = useMemo(() => {
+    return allEventNav.filter((item) => {
+      switch (item.label) {
+        case 'Registrations':
+        case 'Employee Numbers':
+          return can('manage_golfers');
+        case 'Payments':
+        case 'Reports':
+          return can('view_reports') || can('manage_finances');
+        case 'Check-In':
+          return can('check_in');
+        case 'Hole Assignment':
+          return can('manage_groups');
+        case 'Scoring':
+          return can('enter_scores');
+        case 'Raffle':
+          return can('raffle_sell') || can('raffle_draw') || can('manage_raffle_prizes');
+        case 'Sponsors':
+          return can('manage_sponsors');
+        default:
+          return true;
+      }
+    });
+  }, [allEventNav, can]);
 
   const handleNavigate = (path: string) => {
     navigate(path);
@@ -293,6 +330,102 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       </div>
     );
   };
+
+  if (isStationOnly) {
+    const stationTabs = activeTournament
+      ? [
+          ...(can('check_in') ? [{ key: 'checkin', label: 'Check-In', path: adminEventPath(activeTournament.slug, 'checkin') }] : []),
+          ...(can('raffle_sell') && eventRaffleEnabled
+            ? [{ key: 'raffle', label: 'Raffle', path: adminEventPath(activeTournament.slug, 'raffle') }]
+            : []),
+          ...(can('enter_scores')
+            ? [{ key: 'scoring', label: 'Scoring', path: adminEventPath(activeTournament.slug, 'scoring') }]
+            : []),
+        ]
+      : [];
+    const canSwitchDesks = stationTabs.length > 1;
+    const stationTitle =
+      stationMode === 'raffle'
+        ? 'Raffle POS Station'
+        : stationMode === 'scoring'
+        ? 'Scoring Station'
+        : 'Check-In Station';
+
+    return (
+      <div data-static-flow data-admin-ui data-testid="volunteer-station-shell" className="min-h-screen bg-neutral-100">
+        <header
+          data-testid="volunteer-station-bar"
+          className="sticky top-0 z-40 border-b border-brand-800/15 bg-brand-600 text-brand-foreground shadow-sm"
+        >
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              {branding.logoUrl ? (
+                <img
+                  src={branding.logoUrl}
+                  alt={organizationDisplayName}
+                  className="h-9 w-9 shrink-0 rounded-xl bg-white/10 object-contain p-1"
+                />
+              ) : (
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15">
+                  <Flag className="h-4 w-4 text-brand-foreground" />
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-white">
+                    {activeTournament?.name || organizationDisplayName}
+                  </span>
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                    <ShieldCheck className="h-3 w-3" />
+                    {orgRoleLabel || stationTitle}
+                  </span>
+                </div>
+                <p className="truncate text-[11px] text-brand-200">{organizationDisplayName} · {stationTitle}</p>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              {openTournaments.length > 1 && (
+                <select
+                  value={activeTournament?.id ?? ''}
+                  aria-label="Choose event"
+                  onChange={(event) => handleTournamentSelect(event.target.value)}
+                  className="hidden max-w-[200px] rounded-xl bg-white/15 px-3 py-1.5 text-xs font-medium text-white outline-none sm:block"
+                >
+                  {openTournaments.map((t) => (
+                    <option key={t.id} value={t.id} className="text-neutral-900">
+                      {t.short_name}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {canSwitchDesks && (
+                <div className="inline-flex rounded-xl bg-white/10 p-0.5 text-xs font-semibold">
+                  {stationTabs.map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => handleNavigate(tab.path)}
+                      className={`rounded-lg px-2.5 py-1.5 transition ${
+                        routeSection === tab.key ? 'bg-white text-brand-700' : 'text-white/90 hover:bg-white/10'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <UserButton />
+            </div>
+          </div>
+        </header>
+
+        <main className="mx-auto max-w-5xl p-4 sm:p-6">{children}</main>
+      </div>
+    );
+  }
 
   return (
     <div data-static-flow data-admin-ui className="min-h-screen bg-neutral-100">

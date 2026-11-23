@@ -16,7 +16,18 @@ module Api
 
       # GET /api/v1/admins/me
       def me
-        render json: current_user, serializer: AdminSerializer
+        requested_slug = params[:org].presence || params[:organization_slug].presence
+        if requested_slug.present?
+          candidate = Organization.find_by("LOWER(slug) = ?", requested_slug.to_s.strip.downcase)
+          unless candidate && (current_user.super_admin? || current_user.member_of?(candidate))
+            return render json: { error: "Forbidden: You do not have access to this organization" }, status: :forbidden
+          end
+          scope_org = candidate
+        else
+          scope_org = @organization_scope
+        end
+
+        render json: current_user, serializer: AdminSerializer, scope_organization: scope_org
       end
 
       # GET /api/v1/admins/:id
@@ -131,13 +142,16 @@ module Api
 
       def set_organization_scope
         accessible = current_user.accessible_organizations
-        @organization_scope = if params[:organization_slug].present?
-          accessible.find_by(slug: params[:organization_slug].to_s.downcase)
+        requested_slug = params[:organization_slug].presence || params[:org].presence
+        @organization_scope = if requested_slug.present?
+          accessible.find_by("LOWER(slug) = ?", requested_slug.to_s.strip.downcase)
         elsif Current.organization.present? && current_user.member_of?(Current.organization)
           Current.organization
         else
           accessible.order(:name).first
         end
+
+        return if action_name == 'me'
 
         unless @organization_scope
           render json: { error: 'No accessible organization found' }, status: :forbidden

@@ -47,29 +47,65 @@ class User < ApplicationRecord
   end
 
   # Organization access checks
+  def membership_for(organization)
+    return nil unless organization
+
+    organization_memberships.find_by(organization: organization)
+  end
+
   def org_admin_for?(organization)
     return true if super_admin?
-    organization_memberships.exists?(organization: organization, role: 'admin')
+    return false unless organization
+
+    organization_memberships.exists?(organization: organization, role: OrganizationMembership::ADMIN_ROLES)
   end
 
   def member_of?(organization)
     return true if super_admin?
+    return false unless organization
+
     organization_memberships.exists?(organization: organization)
   end
 
   def volunteer_for?(organization)
-    organization_memberships.exists?(organization: organization, role: 'volunteer')
+    return false unless organization
+
+    organization_memberships.exists?(organization: organization, role: %w[volunteer checkin_volunteer raffle_volunteer scoring_marshal coordinator])
   end
 
   def org_role_for(organization)
-    return 'admin' if super_admin?
-    organization_memberships.find_by(organization: organization)&.role
+    return 'org_admin' if super_admin?
+    membership_for(organization)&.role
   end
 
-  # Tournament access checks
+  def can?(capability, organization:, tournament: nil)
+    return true if super_admin?
+    return false unless organization
+
+    membership = membership_for(organization)
+    return membership.can?(capability, tournament: tournament) == true if membership
+
+    # Legacy fallback: users with explicit tournament_assignments but no org membership
+    return false unless tournament
+
+    tournament_assignments.exists?(tournament: tournament)
+  end
+
+  def capabilities_for(organization)
+    return OrganizationMembership.all_capabilities_map(true) if super_admin?
+    return OrganizationMembership.all_capabilities_map(false) unless organization
+
+    membership_for(organization)&.effective_capabilities || OrganizationMembership.all_capabilities_map(false)
+  end
+
+  # Tournament access checks (explicit org_admin or legacy tournament_assignment only — never widened by manage_golfers)
   def can_manage?(tournament)
     return true if super_admin?
+    return false unless tournament
     return true if org_admin_for?(tournament.organization)
+
+    return false if membership_for(tournament.organization).present?
+
     tournament_assignments.exists?(tournament: tournament)
   end
 
@@ -81,7 +117,7 @@ class User < ApplicationRecord
   def accessible_organization_ids
     return Organization.pluck(:id) if super_admin?
 
-    membership_org_ids = organization_memberships.where(role: %w[admin volunteer]).pluck(:organization_id)
+    membership_org_ids = organization_memberships.where(role: OrganizationMembership::STAFF_ROLES).pluck(:organization_id)
     assigned_org_ids = TenantContext.with_platform_access do
       Tournament.joins(:tournament_assignments)
                 .where(tournament_assignments: { user_id: id })
@@ -93,11 +129,20 @@ class User < ApplicationRecord
 
   def accessible_tournaments
     return Tournament.all if super_admin?
-    
-    org_ids = organization_memberships.where(role: %w[admin volunteer]).pluck(:organization_id)
-    tournament_ids = tournament_assignments.pluck(:tournament_id)
-    
-    Tournament.where(organization_id: org_ids).or(Tournament.where(id: tournament_ids))
+
+    memberships = organization_memberships.where(role: OrganizationMembership::STAFF_ROLES).to_a
+    all_member_org_ids = organization_memberships.pluck(:organization_id)
+    unscoped_org_ids = memberships.select { |m| m.admin? || m.scoped_tournament_ids.blank? }.map(&:organization_id)
+    scoped_ids = memberships.reject { |m| m.admin? || m.scoped_tournament_ids.blank? }.flat_map(&:scoped_tournament_ids)
+
+    # Legacy tournament_assignments only apply when no explicit org membership governs that org
+    legacy_assigned_ids = Tournament.joins(:tournament_assignments)
+                                    .where(tournament_assignments: { user_id: id })
+                                    .where.not(organization_id: all_member_org_ids)
+                                    .pluck(:id)
+    explicit_ids = (scoped_ids + legacy_assigned_ids).uniq
+
+    Tournament.where(organization_id: unscoped_org_ids).or(Tournament.where(id: explicit_ids))
   end
 
   private

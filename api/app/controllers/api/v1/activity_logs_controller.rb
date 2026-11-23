@@ -7,17 +7,19 @@ module Api
 
       # GET /api/v1/activity_logs
       def index
-        accessible_tournaments = current_user.accessible_tournaments
+        accessible_tournaments = activity_log_tournaments
         logs = ActivityLog.recent.includes(:user, :tournament)
 
         if params[:tournament_id].present?
           tournament = Tournament.find(params[:tournament_id])
-          require_tournament_admin!(tournament)
+          require_any_capability!(:view_reports, :manage_settings, :manage_golfers, tournament: tournament)
           return if performed?
 
           logs = logs.for_tournament(tournament.id)
         elsif params[:all_tournaments] == 'true'
+          admin_org_ids = current_user.super_admin? ? Organization.pluck(:id) : current_user.organization_memberships.admins.pluck(:organization_id)
           logs = logs.where(tournament_id: accessible_tournaments.select(:id))
+                     .or(logs.where(tournament_id: nil, organization_id: admin_org_ids))
         else
           tournament = accessible_tournaments.recent.first
           logs = tournament ? logs.for_tournament(tournament.id) : ActivityLog.none
@@ -115,12 +117,12 @@ module Api
       def summary
         tournament = if params[:tournament_id].present?
           found = Tournament.find(params[:tournament_id])
-          require_tournament_admin!(found)
+          require_any_capability!(:view_reports, :manage_settings, :manage_golfers, tournament: found)
           return if performed?
 
           found
         else
-          current_user.accessible_tournaments.recent.first
+          activity_log_tournaments.recent.first
         end
 
         base_scope = tournament ? ActivityLog.for_tournament(tournament.id) : ActivityLog.none
@@ -158,9 +160,23 @@ module Api
 
       private
 
+      def activity_log_tournaments
+        return Tournament.all if current_user.super_admin?
+
+        allowed_ids = current_user.accessible_tournaments.includes(:organization).select do |t|
+          current_user.can?(:view_reports, organization: t.organization, tournament: t) ||
+            current_user.can?(:manage_settings, organization: t.organization, tournament: t) ||
+            current_user.can?(:manage_golfers, organization: t.organization, tournament: t)
+        end.map(&:id)
+        Tournament.where(id: allowed_ids)
+      end
+
       def require_activity_log_admin!
         return if current_user&.super_admin?
-        return if current_user&.organization_memberships&.exists?(role: 'admin')
+        return if current_user&.organization_memberships&.admins&.exists?
+        return if current_user&.organization_memberships&.any? do |m|
+          m.can?(:view_reports) || m.can?(:manage_settings) || m.can?(:manage_golfers)
+        end
         return if current_user&.tournament_assignments&.exists?
 
         render json: { error: 'Forbidden: Admin access required' }, status: :forbidden

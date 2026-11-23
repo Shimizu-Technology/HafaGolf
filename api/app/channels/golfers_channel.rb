@@ -13,11 +13,11 @@ class GolfersChannel < ApplicationCable::Channel
         return
       end
 
-      tournament_ids = current_admin.accessible_tournaments.pluck(:id)
-      return reject if tournament_ids.empty?
+      tournaments = current_admin.accessible_tournaments.includes(:organization).select { |t| authorized_for_tournament?(t) }
+      return reject if tournaments.empty?
 
-      tournament_ids.each do |tournament_id|
-        stream_from "golfers_channel_#{tournament_id}"
+      tournaments.each do |tournament|
+        stream_from "golfers_channel_#{tournament.id}"
       end
     end
   end
@@ -29,6 +29,7 @@ class GolfersChannel < ApplicationCable::Channel
   private
 
   def authorized_for_tournament?(tournament)
-    current_admin.can_manage?(tournament) || current_admin.volunteer_for?(tournament.organization)
+    current_admin.can?(:check_in, organization: tournament.organization, tournament: tournament) ||
+      current_admin.can?(:manage_golfers, organization: tournament.organization, tournament: tournament)
   end
 end

@@ -111,10 +111,8 @@ module Api
 
       def authorize_team_member_access!
         tournament = @team_member.tournament
-        unless current_user&.can_manage?(tournament) || current_user&.volunteer_for?(tournament.organization)
-          render json: { error: "Forbidden: You do not have access to this tournament" }, status: :forbidden
-          return
-        end
+        require_any_capability!(:check_in, :manage_golfers, tournament: tournament)
+        return if performed?
 
         verify_tenant_match!(@team_member.organization_id, status: :forbidden, message: "Forbidden: Cross-organization access denied")
       end

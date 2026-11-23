@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowRight,
@@ -206,7 +206,8 @@ export const OrgAdminDashboard: React.FC = () => {
   const { organization, isLoading: orgLoading } = useOrganization();
   const { currentTournament } = useTournament();
   const { getToken } = useAuthToken();
-  const { isVolunteer } = useAdmin();
+  const { isVolunteer, isStationOnly, stationMode, can } = useAdmin();
+  const canViewFinances = can('view_reports') || can('manage_finances');
   const [tournaments, setTournaments] = useState<TournamentSummary[]>([]);
   const [stats, setStats] = useState<OrgStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -279,6 +280,13 @@ export const OrgAdminDashboard: React.FC = () => {
     );
   }
 
+  // Streamlined Volunteer Station Mode: land directly in Check-In, Raffle POS, or Scoring
+  if (isStationOnly && nextTournament) {
+    const targetSection =
+      stationMode === 'raffle' ? 'raffle' : stationMode === 'scoring' ? 'scoring' : 'checkin';
+    return <Navigate to={adminEventPath(nextTournament.slug, targetSection)} replace />;
+  }
+
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
       <section className="rounded-[28px] bg-white p-5 sm:p-6 lg:p-8 shadow-sm">
@@ -320,7 +328,9 @@ export const OrgAdminDashboard: React.FC = () => {
             { label: 'Events', value: stats.total_tournaments, icon: Trophy, tone: 'bg-brand-50 text-brand-700' },
             { label: 'Active now', value: stats.active_tournaments, icon: Calendar, tone: 'bg-emerald-50 text-emerald-700' },
             { label: 'Confirmed', value: stats.total_registrations, icon: Users, tone: 'bg-violet-50 text-violet-700' },
-            { label: 'Revenue', value: formatCurrency(stats.total_revenue), icon: CreditCard, tone: 'bg-amber-50 text-amber-700' },
+            ...(canViewFinances && typeof stats.total_revenue === 'number'
+              ? [{ label: 'Revenue', value: formatCurrency(stats.total_revenue), icon: CreditCard, tone: 'bg-amber-50 text-amber-700' }]
+              : []),
           ].map((item) => {
             const Icon = item.icon;
             return (

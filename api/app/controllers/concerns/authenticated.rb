@@ -114,6 +114,27 @@ module Authenticated
     render json: { error: 'Forbidden: You do not have access to this feature' }, status: :forbidden
   end
 
+  # Granular RBAC capability guard (with optional tournament scope enforcement)
+  def require_capability!(capability, organization: nil, tournament: nil)
+    org = organization || tournament&.organization || Current.organization
+    return if current_user&.can?(capability, organization: org, tournament: tournament)
+
+    render json: {
+      error: "Forbidden: Missing '#{capability}' permission",
+      required_capability: capability.to_s
+    }, status: :forbidden
+  end
+
+  def require_any_capability!(*capabilities, organization: nil, tournament: nil)
+    org = organization || tournament&.organization || Current.organization
+    return if capabilities.any? { |cap| current_user&.can?(cap, organization: org, tournament: tournament) }
+
+    render json: {
+      error: "Forbidden: Insufficient permissions",
+      required_capabilities: capabilities.map(&:to_s)
+    }, status: :forbidden
+  end
+
   # Resolve user details via the Clerk Backend API when the session token omits email.
   def fetch_clerk_user(clerk_id)
     secret = ENV['CLERK_SECRET_KEY']
