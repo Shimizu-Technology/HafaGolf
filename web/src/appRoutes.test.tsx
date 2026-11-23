@@ -84,4 +84,14 @@ describe('root and platform routing', () => {
   it.each(['/platform', '/about'])('renders the platform homepage at %s on any host', async (path) => {
     expect(await visit(`https://club.example.com${path}`)).toBe('Platform homepage');
   });
+
+  it('renders legal and contact pages on /privacy, /terms, and /contact', async () => {
+    expect(await visit('https://golf.shimizu-technology.com/privacy')).toBe('Privacy Policy');
+    act(() => root.unmount());
+    root = createRoot(container);
+    expect(await visit('https://golf.shimizu-technology.com/terms')).toBe('Terms of Service');
+    act(() => root.unmount());
+    root = createRoot(container);
+    expect(await visit('https://golf.shimizu-technology.com/contact')).toBe('Talk with the HafaGolf team.');
+  });
 });

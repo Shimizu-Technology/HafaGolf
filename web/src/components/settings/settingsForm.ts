@@ -115,6 +115,8 @@ export interface TournamentSettings extends TournamentMedia {
   waiver_text: string;
   show_public_sponsors: boolean;
   sponsor_wall_title: string;
+  public_listed: boolean;
+  directory_listed: boolean;
   theme_preset: string;
   use_org_branding: boolean;
   homepage_config: HomepageConfig;
@@ -244,6 +246,8 @@ export function tournamentDraft(t: Tournament): TournamentSettings {
     waiver_text: t.waiver_text || '',
     show_public_sponsors: t.show_public_sponsors ?? true,
     sponsor_wall_title: t.sponsor_wall_title || '',
+    public_listed: t.public_listed ?? true,
+    directory_listed: t.directory_listed ?? false,
     theme_preset: t.theme_preset || 'default-clean',
     use_org_branding: t.use_org_branding ?? true,
     homepage_config: t.homepage_config || {},
@@ -324,6 +328,7 @@ export function tournamentPayload(tournamentSettings: TournamentSettings) {
     waiver_text: tournamentSettings.waiver_text.trim() || null,
     show_public_sponsors: tournamentSettings.show_public_sponsors,
     sponsor_wall_title: tournamentSettings.sponsor_wall_title.trim() || null,
+    directory_listed: tournamentSettings.directory_listed,
     theme_preset: resolveThemePackId(tournamentSettings.theme_preset),
     use_org_branding: tournamentSettings.use_org_branding,
     homepage_config: tournamentSettings.homepage_config,

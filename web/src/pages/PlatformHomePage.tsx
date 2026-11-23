@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowRight, Flag, LogIn, Mail } from 'lucide-react';
 import { useMotionOk } from '../hooks/useMotionOk';
 import { getOrganizerConsoleHref } from '../utils/adminHost';
 import { Capabilities } from '../components/platform/Capabilities';
 import { PlatformHero } from '../components/platform/PlatformHero';
+import { TournamentsDirectory } from '../components/platform/TournamentsDirectory';
 import { TournamentDayFlow } from '../components/platform/TournamentDayFlow';
 import '../components/platform/platform.css';
 
@@ -16,6 +17,7 @@ export const PLATFORM_CONTACT_EMAIL = 'leon@shimizu-technology.com';
 export function PlatformHomePage() {
   const motionOk = useMotionOk();
   const consoleHref = getOrganizerConsoleHref();
+  const [hasDirectoryEvents, setHasDirectoryEvents] = useState(false);
 
   useEffect(() => {
     document.title = 'HafaGolf | Golf tournament software for Guam and the Pacific';
@@ -31,11 +33,25 @@ export function PlatformHomePage() {
           HafaGolf
         </a>
         <nav aria-label="Platform" className="flex items-center gap-1 sm:gap-2">
+          {hasDirectoryEvents && (
+            <a
+              href="#tournaments"
+              className="ph-ui hidden min-h-[44px] items-center rounded-full px-4 text-sm font-medium text-[var(--ph-ink-muted)] hover:text-[var(--ph-ink)] sm:inline-flex"
+            >
+              Tournaments
+            </a>
+          )}
           <a
             href="#tournament-day"
             className="ph-ui hidden min-h-[44px] items-center rounded-full px-4 text-sm font-medium text-[var(--ph-ink-muted)] hover:text-[var(--ph-ink)] sm:inline-flex"
           >
             How it works
+          </a>
+          <a
+            href="/contact"
+            className="ph-ui hidden min-h-[44px] items-center rounded-full px-4 text-sm font-medium text-[var(--ph-ink-muted)] hover:text-[var(--ph-ink)] md:inline-flex"
+          >
+            Contact
           </a>
           <a
             href={consoleHref}
@@ -49,6 +65,7 @@ export function PlatformHomePage() {
 
       <main id="top">
         <PlatformHero motionOk={motionOk} consoleHref={consoleHref} />
+        <TournamentsDirectory onHasTournamentsChange={setHasDirectoryEvents} />
         <Capabilities />
         <TournamentDayFlow motionOk={motionOk} />
 
@@ -59,7 +76,7 @@ export function PlatformHomePage() {
               Ready to run your next tournament?
             </h2>
             <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-[var(--ph-ink-muted)]">
-              Sign in to set up your event, or write to us and we will walk your committee through it.
+              Sign in to set up your event, or reach out and we will walk your committee through it.
             </p>
             <div className="mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
               <a
@@ -70,7 +87,7 @@ export function PlatformHomePage() {
                 <ArrowRight aria-hidden="true" className="h-4 w-4" />
               </a>
               <a
-                href={`mailto:${PLATFORM_CONTACT_EMAIL}?subject=${encodeURIComponent('HafaGolf for our tournament')}`}
+                href="/contact"
                 className="ph-ui inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full border border-[#d8cfbb] bg-white px-7 text-[15px] font-semibold text-[var(--ph-ink)] transition-colors duration-150 hover:border-[var(--ph-brass)]"
               >
                 <Mail aria-hidden="true" className="h-4 w-4" />
@@ -85,6 +102,15 @@ export function PlatformHomePage() {
         <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-6 text-sm text-[var(--ph-ink-muted)] sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
           <p>HafaGolf · Tournament software for charity, memorial, and alumni golf.</p>
           <div className="flex flex-wrap gap-x-5 gap-y-1">
+            <a href="/contact" className="inline-flex min-h-[44px] items-center hover:text-[var(--ph-ink)]">
+              Contact
+            </a>
+            <a href="/privacy" className="inline-flex min-h-[44px] items-center hover:text-[var(--ph-ink)]">
+              Privacy Policy
+            </a>
+            <a href="/terms" className="inline-flex min-h-[44px] items-center hover:text-[var(--ph-ink)]">
+              Terms of Service
+            </a>
             <a href={consoleHref} className="inline-flex min-h-[44px] items-center hover:text-[var(--ph-ink)]">
               Organizer sign in
             </a>

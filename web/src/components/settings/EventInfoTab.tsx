@@ -1,5 +1,5 @@
 import { Plus, X } from 'lucide-react';
-import { SettingsInput, SettingsSection, SettingsTextarea, settingsButton } from './SettingsFields';
+import { SettingsCheckbox, SettingsInput, SettingsSection, SettingsTextarea, settingsButton } from './SettingsFields';
 import { clampCourseHoleCount, createCourseConfig, MAX_COURSE_HOLES, type OrganizationDraft, type TournamentDraftProps, type UpdateOrganization } from './settingsForm';
 
 export function EventInfoTab({ draft, update, event }: {
@@ -75,6 +75,16 @@ function EventDetails({ tournamentSettings: event, handleTournamentChange: chang
         <p className="text-sm text-gray-600">
           Scoring format <strong className="capitalize">{event.tournament_format?.replace(/_/g, ' ') || 'Scramble'}</strong>. Contact support to change it.
         </p>
+        <SettingsCheckbox
+          label="Show on HafaGolf public directory"
+          checked={event.directory_listed}
+          onChange={(value) => change('directory_listed', value)}
+          help={
+            event.public_listed
+              ? 'Display this tournament on golf.shimizu-technology.com so golfers can discover it and click through to your site. Only published events with a configured web domain appear.'
+              : 'This tournament is currently unlisted on its own site (public_listed is off), so it will not appear in the HafaGolf directory until public listing is enabled.'
+          }
+        />
       </SettingsSection>
       <SettingsSection title="Schedule and event details">
         <div className="grid gap-4 sm:grid-cols-2">

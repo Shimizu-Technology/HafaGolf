@@ -36,6 +36,7 @@ class Tournament < ApplicationRecord
   validates :employee_entry_fee, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
   validates :fmv_per_player_cents, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
   validates :slug, uniqueness: { scope: :organization_id, case_sensitive: false }, allow_blank: true
+  validate :slug_not_reserved
   validates :event_type, presence: true, inclusion: { in: %w[golf_tournament gala] }
   validate :course_configs_are_valid
 
@@ -47,6 +48,7 @@ class Tournament < ApplicationRecord
   scope :active, -> { where.not(status: 'archived') }
   scope :archived, -> { where(status: 'archived') }
   scope :open_for_registration, -> { where(status: 'open', registration_open: true) }
+  scope :directory_eligible, -> { where(public_listed: true, directory_listed: true, status: %w[open in_progress closed completed]) }
   scope :by_year, ->(year) { where(year: year) }
   scope :recent, -> { order(year: :desc, created_at: :desc) }
   scope :for_organization, ->(org) { where(organization: org) }
@@ -55,6 +57,7 @@ class Tournament < ApplicationRecord
   include HomepageConfigurable
 
   STATUSES = %w[draft open closed in_progress completed archived].freeze
+  RESERVED_SLUGS = %w[admin platform about privacy terms contact score golfer payment sponsor-portal].freeze
   EVENT_TYPES = %w[golf_tournament gala].freeze
   CAPACITY_UNITS = %w[players teams].freeze
   CANONICAL_THEME_PACKS = %w[default-clean charity-bright memorial-formal crest-classic].freeze
@@ -66,7 +69,7 @@ class Tournament < ApplicationRecord
   validates :logo_url_override, public_image_url: true, allow_blank: true, if: :will_save_change_to_logo_url_override?
   validates :signature_image_url_override, public_image_url: true, allow_blank: true, if: :will_save_change_to_signature_image_url_override?
   validate :valid_story_photos
-  validates :waiver_enabled, :show_public_sponsors, :allow_sponsor_check_invoice, inclusion: { in: [true, false] }
+  validates :waiver_enabled, :show_public_sponsors, :allow_sponsor_check_invoice, :directory_listed, inclusion: { in: [true, false] }
 
   validates :theme_preset, presence: true, inclusion: { in: THEME_PRESETS }
   validates :capacity_unit, presence: true, inclusion: { in: CAPACITY_UNITS }
@@ -821,17 +824,26 @@ class Tournament < ApplicationRecord
     data['key'].to_s.strip.presence || "course-#{idx + 1}"
   end
 
+  def slug_not_reserved
+    return if slug.blank?
+
+    if RESERVED_SLUGS.include?(slug.to_s.strip.downcase)
+      errors.add(:slug, "is reserved for a platform route")
+    end
+  end
+
   def generate_slug
     return if slug.present?
     return unless name.present?
 
     base_slug = name.downcase.gsub(/[^a-z0-9]+/, '-').gsub(/^-|-$/, '')
     base_slug = "#{base_slug}-#{year}" if year.present?
+    base_slug = "#{base_slug}-event" if RESERVED_SLUGS.include?(base_slug)
     
     # Ensure uniqueness within organization
     candidate = base_slug
     counter = 1
-    while Tournament.exists?(organization_id: organization_id, slug: candidate)
+    while RESERVED_SLUGS.include?(candidate) || Tournament.exists?(organization_id: organization_id, slug: candidate)
       candidate = "#{base_slug}-#{counter}"
       counter += 1
     end

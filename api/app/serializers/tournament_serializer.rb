@@ -33,6 +33,7 @@ class TournamentSerializer < ActiveModel::Serializer
              :theme_preset, :use_org_branding, :homepage_config,
              :commemorative_banner_url, :tribute_title, :tribute_subtitle, :story_photos,
              :waiver_enabled, :waiver_text, :show_public_sponsors, :sponsor_wall_title,
+             :public_listed, :directory_listed,
              # Raffle
              :raffle_enabled, :raffle_ticket_price_cents, :raffle_draw_time,
              :raffle_description, :raffle_auto_draw,

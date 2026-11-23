@@ -15,12 +15,20 @@
   - Add subdomain -> organization resolution in API/web middleware/router.
   - Update CORS and ActionCable origin handling for wildcard subdomains.
 
-## 2) Public root/home experience polish
+## 2) Public root/home experience & tournament directory roadmap
 
-- Expand neutral root homepage with:
-  - organization discovery/onboarding CTA,
-  - clearer organizer/golfer entry points,
-  - production branding and marketing content.
+### Shipped (v1)
+- Public opt-in tournament directory on `golf.shimizu-technology.com` (`GET /api/v1/directory/tournaments`) backed by `tournaments.directory_listed` (default `false`) with Active & Upcoming / Past views, offseason fallback, 5-minute public cache headers, and silent degradation when the backend is paused.
+- Dedicated SaaS legal & reach-out pages (`/privacy`, `/terms`, `/contact`) backed by rate-limited `POST /api/v1/platform/inquiries` + `PlatformInquiryMailer`.
+
+### Planned Directory Enhancements (v2+)
+- **Search & multi-facet filters:** Filter directory tournaments by date range / month, course/venue, team format (2-person, 4-person scramble, individual), entry fee range, availability (`open` / `waitlist`), and cause/category (charity, memorial, alumni, corporate).
+- **Course map & island view:** Interactive Guam / CNMI course map showing tournament pins by course with tee-time/date quick cards (e.g., Mangilao, LeoPalace, CCP, Starts, Windward Hills).
+- **Calendar feeds & reminders:** One-click `.ics` download and subscribable HafaGolf Guam Tournament Calendar feed (Google Calendar / Apple Calendar) for upcoming opted-in events.
+- **Golfer alerts ("Notify me"):** Optional email/SMS subscription for golfers who want a monthly digest of upcoming Guam tournaments or alerts when registration opens for a specific recurring annual tournament.
+- **Featured / spotlight placement & org directory pages:** Ability to pin an upcoming flagship tournament above the grid, plus optional organization profile cards showing a club's annual tournament history.
+- **Pre-cutover external URL override:** Optional `directory_url_override` on a tournament so an organization onboarding to HafaGolf can be showcased with its current website link before DNS cutover.
+- **Self-serve organizer onboarding:** Extend `/contact` with an interactive setup estimator / guided trial onboarding flow for new tournament committees.
 
 ## 3) Unified signed-in dashboard shortcut across public pages
 

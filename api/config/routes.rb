@@ -18,6 +18,10 @@ Rails.application.routes.draw do
       # Tenant resolution (public - resolves custom domain / host to organization)
       get 'tenant' => 'tenant#show'
 
+      # Public platform directory & reach-out inquiries
+      get 'directory/tournaments' => 'directory#tournaments'
+      post 'platform/inquiries' => 'platform_inquiries#create'
+
       # Organizations (public)
       get 'organizations/:slug' => 'organizations#show'
       get 'organizations/:slug/tournaments' => 'organizations#tournaments'

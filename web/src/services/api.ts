@@ -341,6 +341,8 @@ export interface Tournament {
   waiver_text?: string | null;
   show_public_sponsors?: boolean;
   sponsor_wall_title?: string | null;
+  public_listed?: boolean;
+  directory_listed?: boolean;
   allow_sponsor_check_invoice?: boolean;
   theme_preset?: 'default-clean' | 'charity-bright' | 'memorial-formal' | 'crest-classic' | 'classic' | 'premium' | 'minimal' | 'event';
   use_org_branding?: boolean;

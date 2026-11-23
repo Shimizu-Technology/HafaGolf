@@ -270,6 +270,7 @@ module Tournaments
         waitlist_enabled: @source.waitlist_enabled,
         waitlist_max: @source.waitlist_max,
         public_listed: @source.public_listed,
+        directory_listed: false,
 
         # Raffle configuration (operational status stays draft)
         raffle_enabled: @source.raffle_enabled,
