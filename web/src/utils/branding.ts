@@ -40,6 +40,7 @@ export interface BrandingOrganizationInput {
   secondary_color?: string | null;
   accent_color?: string | null;
   logo_url?: string | null;
+  reversed_logo_url?: string | null;
   banner_url?: string | null;
   brand_kit?: BrandKitConfig | null;
   settings?: {
@@ -71,10 +72,22 @@ export interface ResolvedTournamentBranding {
   logoUrl: string | null;
   bannerUrl: string | null;
   signatureImageUrl: string | null;
+  organizationLogoUrl: string | null;
+  reversedLogoUrl: string | null;
+  eventPhotoUrl: string | null;
+  eventEmblemUrl: string | null;
   primaryScale: ColorScale;
   accentScale: ColorScale;
   brandForeground: string;
   accentForeground: string;
+}
+
+export function resolvePublicImageUrl(value?: string | null): string | null {
+  if (!value) return null;
+  if (value.startsWith('/rails/active_storage/')) {
+    return `${(import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/$/, '')}${value}`;
+  }
+  return value;
 }
 
 const HEX_6_RE = /^#[0-9a-f]{6}$/;
@@ -279,6 +292,10 @@ export function resolveTournamentBranding(
     logoUrl,
     bannerUrl,
     signatureImageUrl,
+    organizationLogoUrl: resolvePublicImageUrl(orgLogoUrl),
+    reversedLogoUrl: resolvePublicImageUrl(organization?.reversed_logo_url),
+    eventPhotoUrl: resolvePublicImageUrl(tournament?.banner_url_override || bannerUrl),
+    eventEmblemUrl: resolvePublicImageUrl(tournament?.signature_image_url_override),
     primaryScale,
     accentScale,
     brandForeground: getContrastingForeground(primaryColor),

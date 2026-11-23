@@ -10,7 +10,10 @@ module Api
       # GET /api/v1/sponsor_slots
       def index
         slots = @sponsor.sponsor_slots.order(:slot_number)
-        render json: { slots: slots.as_json(only: [:id, :slot_number, :player_name, :player_email, :player_phone, :confirmed_at]) }
+        render json: {
+          slots: slots.as_json(only: [:id, :slot_number, :player_name, :player_email, :player_phone, :confirmed_at]),
+          waiver_enabled: @sponsor.tournament.waiver_enabled
+        }
       end
 
       # PATCH /api/v1/sponsor_slots/:id

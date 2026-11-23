@@ -28,6 +28,10 @@ class Organization < ApplicationRecord
   validates :website_url, format: { with: /\Ahttps?:\/\/.+\z/i, message: 'must start with http:// or https://' }, allow_blank: true
   validates :offseason_cta_url, format: { with: /\Ahttps?:\/\/.+\z/i, message: 'must start with http:// or https://' }, allow_blank: true
 
+  validates :show_homepage_sponsors, inclusion: { in: [true, false] }
+  validates :reversed_logo_url, public_image_url: true, allow_blank: true
+  validates :logo_url, public_image_url: true, allow_blank: true, if: :will_save_change_to_logo_url?
+
   # Callbacks
   before_validation :generate_slug, on: :create
 

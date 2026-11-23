@@ -60,6 +60,20 @@ class Api::V1::SponsorAccessControllerTest < ActionDispatch::IntegrationTest
 
     slots_json = JSON.parse(response.body)
     assert_equal 2, slots_json["slots"].length
+
+    @tournament.update!(waiver_enabled: false)
+    get "/api/v1/sponsor_slots", headers: { "X-Sponsor-Session" => session_token }
+    assert_response :success
+    assert_equal false, response.parsed_body["waiver_enabled"]
+  end
+
+  test "confirm includes the tournament waiver setting for the sponsor portal" do
+    @tournament.update!(waiver_enabled: false)
+
+    post "/api/v1/sponsor_access/confirm", params: { token: @access_token, email: @sponsor.login_email }
+
+    assert_response :success
+    assert_equal false, response.parsed_body.dig("tournament", "waiver_enabled")
   end
 
   test "request_link sends an access email for each active sponsor sharing the same login email" do

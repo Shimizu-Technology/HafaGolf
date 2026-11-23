@@ -56,6 +56,13 @@ class Tournament < ApplicationRecord
   LEGACY_THEME_PRESETS = %w[classic premium minimal event].freeze
   THEME_PRESETS = (CANONICAL_THEME_PACKS + LEGACY_THEME_PRESETS).freeze
 
+  validates :commemorative_banner_url, public_image_url: true, allow_blank: true
+  validates :banner_url_override, public_image_url: true, allow_blank: true, if: :will_save_change_to_banner_url_override?
+  validates :logo_url_override, public_image_url: true, allow_blank: true, if: :will_save_change_to_logo_url_override?
+  validates :signature_image_url_override, public_image_url: true, allow_blank: true, if: :will_save_change_to_signature_image_url_override?
+  validate :valid_story_photos
+  validates :waiver_enabled, :show_public_sponsors, inclusion: { in: [true, false] }
+
   validates :theme_preset, presence: true, inclusion: { in: THEME_PRESETS }
   validates :capacity_unit, presence: true, inclusion: { in: CAPACITY_UNITS }
 
@@ -641,6 +648,20 @@ class Tournament < ApplicationRecord
   end
 
   private
+
+  def valid_story_photos
+    unless story_photos.is_a?(Array) && story_photos.size <= 3
+      errors.add(:story_photos, "must be an array of up to three photos")
+      return
+    end
+
+    valid = story_photos.all? do |photo|
+      photo.is_a?(Hash) && (photo.keys - %w[url caption]).empty? &&
+        PublicImageUrlValidator.safe?(photo["url"]) &&
+        (photo["caption"].nil? || photo["caption"].is_a?(String))
+    end
+    errors.add(:story_photos, "must contain image URLs with optional text captions") unless valid
+  end
 
   def course_configs_cache_inputs
     {

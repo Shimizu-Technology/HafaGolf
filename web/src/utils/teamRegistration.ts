@@ -60,15 +60,14 @@ export function canRemovePlayer(currentCount: number, teamSize?: number | null, 
   return allowPartialTeams && normalized > 1 && currentCount > 1;
 }
 
-export function getStepNames(teamSize?: number | null): string[] {
+export function getStepNames(teamSize?: number | null, waiverEnabled = true): string[] {
   const normalized = normalizeTeamSize(teamSize);
-  if (normalized === 1) {
-    return ['Player Info', 'Waiver', 'Review & Pay'];
-  }
-  if (normalized === 2) {
-    return ['Team Captain', 'Partner', 'Waiver', 'Review & Pay'];
-  }
-  return ['Team Captain', 'Teammates', 'Waiver', 'Review & Pay'];
+  const names = normalized === 1
+    ? ['Player Info']
+    : ['Team Captain', normalized === 2 ? 'Partner' : 'Teammates'];
+
+  if (waiverEnabled) names.push('Waiver');
+  return [...names, 'Review & Pay'];
 }
 
 export function getDisplayTeamName(teamName: string, players: TeamPlayerDraft[]): string {
@@ -275,6 +274,7 @@ export function buildRegistrationPayload(
   options?: {
     paymentType?: 'stripe' | 'pay_on_day' | 'swipe_simple' | 'walk_in' | 'offline';
     organizationSlug?: string;
+    waiverEnabled?: boolean;
     isEmployee?: boolean;
     employeeNumber?: string;
   }
@@ -305,10 +305,12 @@ export function buildRegistrationPayload(
         handicap: player.handicap.trim() !== '' && !Number.isNaN(Number(player.handicap))
           ? Number(player.handicap)
           : undefined,
-        waiver_accepted: player.waiver_accepted,
+        waiver_accepted: options?.waiverEnabled === false ? undefined : player.waiver_accepted,
       })),
     },
-    waiver_accepted: state.players.every((player) => player.waiver_accepted),
+    waiver_accepted: options?.waiverEnabled === false
+      ? undefined
+      : state.players.every((player) => player.waiver_accepted),
     ...(options?.isEmployee && options?.employeeNumber
       ? { is_employee: true, employee_number: options.employeeNumber }
       : {}),

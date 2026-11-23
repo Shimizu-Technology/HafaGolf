@@ -58,6 +58,12 @@ describe('teamRegistration helpers (1/2/4 players + partial teams)', () => {
     expect(getStepNames(4)).toEqual(['Team Captain', 'Teammates', 'Waiver', 'Review & Pay']);
   });
 
+  it('skips straight to review for individual, pair, and foursome registrations when waivers are disabled', () => {
+    expect(getStepNames(1, false)).toEqual(['Player Info', 'Review & Pay']);
+    expect(getStepNames(2, false)).toEqual(['Team Captain', 'Partner', 'Review & Pay']);
+    expect(getStepNames(4, false)).toEqual(['Team Captain', 'Teammates', 'Review & Pay']);
+  });
+
   it('validates captain step and requires category only when configured', () => {
     const validCaptain: TeamPlayerDraft[] = [
       {

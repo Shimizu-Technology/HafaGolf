@@ -25,6 +25,8 @@ export interface Organization {
   slug: string;
   description?: string;
   logo_url?: string;
+  reversed_logo_url?: string | null;
+  show_homepage_sponsors?: boolean;
   primary_color?: string;
   secondary_color?: string;
   accent_color?: string;

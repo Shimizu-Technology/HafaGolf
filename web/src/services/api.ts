@@ -19,6 +19,8 @@ export interface Organization {
   slug: string;
   description?: string;
   logo_url?: string;
+  reversed_logo_url?: string | null;
+  show_homepage_sponsors?: boolean;
   primary_color?: string;
   secondary_color?: string;
   accent_color?: string;
@@ -229,6 +231,11 @@ export interface CreateRegistrationResponse {
 }
 
 // Types for API responses
+export interface StoryPhoto {
+  url: string;
+  caption?: string | null;
+}
+
 export interface Tournament {
   id: number;
   name: string;
@@ -322,6 +329,14 @@ export interface Tournament {
   primary_color_override?: string | null;
   accent_color_override?: string | null;
   signature_image_url_override?: string | null;
+  commemorative_banner_url?: string | null;
+  tribute_title?: string | null;
+  tribute_subtitle?: string | null;
+  story_photos?: StoryPhoto[];
+  waiver_enabled?: boolean;
+  waiver_text?: string | null;
+  show_public_sponsors?: boolean;
+  sponsor_wall_title?: string | null;
   theme_preset?: 'default-clean' | 'charity-bright' | 'memorial-formal' | 'crest-classic' | 'classic' | 'premium' | 'minimal' | 'event';
   use_org_branding?: boolean;
   
@@ -460,6 +475,7 @@ export interface Golfer {
   sponsor_display_name: string | null;
   // Team fields
   partner_name: string | null;
+  partner_waiver_accepted_at?: string | null;
   partner_email: string | null;
   partner_phone: string | null;
   team_name?: string | null;
@@ -1240,6 +1256,13 @@ export class ApiClient {
     });
   }
 
+  async markGolferWaiverSigned(id: number, partner = false): Promise<Golfer> {
+    return this.request(`/api/v1/golfers/${id}/mark_waiver_signed`, {
+      method: 'POST',
+      body: JSON.stringify({ partner }),
+    });
+  }
+
   async checkInGolfer(id: number): Promise<Golfer> {
     return this.request(`/api/v1/golfers/${id}/check_in`, {
       method: 'POST',
@@ -1835,6 +1858,12 @@ export class ApiClient {
 
   async syncRegistrationRaffleTickets(id: number): Promise<{ registration: Registration; raffle_tickets: unknown[] }> {
     return this.request(`/api/v1/registrations/${id}/sync_raffle_tickets`, {
+      method: 'POST',
+    });
+  }
+
+  async markTeamMemberWaiverSigned(id: number): Promise<{ team_member: TeamMember }> {
+    return this.request(`/api/v1/team_members/${id}/mark_waiver_signed`, {
       method: 'POST',
     });
   }

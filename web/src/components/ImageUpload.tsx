@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useId } from 'react';
 import { Upload, X, Loader2, Image as ImageIcon } from 'lucide-react';
+import { resolvePublicImageUrl } from '../utils/branding';
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   avif: 'image/avif',
@@ -20,6 +21,7 @@ interface ImageUploadProps {
   accept?: string;
   maxSizeMB?: number;
   previewAspectClassName?: string;
+  previewBackgroundClassName?: string;
 }
 
 export const ImageUpload: React.FC<ImageUploadProps> = ({
@@ -32,10 +34,12 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   accept = 'image/jpeg,image/png,image/gif,image/webp,image/avif',
   maxSizeMB = 5,
   previewAspectClassName = 'aspect-[16/8]',
+  previewBackgroundClassName = 'bg-[linear-gradient(135deg,#eff6ff_0%,#f8fafc_100%)]',
 }) => {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpload = async (file: File) => {
@@ -112,7 +116,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
 
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">
+      <label htmlFor={inputId} className="block text-sm font-medium text-gray-700 mb-1">
         {label}
       </label>
 
@@ -120,9 +124,10 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
       {value && (
         <div className="relative mb-3 max-w-xl">
           <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-sm">
-            <div className={`${previewAspectClassName} w-full bg-[linear-gradient(135deg,#eff6ff_0%,#f8fafc_100%)] p-2`}>
+            <div className={`${previewAspectClassName} ${previewBackgroundClassName} w-full p-2`}>
               <img
-                src={value}
+                key={value}
+                src={resolvePublicImageUrl(value.trim()) ?? undefined}
                 alt={label}
                 className="h-full w-full rounded-xl object-contain"
                 onError={(e) => {
@@ -134,7 +139,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
           <button
             type="button"
             onClick={handleClear}
-            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full border border-white/60 bg-red-500 text-white shadow-md transition hover:bg-red-600"
+            className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full border border-white/60 bg-red-500 text-white shadow-md hover:bg-red-600"
             aria-label={`Remove ${label}`}
           >
             <X className="w-3.5 h-3.5" />
@@ -143,12 +148,15 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
       )}
 
       {/* Upload area */}
-      <div
+      <button
+        type="button"
+        aria-label={`Upload ${label}`}
+        disabled={uploading}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         className={`
-          relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors
+          relative w-full border-2 border-dashed rounded-lg p-4 text-center cursor-pointer
           ${dragOver 
             ? 'border-green-500 bg-green-50' 
             : 'border-gray-300 hover:border-gray-400 bg-white'
@@ -157,17 +165,9 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
         `}
         onClick={() => fileInputRef.current?.click()}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={accept}
-          onChange={handleFileSelect}
-          className="hidden"
-        />
-
         {uploading ? (
           <div className="flex items-center justify-center gap-2 text-gray-500">
-            <Loader2 className="w-5 h-5 animate-spin" />
+            <Loader2 className="w-5 h-5" />
             <span className="text-sm">Uploading...</span>
           </div>
         ) : (
@@ -176,17 +176,19 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
             <span className="text-sm">{placeholder}</span>
           </div>
         )}
-      </div>
+      </button>
+      <input ref={fileInputRef} type="file" accept={accept} onChange={handleFileSelect} hidden />
 
       {/* URL input fallback */}
       <div className="mt-2 flex items-center gap-2">
         <ImageIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
         <input
           type="text"
+          id={inputId}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Or paste image URL directly"
-          className="flex-1 text-sm border border-gray-300 rounded-md px-3 py-1.5 text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500"
+          className="min-w-0 min-h-11 flex-1 text-base border border-gray-300 rounded-md px-3 py-1.5 text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500"
         />
       </div>
 

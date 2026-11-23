@@ -122,12 +122,24 @@ module Api
             tournament.lock!
 
             golfer = tournament.golfers.new(golfer_params)
-            golfer.waiver_accepted_at = Time.current if params[:waiver_accepted]
+            if tournament.waiver_enabled? && ActiveModel::Type::Boolean.new.cast(params[:waiver_accepted])
+              golfer.waiver_accepted_at = Time.current
+            end
+            if tournament.waiver_enabled? && golfer.partner_name.present? && ActiveModel::Type::Boolean.new.cast(params[:partner_waiver_accepted])
+              golfer.partner_waiver_accepted_at = Time.current
+            else
+              golfer.partner_waiver_accepted_at = nil
+            end
             incoming_players = golfer.partner_name.present? ? 2 : 1
 
             # Re-check unified registration capacity (golfers + registrations/team_members) after acquiring lock
             unless tournament.can_accept_public_registration?(player_count: incoming_players)
               error_response = { errors: ["Registration is currently closed."], status: :unprocessable_entity }
+              raise ActiveRecord::Rollback
+            end
+
+            if tournament.waiver_enabled? && golfer.waiver_accepted_at.blank?
+              error_response = { errors: ["Waiver accepted at can't be blank"], status: :unprocessable_entity }
               raise ActiveRecord::Rollback
             end
 
@@ -578,6 +590,27 @@ module Api
           broadcast_golfer_update(golfer)
         end
 
+        render json: golfer
+      end
+
+      # POST /api/v1/golfers/:id/mark_waiver_signed
+      def mark_waiver_signed
+        golfer = Golfer.find(params[:id])
+        unless current_user.can_manage?(golfer.tournament) || current_user.volunteer_for?(golfer.tournament.organization)
+          return render json: { error: "Forbidden: You do not have access to this tournament" }, status: :forbidden
+        end
+        return unless verify_tenant_match!(golfer.tournament.organization_id, status: :forbidden)
+
+        unless golfer.tournament.waiver_enabled?
+          return render json: { error: "Waivers are disabled for this tournament" }, status: :unprocessable_entity
+        end
+
+        partner = ActiveModel::Type::Boolean.new.cast(params[:partner]) == true
+        if partner && golfer.partner_name.blank?
+          return render json: { error: "This registration has no partner" }, status: :unprocessable_entity
+        end
+
+        Waivers::RecordSignature.call(golfer, staff: current_user, partner: partner)
         render json: golfer
       end
 
@@ -1221,7 +1254,7 @@ module Api
         params.require(:golfer).permit(
           :name, :company, :address, :phone, :mobile, :email,
           :payment_type, :payment_status, :notes, :is_team_captain,
-          :partner_name, :partner_email, :partner_phone, :partner_waiver_accepted_at,
+          :partner_name, :partner_email, :partner_phone,
           :team_name, :team_category, :tshirt_size, :partner_tshirt_size,
           :raffle_tickets_requested, :raffle_bundle_label
         )

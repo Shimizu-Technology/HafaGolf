@@ -28,6 +28,7 @@ export interface ThemePackTypography {
   bodyFontFamily: string;
   headingTracking: string;
   heroTitleClass: string;
+  tournamentTitleClass: string;
   heroSubtitleClass: string;
   sectionTitleClass: string;
   cardTitleClass: string;
@@ -91,6 +92,7 @@ export const THEME_PACKS: Record<ThemePackId, ThemePackDefinition> = {
       bodyFontFamily: BODY_SANS_STACK,
       headingTracking: '-0.02em',
       heroTitleClass: 'font-theme-heading text-3xl font-semibold tracking-tight text-white sm:text-4xl lg:text-5xl',
+      tournamentTitleClass: 'break-words font-theme-heading text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl lg:text-5xl',
       heroSubtitleClass: 'mt-3 max-w-2xl text-base text-white/85 sm:text-lg leading-relaxed',
       sectionTitleClass: 'font-theme-heading text-2xl font-semibold tracking-tight text-neutral-900',
       cardTitleClass: 'font-theme-heading text-xl font-semibold tracking-tight text-neutral-900',
@@ -143,9 +145,9 @@ export const THEME_PACKS: Record<ThemePackId, ThemePackDefinition> = {
   'charity-bright': {
     id: 'charity-bright',
     name: 'Charity Bright',
-    shortTagline: 'Warm celebratory typography & generous card surfaces',
+    shortTagline: 'Full-width photography & a community spotlight',
     description:
-      'Energetic display headlines, bright accent highlights, and generous rounded surfaces built for community fundraisers and charity events.',
+      'A photo-led header, a story strip, and prominent ways to support the event.',
     idealFor: 'Charity fundraisers, raffle-forward outings, and community tournaments',
     icon: 'sparkles',
     typography: {
@@ -153,6 +155,7 @@ export const THEME_PACKS: Record<ThemePackId, ThemePackDefinition> = {
       bodyFontFamily: BODY_SANS_STACK,
       headingTracking: '-0.025em',
       heroTitleClass: 'font-theme-heading text-3xl font-extrabold tracking-tight text-white sm:text-4xl lg:text-5xl',
+      tournamentTitleClass: 'break-words font-theme-heading text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-6xl',
       heroSubtitleClass: 'mt-3 max-w-2xl text-base text-white/90 sm:text-lg leading-relaxed',
       sectionTitleClass: 'font-theme-heading text-2xl font-bold tracking-tight text-neutral-900',
       cardTitleClass: 'font-theme-heading text-xl font-bold tracking-tight text-neutral-900',
@@ -205,9 +208,9 @@ export const THEME_PACKS: Record<ThemePackId, ThemePackDefinition> = {
   'memorial-formal': {
     id: 'memorial-formal',
     name: 'Memorial Formal',
-    shortTagline: 'Dignified serif headings & deeper tonal framing',
+    shortTagline: 'Dignified serif headings & light ceremonial framing',
     description:
-      'Ceremonial serif typography, deeper tonal hero framing, subtle gold-accent rules, and unhurried spacing suited to memorial events.',
+      'A light ceremonial header, formal serif typography, and gold rules for tributes and memorial events.',
     idealFor: 'Annual memorial tournaments, tribute classics, and formal civic events',
     icon: 'award',
     typography: {
@@ -215,6 +218,7 @@ export const THEME_PACKS: Record<ThemePackId, ThemePackDefinition> = {
       bodyFontFamily: BODY_SANS_STACK,
       headingTracking: '-0.01em',
       heroTitleClass: 'font-theme-heading text-3xl font-bold tracking-normal text-white sm:text-4xl lg:text-5xl',
+      tournamentTitleClass: 'break-words font-theme-heading text-3xl font-bold leading-tight text-[#1e3553] sm:text-4xl lg:text-5xl',
       heroSubtitleClass: 'mt-4 max-w-2xl text-base text-white/80 sm:text-lg leading-relaxed',
       sectionTitleClass: 'font-theme-heading text-2xl font-bold tracking-normal text-neutral-900',
       cardTitleClass: 'font-theme-heading text-xl font-bold tracking-normal text-neutral-900',
@@ -277,6 +281,7 @@ export const THEME_PACKS: Record<ThemePackId, ThemePackDefinition> = {
       bodyFontFamily: BODY_SANS_STACK,
       headingTracking: '-0.015em',
       heroTitleClass: 'font-theme-heading text-3xl font-bold tracking-tight text-white sm:text-4xl lg:text-5xl',
+      tournamentTitleClass: 'break-words font-theme-heading text-3xl font-extrabold uppercase tracking-tight text-white sm:text-4xl lg:text-5xl',
       heroSubtitleClass: 'mt-3 max-w-2xl text-base text-white/88 sm:text-lg leading-relaxed',
       sectionTitleClass: 'font-theme-heading text-2xl font-bold tracking-tight text-neutral-900',
       cardTitleClass: 'font-theme-heading text-xl font-bold tracking-tight text-neutral-900',

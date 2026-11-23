@@ -3,7 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import { useAuthToken } from '../hooks/useAuthToken';
 import { useOrganization } from '../components/OrganizationProvider';
 import { useGolferChannel } from '../hooks/useGolferChannel';
-import type { Golfer as ApiGolfer, Registration as ApiRegistration, TeamMember as ApiTeamMember, Tournament } from '../services/api';
+import { api, type Golfer as ApiGolfer, type Registration as ApiRegistration, type TeamMember as ApiTeamMember, type Tournament } from '../services/api';
+import { CheckInWaiver } from '../components/CheckInWaiver';
 import {
   Search,
   UserCheck,
@@ -92,6 +93,7 @@ export const OrgCheckInPage: React.FC = () => {
   const [promoteNotes, setPromoteNotes] = useState('');
   const [submittingPromote, setSubmittingPromote] = useState(false);
 
+  const waiverEnabled = tournament?.waiver_enabled !== false;
   const eventFeatures = tournament?.features ?? organization?.features;
   const alphaLanesEnabled = isFeatureEnabled(eventFeatures, 'checkin_alpha_lanes', false);
   const waitlistEnabled = isFeatureEnabled(eventFeatures, 'waitlist', true);
@@ -450,6 +452,27 @@ export const OrgCheckInPage: React.FC = () => {
     return filtered;
   }, [queueBaseRegistrations, alphaLanesEnabled, activeLane, matchesRegistrationLane, searchTerm]);
 
+  const markTeamMemberWaiverSigned = async (registrationId: number, memberId: number) => {
+    const { team_member } = await api.markTeamMemberWaiverSigned(memberId);
+    setRegistrations((current) => current.map((registration) => registration.id === registrationId ? {
+      ...registration,
+      team_members: registration.team_members.map((member) => member.id === memberId ? {
+        ...member,
+        waiver_accepted_at: team_member.waiver_accepted_at,
+        waiver_signed: team_member.waiver_signed,
+      } : member),
+    } : registration));
+  };
+
+  const markGolferWaiverSigned = async (id: number, partner = false) => {
+    const signed = await api.markGolferWaiverSigned(id, partner);
+    const applyWaiver = (golfer: ApiGolfer): ApiGolfer => partner
+      ? { ...golfer, partner_waiver_accepted_at: signed.partner_waiver_accepted_at }
+      : { ...golfer, waiver_accepted_at: signed.waiver_accepted_at, waiver_signed: signed.waiver_signed };
+    setGolfers((current) => current.map((golfer) => golfer.id === id ? applyWaiver(golfer) : golfer));
+    setSelectedGolfer((current) => current?.id === id ? applyWaiver(current) : current);
+  };
+
   const handleTeamMemberCheckIn = async (registration: ApiRegistration, member: ApiTeamMember) => {
     if (registration.payment_status !== 'paid') {
       toast.error('Verify team payment before checking in players');
@@ -636,14 +659,14 @@ export const OrgCheckInPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-[50vh] flex items-center justify-center rounded-[28px] bg-white">
+      <div data-static-flow className="min-h-[50vh] flex items-center justify-center rounded-[28px] bg-white">
         <Loader2 className="w-12 h-12 animate-spin text-brand-600" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 pb-20 lg:pb-0 text-gray-900 overflow-x-hidden">
+    <div className="space-y-4 pb-20 lg:pb-0 text-gray-900 overflow-x-hidden" data-static-flow>
       {/* Hero Header */}
       <section className="overflow-hidden rounded-[28px] shadow-sm">
         <div className="bg-brand-600 px-4 py-6">
@@ -898,6 +921,10 @@ export const OrgCheckInPage: React.FC = () => {
                             {[member.email, member.phone].filter(Boolean).join(' • ')}
                           </p>
                         )}
+                        {waiverEnabled && (
+                          <CheckInWaiver name={member.name} acceptedAt={member.waiver_accepted_at}
+                            onSign={() => markTeamMemberWaiverSigned(reg.id, member.id)} />
+                        )}
                       </div>
 
                       <button
@@ -1002,6 +1029,20 @@ export const OrgCheckInPage: React.FC = () => {
                   <p className="text-gray-500 text-xs sm:text-sm truncate">
                     {golfer.phone} &bull; {golfer.email}
                   </p>
+                  {waiverEnabled && (
+                    <div>
+                      {golfer.partner_name && <p className="text-xs font-medium text-gray-600">{golfer.name}</p>}
+                      <CheckInWaiver name={golfer.name} acceptedAt={golfer.waiver_accepted_at}
+                        onSign={() => markGolferWaiverSigned(golfer.id)} />
+                      {golfer.partner_name && (
+                        <div className="mt-2">
+                          <p className="text-xs font-medium text-gray-600">{golfer.partner_name}</p>
+                          <CheckInWaiver name={golfer.partner_name} acceptedAt={golfer.partner_waiver_accepted_at}
+                            onSign={() => markGolferWaiverSigned(golfer.id, true)} />
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {golfer.company && <p className="text-gray-400 text-[11px] sm:text-xs truncate">{golfer.company}</p>}
                   {startingPositionSummary(golfer) && (
                     <div className="mt-1 flex items-start gap-1.5 text-[11px] text-brand-700 sm:text-xs">

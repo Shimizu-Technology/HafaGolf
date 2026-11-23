@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_22_231000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_23_010000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -300,6 +300,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_231000) do
     t.text "offseason_message"
     t.string "offseason_cta_label"
     t.string "offseason_cta_url"
+    t.string "reversed_logo_url"
+    t.boolean "show_homepage_sponsors", default: false, null: false
     t.index ["slug"], name: "index_organizations_on_slug", unique: true
   end
 
@@ -751,6 +753,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_22_231000) do
     t.integer "fmv_per_player_cents", default: 0, null: false
     t.text "tax_receipt_disclaimer"
     t.string "capacity_unit", default: "players", null: false
+    t.string "commemorative_banner_url"
+    t.string "tribute_title"
+    t.string "tribute_subtitle"
+    t.jsonb "story_photos", default: [], null: false
+    t.boolean "waiver_enabled", default: true, null: false
+    t.text "waiver_text"
+    t.boolean "show_public_sponsors", default: true, null: false
+    t.string "sponsor_wall_title"
     t.index ["early_bird_deadline"], name: "index_tournaments_on_early_bird_deadline"
     t.index ["event_type"], name: "index_tournaments_on_event_type"
     t.index ["organization_id", "slug"], name: "index_tournaments_on_organization_id_and_slug", unique: true

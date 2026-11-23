@@ -1,5 +1,8 @@
 import type { ReactNode } from 'react';
-import { resolveThemePack, type ThemePackDefinition } from '../utils/themePacks';
+import {
+  CharityBrightHero, CrestClassicHero, DefaultCleanHero, MemorialFormalHero, type TournamentThemeHeroProps,
+} from './themes/TournamentHeroes';
+import { resolveThemePack, type ThemePackDefinition, type ThemePackId } from '../utils/themePacks';
 
 interface PublicHeroProps {
   imageUrl?: string | null;
@@ -80,6 +83,24 @@ export function PublicHero({
           ) : null}
         </div>
       </div>
+    </section>
+  );
+}
+
+const TOURNAMENT_HEROES = {
+  'default-clean': DefaultCleanHero,
+  'charity-bright': CharityBrightHero,
+  'memorial-formal': MemorialFormalHero,
+  'crest-classic': CrestClassicHero,
+} satisfies Record<ThemePackId, (props: TournamentThemeHeroProps) => ReactNode>;
+
+export function PublicTournamentHero(props: TournamentThemeHeroProps) {
+  const { pack } = props;
+  const ThemeHero = TOURNAMENT_HEROES[pack.id];
+
+  return (
+    <section data-hero-variant={pack.hero.variant}>
+      <ThemeHero {...props} />
     </section>
   );
 }

@@ -154,3 +154,20 @@
     transition: none !important;
   }
 }
+
+[data-static-flow], [data-static-flow] *, [data-static-flow] ::before, [data-static-flow] ::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: no-preference) and (min-height: 560px) {
+  .memorial-hairline {
+    animation: memorial-hairline-draw 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+@keyframes memorial-hairline-draw {
+  from { transform: scaleX(0.2); }
+  to { transform: scaleX(1); }
+}

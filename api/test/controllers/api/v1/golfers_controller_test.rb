@@ -91,6 +91,32 @@ class Api::V1::GolfersControllerTest < ActionDispatch::IntegrationTest
     assert_response :created, "Expected 201 but got #{response.status}: #{response.body}"
   end
 
+  test "legacy public registration only requires a waiver when enabled" do
+    tournament = tournaments(:tournament_one)
+    params = {
+      tournament_id: tournament.id,
+      golfer: {
+        name: "Optional Waiver Golfer", email: "optional-waiver@example.test", phone: "671-555-9999",
+        payment_type: "pay_on_day", team_category: "Male"
+      },
+      waiver_accepted: false
+    }
+
+    post api_v1_golfers_url, params: params, as: :json
+    assert_response :unprocessable_entity
+    assert_includes response.parsed_body.fetch("errors"), "Waiver accepted at can't be blank"
+
+    params[:golfer][:payment_type] = "sponsor"
+    post api_v1_golfers_url, params: params, as: :json
+    assert_response :unprocessable_entity
+
+    tournament.update!(waiver_enabled: false)
+    params[:golfer][:payment_type] = "pay_on_day"
+    post api_v1_golfers_url, params: params, as: :json
+    assert_response :created
+    assert_nil tournament.golfers.find_by!(email: "optional-waiver@example.test").waiver_accepted_at
+  end
+
   test "create returns validation errors for invalid data" do
     post api_v1_golfers_url, params: {
       golfer: {

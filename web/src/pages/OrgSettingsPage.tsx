@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useOrganization } from '../components/OrganizationProvider';
 import { OrgFeaturesPanel } from '../components/OrgFeaturesPanel';
 import { OrgPaymentConfigPanel } from '../components/OrgPaymentConfigPanel';
-import { ImageUpload } from '../components/ImageUpload';
+import { BrandingMediaPanel, type OrganizationMedia, type TournamentMedia } from '../components/BrandingMediaPanel';
 import { ThemePackPicker } from '../components/ThemePackPicker';
 import { Skeleton } from '../components/LoadingStates';
 import { useTournament } from '../contexts';
@@ -11,6 +11,7 @@ import { useOrganizationStore } from '../stores/organizationStore';
 import type { OrganizationSettings as OrganizationContentSettings } from '../stores/organizationStore';
 import { useAuthToken } from '../hooks/useAuthToken';
 import { resolveThemePackId } from '../utils/themePacks';
+import type { StoryPhoto } from '../services/api';
 import {
   ArrowLeft,
   Loader2,
@@ -70,7 +71,8 @@ interface HomepageStat {
   label: string;
 }
 
-interface FormData {
+interface FormData extends OrganizationMedia {
+  show_homepage_sponsors: boolean;
   name: string;
   slug: string;
   contact_email: string;
@@ -139,7 +141,7 @@ function clampCourseHoleCount(value: number): number {
   return Math.min(MAX_COURSE_HOLES, Math.max(1, value));
 }
 
-interface TournamentSettings {
+interface TournamentSettings extends TournamentMedia {
   id: string;
   name: string;
   event_date: string;
@@ -165,7 +167,10 @@ interface TournamentSettings {
   contact_email: string;
   waitlist_enabled: boolean;
   waitlist_max: string;
-  banner_url_override: string;
+  waiver_enabled: boolean;
+  waiver_text: string;
+  show_public_sponsors: boolean;
+  sponsor_wall_title: string;
   theme_preset: string;
   raffle_enabled: boolean;
   raffle_description: string;
@@ -366,7 +371,7 @@ function SettingsSectionSkeleton({
 
 function SettingsPageSkeleton({ organizationName }: { organizationName?: string }) {
   return (
-    <div className="min-h-screen bg-gray-100 overflow-x-hidden">
+    <div className="min-h-screen bg-gray-100 overflow-x-hidden" data-static-flow>
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
           <Skeleton className="h-4 w-32 mb-4" />
@@ -411,6 +416,9 @@ export const OrgSettingsPage: React.FC = () => {
       const settings: OrganizationContentSettings = organization.settings || {};
       setFormData({
         name: organization.name || '',
+        logo_url: organization.logo_url || '',
+        reversed_logo_url: organization.reversed_logo_url || '',
+        show_homepage_sponsors: organization.show_homepage_sponsors ?? false,
         slug: organization.slug || '',
         contact_email: organization.contact_email || '',
         contact_phone: organization.contact_phone || '',
@@ -495,6 +503,15 @@ export const OrgSettingsPage: React.FC = () => {
                 waitlist_enabled: t.waitlist_enabled ?? false,
                 waitlist_max: t.waitlist_max?.toString() || '',
                 banner_url_override: t.banner_url_override || '',
+                signature_image_url_override: t.signature_image_url_override || '',
+                commemorative_banner_url: t.commemorative_banner_url || '',
+                tribute_title: t.tribute_title || '',
+                tribute_subtitle: t.tribute_subtitle || '',
+                story_photos: (t.story_photos || []).map((photo: StoryPhoto) => ({ ...photo, draftId: crypto.randomUUID() })),
+                waiver_enabled: t.waiver_enabled ?? true,
+                waiver_text: t.waiver_text || '',
+                show_public_sponsors: t.show_public_sponsors ?? true,
+                sponsor_wall_title: t.sponsor_wall_title || '',
                 theme_preset: t.theme_preset || 'default-clean',
                 swipe_simple_url: t.swipe_simple_url || '',
                 walkin_swipe_simple_url: t.walkin_swipe_simple_url || '',
@@ -646,7 +663,18 @@ export const OrgSettingsPage: React.FC = () => {
       max_capacity: tournamentSettings.max_capacity ? parseInt(tournamentSettings.max_capacity) : null,
       waitlist_enabled: tournamentSettings.waitlist_enabled,
       waitlist_max: tournamentSettings.waitlist_max ? parseInt(tournamentSettings.waitlist_max) : null,
-      banner_url_override: tournamentSettings.banner_url_override || null,
+      banner_url_override: tournamentSettings.banner_url_override.trim() || null,
+      signature_image_url_override: tournamentSettings.signature_image_url_override.trim() || null,
+      commemorative_banner_url: tournamentSettings.commemorative_banner_url.trim() || null,
+      tribute_title: tournamentSettings.tribute_title.trim() || null,
+      tribute_subtitle: tournamentSettings.tribute_subtitle.trim() || null,
+      story_photos: tournamentSettings.story_photos
+        .filter((photo) => photo.url.trim())
+        .map(({ url, caption }) => ({ url: url.trim(), caption: caption?.trim() || null })),
+      waiver_enabled: tournamentSettings.waiver_enabled,
+      waiver_text: tournamentSettings.waiver_text.trim() || null,
+      show_public_sponsors: tournamentSettings.show_public_sponsors,
+      sponsor_wall_title: tournamentSettings.sponsor_wall_title.trim() || null,
       theme_preset: resolveThemePackId(tournamentSettings.theme_preset),
       swipe_simple_url: tournamentSettings.swipe_simple_url || null,
       walkin_swipe_simple_url: tournamentSettings.walkin_swipe_simple_url || null,
@@ -829,6 +857,9 @@ export const OrgSettingsPage: React.FC = () => {
               contact_email: formData.contact_email,
               contact_phone: formData.contact_phone,
               website_url: formData.website_url,
+              logo_url: formData.logo_url.trim() || null,
+              reversed_logo_url: formData.reversed_logo_url.trim() || null,
+              show_homepage_sponsors: formData.show_homepage_sponsors,
               settings: {
                 ...restOrgSettings,
                 homepage_tagline: formData.homepage_tagline,
@@ -869,7 +900,7 @@ export const OrgSettingsPage: React.FC = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-100 overflow-x-hidden">
+    <div className="min-h-screen bg-gray-100 overflow-x-hidden" data-static-flow>
       <Toaster position="top-right" />
 
       {/* Header */}
@@ -995,6 +1026,17 @@ export const OrgSettingsPage: React.FC = () => {
             </div>
           </div>
 
+          <BrandingMediaPanel
+            organization={formData}
+            tournament={tournamentSettings}
+            onOrganizationChange={(patch) => setFormData((current) => current && { ...current, ...patch })}
+            onTournamentChange={(patch) => setTournamentSettings((current) => current && { ...current, ...patch })}
+            onStoryPhotosChange={(update) => setTournamentSettings((current) => current && {
+              ...current, story_photos: update(current.story_photos),
+            })}
+            getToken={getToken}
+          />
+
           {/* Events Landing Page */}
           <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
             <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4 sm:mb-6 flex items-center gap-2">
@@ -1005,6 +1047,12 @@ export const OrgSettingsPage: React.FC = () => {
               These fields control the main events landing page. The page introduces the organization and lists upcoming events. Event artwork is managed separately below.
             </p>
             <div className="space-y-4">
+              <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-gray-700">
+                <input type="checkbox" className="h-5 w-5 accent-brand-600"
+                  checked={formData.show_homepage_sponsors}
+                  onChange={(event) => setFormData({ ...formData, show_homepage_sponsors: event.target.checked })} />
+                Show featured event sponsors on the events homepage
+              </label>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Tagline
@@ -1294,22 +1342,25 @@ export const OrgSettingsPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
-              <h3 className="text-sm sm:text-md font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
-                <Home className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                Event Header
-              </h3>
-              <div className="space-y-4">
-                <ImageUpload
-                  label="Event Header Graphic"
-                  value={tournamentSettings.banner_url_override}
-                  onChange={(url) => handleTournamentChange('banner_url_override', url)}
-                  getToken={getToken}
-                  previewAspectClassName="aspect-[16/9]"
-                  helpText="Optional artwork for this event's detail and registration pages. Replace it to change the event graphic, or clear it to return to the solid brand gradient hero."
-                />
-              </div>
-            </div>
+            <section aria-labelledby="waiver-settings-heading" className="space-y-3 rounded-xl bg-white p-4 shadow-sm sm:p-6">
+              <h3 id="waiver-settings-heading" className="font-semibold text-gray-900">Liability Waiver</h3>
+              <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-gray-700">
+                <input type="checkbox" className="h-5 w-5 accent-brand-600"
+                  checked={tournamentSettings.waiver_enabled}
+                  onChange={(event) => handleTournamentChange('waiver_enabled', event.target.checked)} />
+                Require a waiver for every player
+              </label>
+              {tournamentSettings.waiver_enabled && (
+                <div className="space-y-1 text-sm text-gray-700">
+                  <label htmlFor="settings-waiver-text" className="block font-medium">Custom Waiver Text</label>
+                  <textarea id="settings-waiver-text" aria-describedby="settings-waiver-help"
+                    rows={5} value={tournamentSettings.waiver_text}
+                    onChange={(event) => handleTournamentChange('waiver_text', event.target.value)}
+                    className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                  <p id="settings-waiver-help" className="text-gray-600">Leave blank to use the standard release with your organization’s name.</p>
+                </div>
+              )}
+            </section>
 
             {/* Theme Pack & Public Styling */}
             <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6">
@@ -1319,7 +1370,7 @@ export const OrgSettingsPage: React.FC = () => {
                   Public Theme Pack
                 </h3>
                 <p className="mt-1 text-xs sm:text-sm text-gray-500">
-                  Choose the typography, hero framing, card surface contrast, and subtle landing-page motion for this event. Operational and admin screens always stay quiet.
+                  Choose how this event’s public page presents its artwork, information, and registration.
                 </p>
               </div>
               <ThemePackPicker
@@ -1919,6 +1970,19 @@ export const OrgSettingsPage: React.FC = () => {
                   />
                   <p className="mt-1 text-xs sm:text-sm text-gray-500">After this time, sponsors can no longer edit their player slots</p>
                 </div>
+
+                <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-gray-700">
+                  <input type="checkbox" className="h-5 w-5 accent-brand-600"
+                    checked={tournamentSettings.show_public_sponsors}
+                    onChange={(event) => handleTournamentChange('show_public_sponsors', event.target.checked)} />
+                  Show sponsors on the public tournament page
+                </label>
+                <label className="block space-y-1 text-sm font-medium text-gray-700">
+                  <span>Sponsor Wall Title</span>
+                  <input value={tournamentSettings.sponsor_wall_title} placeholder="Our Sponsors"
+                    onChange={(event) => handleTournamentChange('sponsor_wall_title', event.target.value)}
+                    className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                </label>
 
                 {/* Sponsor Tier Configuration */}
                 <SponsorTierEditor

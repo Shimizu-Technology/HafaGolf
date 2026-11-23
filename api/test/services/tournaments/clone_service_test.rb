@@ -219,6 +219,25 @@ module Tournaments
       assert_nil CloneService.increment_edition("   ")
     end
 
+    test "next-year draft copies event media, waiver settings, and sponsor wall settings" do
+      attrs = {
+        commemorative_banner_url: "/images/commemorative.png",
+        tribute_title: "Celebrating our founders",
+        tribute_subtitle: "Open to the whole community",
+        story_photos: [{ "url" => "/images/founders.png", "caption" => "The first event" }],
+        waiver_enabled: false,
+        waiver_text: "An organizer-specific release.",
+        show_public_sponsors: false,
+        sponsor_wall_title: "Event Partners"
+      }
+      @source.update!(attrs)
+
+      cloned = CloneService.call(source: @source, actor: @org_a_admin).tournament.reload
+
+      assert_equal "draft", cloned.status
+      assert_equal attrs.stringify_keys, cloned.attributes.slice(*attrs.stringify_keys.keys)
+    end
+
     test "same-org next-year clone clears dates/deadlines/payment URLs, sets draft, preserves config/branding, and copies zero operational records" do
       result = CloneService.call(source: @source, actor: @org_a_admin)
       cloned = result.tournament
