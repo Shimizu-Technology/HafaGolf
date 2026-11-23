@@ -137,6 +137,45 @@ describe('public theme pack layouts', () => {
     expect(mount.textContent).toContain('Donate Now');
   });
 
+  it('keeps a hero Register CTA on ceremonial-light when event_details_card is hidden', async () => {
+    await renderTournament('memorial-formal', {
+      homepage_config: {
+        archetype: 'ceremonial-light',
+        sections: [{ key: 'event_details_card', enabled: false }],
+      },
+    });
+
+    const header = mount.querySelector('[data-hero-variant="ceremonial"]')!;
+    expect(header.querySelector('a[href="/spring-open/register"]')).toBeTruthy();
+  });
+
+  it('shows explicit reversed logo in charity showcase_split mode when selected', async () => {
+    await renderTournament('charity-bright', {
+      homepage_config: {
+        archetype: 'charity-showcase',
+        artwork_display: 'showcase_split',
+        logo_display: 'reversed_logo',
+      },
+    });
+
+    const header = mount.querySelector('[data-hero-variant="celebratory"]')!;
+    expect(header.querySelector('img[alt="Highland Golf Club"]')?.getAttribute('src')).toBe('/images/reversed.png');
+    expect(header.querySelector('img[src="/images/event.jpg"]')?.classList).toContain('object-contain');
+  });
+
+  it('collapses crest-classic visual frame when all crest, logo, and photo sources are absent', async () => {
+    await renderTournament('crest-classic', {
+      banner_url_override: null,
+      signature_image_url_override: null,
+      logo_url_override: null,
+      homepage_config: { archetype: 'varsity-crest', logo_display: 'none', artwork_display: 'emblem_lockup' },
+    });
+
+    const header = mount.querySelector('[data-hero-variant="crest"]')!;
+    expect(header.querySelector('img')).toBeNull();
+    expect(header.querySelector('svg.lucide-shield')).toBeNull();
+  });
+
   it('uses the editorial layout without a tribute, story strip, or meter and honors a hidden sponsor wall', async () => {
     await renderTournament('default-clean', { show_public_sponsors: false });
 

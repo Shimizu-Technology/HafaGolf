@@ -15,7 +15,7 @@ import {
   HOMEPAGE_ARCHETYPE_LIST,
   HOMEPAGE_ARCHETYPES_BY_ID,
   SECTION_LABELS,
-  isDarkHeroSurface,
+  resolveEffectiveHeroRender,
   resolveHeroLogo,
   resolveHomepageConfig,
   type ArtworkDisplay,
@@ -95,18 +95,21 @@ export function HomepageStudio({
 }: HomepageStudioProps) {
   const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
   const resolved = resolveHomepageConfig(orgConfig, eventConfig, themePreset);
-  const darkSurface = isDarkHeroSurface(resolved.hero_surface);
+  const effectiveHero = resolveEffectiveHeroRender(resolved, Boolean(eventPhotoUrl));
+  const darkSurface = effectiveHero.isDark;
 
   const patchTarget = (patch: Partial<HomepageConfig>, nextThemePreset?: string) => {
-    if (onChangeEventConfig && eventConfig !== undefined) {
-      const mergedEvent: HomepageConfig = { ...(eventConfig || {}), ...patch };
-      // Landing mode always lives at org level too so `/` routing honors it immediately
-      if (patch.landing_mode !== undefined) {
-        onChangeOrgConfig({ ...orgConfig, landing_mode: patch.landing_mode });
+    const { landing_mode, ...eventPatch } = patch;
+    // Landing behavior has a single persisted owner: organization.homepage_config
+    if (landing_mode !== undefined) {
+      onChangeOrgConfig({ ...orgConfig, landing_mode });
+    }
+    if (Object.keys(eventPatch).length > 0 || nextThemePreset) {
+      if (onChangeEventConfig && eventConfig !== undefined) {
+        onChangeEventConfig({ ...(eventConfig || {}), ...eventPatch }, nextThemePreset);
+      } else {
+        onChangeOrgConfig({ ...orgConfig, ...patch });
       }
-      onChangeEventConfig(mergedEvent, nextThemePreset);
-    } else {
-      onChangeOrgConfig({ ...orgConfig, ...patch });
     }
   };
 
@@ -384,14 +387,14 @@ export function HomepageStudio({
                 <div
                   className="relative overflow-hidden p-5"
                   style={
-                    resolved.hero_surface === 'light_airy'
+                    effectiveHero.surface === 'light_airy'
                       ? { background: 'linear-gradient(180deg, #f8fbff 0%, #eef5fb 55%, #f2faf6 100%)', color: '#1e3553' }
-                      : resolved.hero_surface === 'dark_editorial'
+                      : effectiveHero.surface === 'dark_editorial'
                       ? { background: `linear-gradient(135deg, ${brandHex}, #111827)`, color: '#ffffff', borderTop: `3px solid ${accentHex}` }
                       : { background: `linear-gradient(135deg, ${brandHex}, #0f172a)`, color: '#ffffff' }
                   }
                 >
-                  {resolved.artwork_display === 'full_bleed_bg' && eventPhotoUrl && (
+                  {effectiveHero.showFullBleedPhoto && eventPhotoUrl && (
                     <>
                       <img src={eventPhotoUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-50" />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/35 to-black/20" />
@@ -402,7 +405,7 @@ export function HomepageStudio({
                     className={`relative z-10 ${
                       resolved.archetype === 'ceremonial-light'
                         ? 'flex flex-col items-center text-center'
-                        : resolved.artwork_display === 'showcase_split' && eventPhotoUrl && previewDevice === 'desktop'
+                        : effectiveHero.showSplitPhoto && previewDevice === 'desktop'
                         ? 'grid grid-cols-[1.1fr_0.9fr] items-center gap-4'
                         : ''
                     }`}

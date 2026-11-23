@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { useOrganization } from '../components/OrganizationProvider';
 import { PublicTournamentHero } from '../components/PublicHero';
 import { CharityStoryStrip } from '../components/themes/CharityStoryStrip';
@@ -30,8 +30,10 @@ import { resolvePublicImageUrl, useApplyBranding } from '../utils/branding';
 import { getDefaultOrgSlug } from '../utils/tenant';
 import { formatEntryFeeDisplay } from '../utils/teamRegistration';
 import {
-  isDarkHeroSurface,
+  isSectionEnabled,
+  resolveEffectiveHeroRender,
   resolveHomepageConfig,
+  withPreservedOrgParam,
   type HomepageSectionKey,
 } from '../utils/homepageConfig';
 
@@ -58,6 +60,7 @@ function splitFeeIncludes(feeIncludes?: string | null): string[] {
 
 export function OrgTournamentPage() {
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
+  const location = useLocation();
   const { organization, isLoading: orgLoading } = useOrganization();
   const orgSlug = organization?.slug || (!orgLoading ? getDefaultOrgSlug() : '');
   const [tournament, setTournament] = useState<Tournament | null>(null);
@@ -133,13 +136,19 @@ export function OrgTournamentPage() {
   const capacitySummary = getPublicFacingCapacitySummary(tournament);
   const isCeremonial = homepageConfig.archetype === 'ceremonial-light';
   const isCrest = homepageConfig.archetype === 'varsity-crest' || pack.id === 'crest-classic';
-  const isDarkHero = isDarkHeroSurface(homepageConfig.hero_surface);
+  const effectiveHero = resolveEffectiveHeroRender(homepageConfig, Boolean(branding.eventPhotoUrl));
+  const isDarkHero = effectiveHero.isDark;
+  const detailsCardEnabled = isSectionEnabled(homepageConfig, 'event_details_card');
   const isWaitlistOnly = Boolean((tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled);
   const canJoinFoursome = isCrest && tournament.team_size === 4 && tournament.can_register && !isWaitlistOnly;
-  const registrationHref = `/${tournamentSlug}/register`;
-  const sponsorHref = `/${orgSlug}/tournaments/${tournament.slug}/sponsor`;
-  const donateHref = `/${orgSlug}/tournaments/${tournament.slug}/donate`;
-  const raffleHref = `/${tournamentSlug}/raffle`;
+  const registrationHref = withPreservedOrgParam(`/${tournamentSlug}/register`, location.search);
+  const sponsorHref = withPreservedOrgParam(`/${orgSlug}/tournaments/${tournament.slug}/sponsor`, location.search);
+  const donateHref = withPreservedOrgParam(`/${orgSlug}/tournaments/${tournament.slug}/donate`, location.search);
+  const raffleHref = withPreservedOrgParam(`/${tournamentSlug}/raffle`, location.search);
+  const hubHref = withPreservedOrgParam(
+    homepageConfig.landing_mode === 'direct_to_active_event' ? '/?view=hub' : '/',
+    location.search
+  );
 
   const registerCtaLabel = isWaitlistOnly
     ? 'Join Waitlist'
@@ -147,9 +156,12 @@ export function OrgTournamentPage() {
     ? 'Register a Foursome'
     : 'Register Now';
 
+  const showHeroRegister = Boolean(tournament.can_register && (!isCeremonial || !detailsCardEnabled));
+  const showHeroRaffle = Boolean(tournament.raffle_enabled && !isCeremonial);
+
   const heroActions = (
     <>
-      {tournament.can_register && !isCeremonial && (
+      {showHeroRegister && (
         <ActionButton
           to={registrationHref}
           pack={pack}
@@ -158,7 +170,7 @@ export function OrgTournamentPage() {
           {registerCtaLabel}
         </ActionButton>
       )}
-      {tournament.raffle_enabled && !isCeremonial && (
+      {showHeroRaffle && (
         <ActionButton
           to={raffleHref}
           pack={pack}
@@ -170,7 +182,7 @@ export function OrgTournamentPage() {
     </>
   );
 
-  const hasHeroAction = Boolean((tournament.can_register || tournament.raffle_enabled) && !isCeremonial);
+  const hasHeroAction = showHeroRegister || showHeroRaffle;
 
   const actionCardItems: ReactNode[] = [];
   if (canJoinFoursome) {
@@ -702,7 +714,7 @@ export function OrgTournamentPage() {
         status={<StatusPill label={status.label} tone={status.tone} onDark={isDarkHero} />}
         action={hasHeroAction ? heroActions : undefined}
         showBackLink={showBackLink}
-        backLinkTo={homepageConfig.landing_mode === 'direct_to_active_event' ? '/?view=hub' : '/'}
+        backLinkTo={hubHref}
         logoUrl={resolvePublicImageUrl(branding.logoUrl)}
         organizationLogoUrl={branding.organizationLogoUrl}
         reversedLogoUrl={branding.reversedLogoUrl}
@@ -726,6 +738,11 @@ export function OrgTournamentPage() {
           <div className="flex items-center gap-4">
             {organization?.settings?.homepage_tagline && (
               <p className="hidden sm:block">{organization.settings.homepage_tagline}</p>
+            )}
+            {homepageConfig.landing_mode === 'direct_to_active_event' && (
+              <Link to={hubHref} className="text-xs text-neutral-500 transition-colors hover:text-neutral-700">
+                All Events
+              </Link>
             )}
             <Link to="/admin" className="text-xs text-neutral-400 transition-colors hover:text-neutral-600">
               Admin

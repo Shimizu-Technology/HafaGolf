@@ -80,7 +80,7 @@ describe('HomepageStudio', () => {
     expect(preview?.getAttribute('data-preview-device')).toBe('mobile');
   });
 
-  it('updates org landing_mode when Landing Behavior changes', async () => {
+  it('updates ONLY org landing_mode when Landing Behavior changes', async () => {
     const onChangeOrgConfig = vi.fn();
     const onChangeEventConfig = vi.fn();
     const mount = renderStudio({ onChangeOrgConfig, onChangeEventConfig });
@@ -92,5 +92,6 @@ describe('HomepageStudio', () => {
     });
 
     expect(onChangeOrgConfig).toHaveBeenCalledWith(expect.objectContaining({ landing_mode: 'direct_to_active_event' }));
+    expect(onChangeEventConfig).not.toHaveBeenCalled();
   });
 });

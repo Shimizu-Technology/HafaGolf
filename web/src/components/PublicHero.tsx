@@ -35,24 +35,20 @@ export function PublicHero({
   themePack,
 }: PublicHeroProps) {
   const pack = themePack ?? resolveThemePack(null);
-  const effectiveSurface: HeroSurface =
-    heroSurface ??
-    (pack.id === 'memorial-formal'
-      ? 'light_airy'
-      : pack.id === 'crest-classic'
-      ? 'dark_editorial'
-      : 'brand_gradient');
-
+  // Preserve legacy defaults ('brand_gradient' + 'background') for callers like OrgRegistrationPage,
+  // DonationsPage, and SponsorCheckoutPage that omit Studio options.
+  const effectiveSurface: HeroSurface = heroSurface ?? 'brand_gradient';
   const isLightSurface = effectiveSurface === 'light_airy';
 
-  // Only show background photo when explicitly full_bleed_bg or photo_scrim (never muddy behind gradient/light headers)
   const resolvedDisplay: 'background' | 'showcase' | 'none' =
     imageDisplay ??
-    (artworkDisplay === 'full_bleed_bg' || effectiveSurface === 'photo_scrim'
-      ? 'background'
-      : artworkDisplay === 'showcase_split'
-      ? 'showcase'
-      : 'none');
+    (artworkDisplay !== undefined
+      ? artworkDisplay === 'full_bleed_bg' || (effectiveSurface === 'photo_scrim' && artworkDisplay !== 'none')
+        ? 'background'
+        : artworkDisplay === 'showcase_split'
+        ? 'showcase'
+        : 'none'
+      : 'background');
 
   const hasShowcaseImage = Boolean(imageUrl) && resolvedDisplay === 'showcase';
   const hasBackgroundImage = Boolean(imageUrl) && resolvedDisplay === 'background';

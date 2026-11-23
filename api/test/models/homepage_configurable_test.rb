@@ -70,6 +70,18 @@ class HomepageConfigurableTest < ActiveSupport::TestCase
     }
     assert_not @org.valid?
     assert_includes @org.errors[:homepage_config].join, 'duplicate section key'
+
+    @org.homepage_config = { 'sections' => [{ 'key' => 'key_stats_bar', 'enabled' => { 'nested' => true } }] }
+    assert_not @org.valid?
+    assert_includes @org.errors[:homepage_config].join, 'enabled must be a boolean'
+
+    @org.homepage_config = { 'sections' => [{ 'key' => 'key_stats_bar', 'enabled' => nil }] }
+    assert_not @org.valid?
+    assert_includes @org.errors[:homepage_config].join, 'enabled must be a boolean'
+
+    @org.homepage_config = nil
+    assert @org.valid?
+    assert_equal({}, @org.homepage_config)
   end
 
   test 'clone service copies tournament homepage_config' do

@@ -25,9 +25,10 @@ import { getDefaultOrgSlug } from '../utils/tenant';
 import { formatEventDate } from '../utils/dates';
 import { formatEntryFeeDisplay } from '../utils/teamRegistration';
 import {
-  isDarkHeroSurface,
+  resolveEffectiveHeroRender,
   resolveHeroLogo,
   resolveHomepageConfig,
+  withPreservedOrgParam,
 } from '../utils/homepageConfig';
 
 export function OrganizationLandingPage() {
@@ -40,8 +41,8 @@ export function OrganizationLandingPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [featuredSponsors, setFeaturedSponsors] = useState<Tournament | null>(null);
-  const featuredTournament =
-    tournaments.find((t) => t.status === 'open' || t.status === 'in_progress') || tournaments[0];
+  const activeTournament = tournaments.find((t) => t.status === 'open' || t.status === 'in_progress');
+  const featuredTournament = activeTournament || tournaments[0];
   const featuredThemePreset = featuredTournament?.theme_preset;
   const sponsorEventSlug =
     organization?.show_homepage_sponsors && featuredTournament?.show_public_sponsors !== false
@@ -58,21 +59,14 @@ export function OrganizationLandingPage() {
     [location.search]
   );
 
+  const shouldRedirectToActive = Boolean(
+    !forceHubView && homepageConfig.landing_mode === 'direct_to_active_event' && activeTournament?.slug
+  );
+
   useEffect(() => {
-    if (orgLoading || isLoading || forceHubView) return;
-    if (homepageConfig.landing_mode === 'direct_to_active_event' && featuredTournament?.slug) {
-      const search = location.search || '';
-      navigate(`/${featuredTournament.slug}${search}`, { replace: true });
-    }
-  }, [
-    orgLoading,
-    isLoading,
-    forceHubView,
-    homepageConfig.landing_mode,
-    featuredTournament?.slug,
-    location.search,
-    navigate,
-  ]);
+    if (orgLoading || isLoading || !shouldRedirectToActive || !activeTournament?.slug) return;
+    navigate(withPreservedOrgParam(`/${activeTournament.slug}`, location.search), { replace: true });
+  }, [orgLoading, isLoading, shouldRedirectToActive, activeTournament?.slug, location.search, navigate]);
 
   useEffect(() => {
     if (!orgSlug || !sponsorEventSlug) return;
@@ -134,11 +128,7 @@ export function OrganizationLandingPage() {
     };
   }, [orgLoading, orgSlug]);
 
-  if (
-    orgLoading ||
-    isLoading ||
-    (!forceHubView && homepageConfig.landing_mode === 'direct_to_active_event' && featuredTournament?.slug)
-  ) {
+  if (orgLoading || isLoading || shouldRedirectToActive) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="text-center">
@@ -163,7 +153,8 @@ export function OrganizationLandingPage() {
     );
   }
 
-  const isDarkHero = isDarkHeroSurface(homepageConfig.hero_surface);
+  const effectiveHero = resolveEffectiveHeroRender(homepageConfig, Boolean(branding.bannerUrl));
+  const isDarkHero = effectiveHero.isDark;
   const heroLogo = resolveHeroLogo({
     logoDisplay: homepageConfig.logo_display,
     isDarkSurface: isDarkHero,
@@ -172,11 +163,7 @@ export function OrganizationLandingPage() {
     reversedLogoUrl: branding.reversedLogoUrl,
   });
 
-  // Org landing hero stays clean gradient or light wash unless scenic full_bleed_bg is explicitly chosen
-  const orgImageDisplay =
-    homepageConfig.artwork_display === 'full_bleed_bg' || homepageConfig.hero_surface === 'photo_scrim'
-      ? 'background'
-      : 'none';
+  const orgImageDisplay = effectiveHero.showFullBleedPhoto ? 'background' : 'none';
 
   return (
     <div
@@ -312,7 +299,7 @@ export function OrganizationLandingPage() {
         ) : (
           <div className="space-y-5">
             {tournaments.map((tournament) => (
-              <TournamentCard key={tournament.id} tournament={tournament} pack={pack} />
+              <TournamentCard key={tournament.id} tournament={tournament} pack={pack} search={location.search} />
             ))}
           </div>
         )}
@@ -407,6 +394,7 @@ export function OrganizationLandingPage() {
 interface TournamentCardProps {
   tournament: Tournament;
   pack: ThemePackDefinition;
+  search: string;
 }
 
 function getSmartStatus(tournament: Tournament): { label: string; tone: StatusTone } {
@@ -422,10 +410,12 @@ function getSmartStatus(tournament: Tournament): { label: string; tone: StatusTo
   return { label: 'Registration Open', tone: 'open' };
 }
 
-function TournamentCard({ tournament, pack }: TournamentCardProps) {
+function TournamentCard({ tournament, pack, search }: TournamentCardProps) {
   const status = getSmartStatus(tournament);
   const capacitySummary = getPublicFacingCapacitySummary(tournament);
   const isWaitlist = Boolean((tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled);
+  const detailHref = withPreservedOrgParam(`/${tournament.slug}`, search);
+  const registerHref = withPreservedOrgParam(`/${tournament.slug}/register`, search);
 
   return (
     <div className={`${pack.surfaces.cardClass} overflow-hidden`}>
@@ -471,7 +461,7 @@ function TournamentCard({ tournament, pack }: TournamentCardProps) {
           {tournament.can_register ? (
             <>
               <ActionButton
-                to={`/${tournament.slug}/register`}
+                to={registerHref}
                 pack={pack}
                 variant={isWaitlist ? 'amber' : 'primary'}
                 className="w-full sm:w-auto"
@@ -479,7 +469,7 @@ function TournamentCard({ tournament, pack }: TournamentCardProps) {
                 {isWaitlist ? 'Join Waitlist' : 'Register Now'}
               </ActionButton>
               <ActionButton
-                to={`/${tournament.slug}`}
+                to={detailHref}
                 pack={pack}
                 variant="secondary"
                 showArrow={false}
@@ -490,7 +480,7 @@ function TournamentCard({ tournament, pack }: TournamentCardProps) {
             </>
           ) : (
             <ActionButton
-              to={`/${tournament.slug}`}
+              to={detailHref}
               pack={pack}
               variant="secondary"
               className="w-full sm:w-auto"

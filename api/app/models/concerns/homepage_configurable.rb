@@ -58,6 +58,8 @@ module HomepageConfigurable
     sections
   ].freeze
 
+  VALID_BOOLEAN_VALUES = [true, false, 'true', 'false', 1, 0, '1', '0'].freeze
+
   included do
     before_validation :normalize_homepage_config
     validate :validate_homepage_config
@@ -90,9 +92,16 @@ module HomepageConfigurable
       normalized['sections'] = normalized['sections'].map do |entry|
         if entry.is_a?(Hash)
           h = entry.stringify_keys
+          raw_enabled = h.key?('enabled') ? h['enabled'] : true
+          coerced_enabled =
+            if VALID_BOOLEAN_VALUES.include?(raw_enabled)
+              ActiveModel::Type::Boolean.new.cast(raw_enabled)
+            else
+              raw_enabled
+            end
           {
             'key' => h['key'].to_s.strip,
-            'enabled' => ActiveModel::Type::Boolean.new.cast(h.key?('enabled') ? h['enabled'] : true)
+            'enabled' => coerced_enabled
           }
         else
           entry
@@ -138,6 +147,11 @@ module HomepageConfigurable
       key = entry['key'].to_s
       unless SECTION_KEYS.include?(key)
         errors.add(:homepage_config, "contains unknown section key '#{key}'")
+        return
+      end
+
+      unless entry['enabled'] == true || entry['enabled'] == false
+        errors.add(:homepage_config, "section '#{key}' enabled must be a boolean")
         return
       end
 

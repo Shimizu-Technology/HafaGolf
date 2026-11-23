@@ -250,7 +250,8 @@ export function resolveHomepageConfig(
 
   const base = HOMEPAGE_ARCHETYPES_BY_ID[archetype].defaults;
 
-  const landing_mode = (tournamentConfig?.landing_mode || orgConfig?.landing_mode || base.landing_mode) as LandingMode;
+  // Organization owns landing_mode so featured event changes cannot alter root `/` routing
+  const landing_mode = (orgConfig?.landing_mode || base.landing_mode) as LandingMode;
   const hero_surface = (tournamentConfig?.hero_surface || orgConfig?.hero_surface || base.hero_surface) as HeroSurface;
   const artwork_display = (tournamentConfig?.artwork_display || orgConfig?.artwork_display || base.artwork_display) as ArtworkDisplay;
   const logo_display = (tournamentConfig?.logo_display || orgConfig?.logo_display || base.logo_display) as LogoDisplay;
@@ -281,6 +282,53 @@ export function isDarkHeroSurface(surface: HeroSurface): boolean {
 }
 
 /**
+ * Resolves the exact surface and artwork mode rendered by BOTH public heroes and Studio Live Preview
+ * so preview, rendered surfaces, and CTA/pill contrast never diverge.
+ */
+export function resolveEffectiveHeroRender(
+  config: ResolvedHomepageConfig,
+  hasPhoto: boolean
+): {
+  surface: HeroSurface;
+  isDark: boolean;
+  showFullBleedPhoto: boolean;
+  showSplitPhoto: boolean;
+  showEmblem: boolean;
+} {
+  const artwork = config.artwork_display;
+  const showFullBleedPhoto =
+    hasPhoto && artwork !== 'none' && (artwork === 'full_bleed_bg' || (config.hero_surface === 'photo_scrim' && artwork !== 'showcase_split' && artwork !== 'emblem_lockup'));
+  const showSplitPhoto = hasPhoto && !showFullBleedPhoto && artwork === 'showcase_split';
+  const showEmblem = artwork !== 'none';
+  const surface: HeroSurface =
+    config.hero_surface === 'photo_scrim' && !showFullBleedPhoto ? 'brand_gradient' : config.hero_surface;
+
+  return {
+    surface,
+    isDark: isDarkHeroSurface(surface),
+    showFullBleedPhoto,
+    showSplitPhoto,
+    showEmblem,
+  };
+}
+
+/**
+ * Preserves local `?org=` tenant override on internal public navigation links.
+ */
+export function withPreservedOrgParam(path: string, currentSearch: string): string {
+  const org = new URLSearchParams(currentSearch).get('org')?.trim();
+  if (!org) return path;
+
+  const [pathname, existingQuery = ''] = path.split('?');
+  const params = new URLSearchParams(existingQuery);
+  if (!params.has('org')) {
+    params.set('org', org);
+  }
+  const qs = params.toString();
+  return qs ? `${pathname}?${qs}` : pathname;
+}
+
+/**
  * Smart single-logo deduplication rule:
  * Never stack both commemorative banner AND org logo, and match light vs dark hero contrast.
  */
@@ -292,7 +340,8 @@ export function resolveHeroLogo(options: {
   organizationLogoUrl?: string | null;
   reversedLogoUrl?: string | null;
 }): { url: string | null; kind: 'commemorative' | 'reversed' | 'standard' | null } {
-  const primaryLogo = options.logoUrl || options.organizationLogoUrl || null;
+  const effectiveLogo = options.logoUrl || options.organizationLogoUrl || null;
+  const orgLogo = options.organizationLogoUrl || options.logoUrl || null;
   const banner = options.commemorativeBannerUrl || null;
   const reversed = options.reversedLogoUrl || null;
 
@@ -300,16 +349,16 @@ export function resolveHeroLogo(options: {
     case 'none':
       return { url: null, kind: null };
     case 'commemorative_banner':
-      return banner ? { url: banner, kind: 'commemorative' } : primaryLogo ? { url: primaryLogo, kind: 'standard' } : { url: null, kind: null };
+      return banner ? { url: banner, kind: 'commemorative' } : effectiveLogo ? { url: effectiveLogo, kind: 'standard' } : { url: null, kind: null };
     case 'org_logo':
-      return primaryLogo ? { url: primaryLogo, kind: 'standard' } : { url: null, kind: null };
+      return orgLogo ? { url: orgLogo, kind: 'standard' } : { url: null, kind: null };
     case 'reversed_logo':
-      return reversed ? { url: reversed, kind: 'reversed' } : primaryLogo ? { url: primaryLogo, kind: 'standard' } : { url: null, kind: null };
+      return reversed ? { url: reversed, kind: 'reversed' } : effectiveLogo ? { url: effectiveLogo, kind: 'standard' } : { url: null, kind: null };
     case 'auto':
     default:
       if (banner) return { url: banner, kind: 'commemorative' };
       if (options.isDarkSurface && reversed) return { url: reversed, kind: 'reversed' };
-      if (primaryLogo) return { url: primaryLogo, kind: 'standard' };
+      if (effectiveLogo) return { url: effectiveLogo, kind: 'standard' };
       return { url: null, kind: null };
   }
 }
