@@ -209,4 +209,24 @@ class RuntimeHygieneTest < ActionDispatch::IntegrationTest
     ENV["CORS_ALLOWED_ORIGINS"] = previous_cors_origins
     TenantCorsOrigins.invalidate!
   end
+
+  test "Api::V1::BaseController declares rescue_from StandardError before specific exceptions" do
+    source = File.read(Rails.root.join("app/controllers/api/v1/base_controller.rb"))
+    rescue_lines = source.lines.select { |line| line.match?(/^\s*rescue_from\s+/) }
+
+    std_idx = rescue_lines.index { |line| line.include?("StandardError") }
+    assert_not_nil std_idx, "Expected BaseController to declare rescue_from StandardError"
+
+    %w[
+      ActiveRecord::RecordNotFound
+      ActiveRecord::RecordInvalid
+      ActionController::ParameterMissing
+      ArgumentError
+    ].each do |klass_name|
+      idx = rescue_lines.index { |line| line.include?(klass_name) }
+      assert_not_nil idx, "Expected BaseController to declare rescue_from #{klass_name}"
+      assert_operator std_idx, :<, idx,
+                      "Expected rescue_from StandardError to be declared before #{klass_name} so Rails matches #{klass_name} first in production"
+    end
+  end
 end

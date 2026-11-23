@@ -6,12 +6,17 @@ set -euo pipefail
 : "${WEB_URL:?Set WEB_URL (e.g. https://golf.shimizu-technology.com)}"
 : "${ORG_SLUG:?Set ORG_SLUG}"
 : "${TOURNAMENT_SLUG:?Set TOURNAMENT_SLUG}"
+TENANT_HOST="${TENANT_HOST:-}"
 
 check_code() {
   local url="$1"
   local expect="$2"
   local code
-  code=$(curl -s -o /tmp/hafagolf_smoke_body -w '%{http_code}' "$url")
+  if [[ -n "$TENANT_HOST" ]]; then
+    code=$(curl -s -H "X-Tenant-Host: $TENANT_HOST" -o /tmp/hafagolf_smoke_body -w '%{http_code}' "$url")
+  else
+    code=$(curl -s -o /tmp/hafagolf_smoke_body -w '%{http_code}' "$url")
+  fi
   if [[ "$code" != "$expect" ]]; then
     echo "FAIL $url -> $code (expected $expect)"
     exit 1
