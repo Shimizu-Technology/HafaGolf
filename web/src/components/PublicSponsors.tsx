@@ -1,4 +1,5 @@
-import { Building2, ExternalLink, Star } from 'lucide-react';
+import { ExternalLink, Star } from 'lucide-react';
+import { SponsorMonogram } from './sponsors/SponsorMonogram';
 import type { Sponsor, SponsorTier, Tournament } from '../services/api';
 import type { ThemePackDefinition } from '../utils/themePacks';
 
@@ -158,7 +159,7 @@ function HoleSponsorGrid({
                   className="max-w-full max-h-10 object-contain"
                 />
               ) : (
-                <Building2 className="w-8 h-8 text-neutral-300" strokeWidth={1.5} />
+                <SponsorMonogram name={sponsor.name} size="sm" />
               )}
             </div>
             {/* Name */}
@@ -217,10 +218,7 @@ function SponsorCard({
             className={`max-w-full object-contain ${isLarge ? 'max-h-14' : 'max-h-9'}`}
           />
         ) : (
-          <Building2
-            className={`text-neutral-300 ${isLarge ? 'w-10 h-10' : 'w-7 h-7'}`}
-            strokeWidth={1.5}
-          />
+          <SponsorMonogram name={sponsor.name} size={isLarge ? 'lg' : 'sm'} />
         )}
       </div>
 

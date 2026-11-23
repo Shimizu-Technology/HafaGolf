@@ -146,11 +146,16 @@ function RootRoute() {
 
 function AppLayout() {
   const { pathname } = useLocation();
-  const isAdmin = pathname === '/admin' || pathname.startsWith('/admin/');
+  const normalizedPath = pathname.toLowerCase();
+  const isStaticFlow =
+    normalizedPath === '/admin' ||
+    normalizedPath.startsWith('/admin/') ||
+    normalizedPath === '/sponsor-portal' ||
+    normalizedPath.startsWith('/sponsor-portal/');
   return (
     <ErrorBoundary>
       <PostHogPageView />
-      <div data-static-flow={isAdmin || undefined} className="min-h-screen flex flex-col">
+      <div data-static-flow={isStaticFlow || undefined} className="min-h-screen flex flex-col">
         <Toaster position="top-right" />
         <Outlet />
       <footer className="py-4 text-center border-t border-gray-100 bg-white mt-auto">

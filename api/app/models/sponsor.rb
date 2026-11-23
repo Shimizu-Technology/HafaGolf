@@ -101,18 +101,42 @@ class Sponsor < ApplicationRecord
     token = SecureRandom.urlsafe_base64(32)
     update!(
       access_token: token,
-      access_token_expires_at: Time.current + ACCESS_TOKEN_EXPIRY
+      access_token_expires_at: Time.current + ACCESS_TOKEN_EXPIRY,
+      portal_link_issued_at: Time.current
     )
     token
   end
 
-  def generate_portal_session_token!(verified_email:)
+  # Admin-issued portal links (email invite or copied link) reuse a still-valid
+  # token and refresh its expiry, so a link the sponsor already received keeps
+  # working when an admin shares the portal a second way.
+  def issue_portal_access_token!
+    with_lock do
+      return generate_access_token! unless access_token_valid?
+
+      update!(
+        access_token_expires_at: Time.current + ACCESS_TOKEN_EXPIRY,
+        portal_link_issued_at: Time.current
+      )
+      access_token
+    end
+  end
+
+  def portal_eligible?
+    active? && tournament.present? && tournament.status != 'archived'
+  end
+
+  def generate_portal_session_token!(verified_email:, expires_at: nil)
     normalized_email = verified_email.to_s.strip.downcase
     raise ArgumentError, 'Verified email is required' if normalized_email.blank?
 
+    expiry = expires_at || (Time.current + PORTAL_SESSION_EXPIRY)
+    remaining = expiry - Time.current
+    raise ArgumentError, 'Portal session has expired' if remaining <= 0
+
     self.class.portal_session_verifier.generate(
-      { 'sponsor_id' => id, 'email' => normalized_email },
-      expires_in: PORTAL_SESSION_EXPIRY
+      { 'sponsor_id' => id, 'email' => normalized_email, 'exp' => expiry.to_i },
+      expires_at: expiry
     )
   end
 
@@ -129,21 +153,28 @@ class Sponsor < ApplicationRecord
     sponsor
   end
 
-  def self.find_by_portal_session_token(token)
-    return nil if token.blank?
+  def self.verify_portal_session_token(token)
+    return [nil, nil] if token.blank?
 
     payload = portal_session_verifier.verified(token)
-    return nil unless payload.is_a?(Hash)
+    return [nil, nil] unless payload.is_a?(Hash)
+
+    expires_at = payload['exp'].present? ? Time.zone.at(payload['exp'].to_i) : nil
+    return [nil, nil] if expires_at.present? && expires_at <= Time.current
 
     sponsor = find_by(id: payload['sponsor_id'])
-    return nil unless sponsor
+    return [nil, nil] unless sponsor
 
     verified_email = payload['email'].to_s.downcase
-    return nil unless sponsor.login_email.to_s.downcase == verified_email
+    return [nil, nil] unless sponsor.login_email.to_s.downcase == verified_email
 
-    sponsor
+    [sponsor, expires_at]
   rescue ActiveSupport::MessageVerifier::InvalidSignature
-    nil
+    [nil, nil]
+  end
+
+  def self.find_by_portal_session_token(token)
+    verify_portal_session_token(token).first
   end
 
   def self.portal_session_verifier
@@ -220,16 +251,21 @@ class Sponsor < ApplicationRecord
     return unless saved_change_to_slot_count?
     return if payment_status == "pending" && !active?
 
-    current_count = sponsor_slots.count
     target_count = slot_count.to_i
+    excess_slots = sponsor_slots.where("slot_number > ?", target_count).order(slot_number: :desc).to_a
 
-    if target_count > current_count
-      # Add new slots
-      provision_sponsor_slots!
-    elsif target_count < current_count
-      # Remove extra slots (remove unfilled ones first, then filled ones)
-      to_remove = sponsor_slots.order(player_name: :asc).last(current_count - target_count)
-      to_remove.each(&:destroy)
+    if excess_slots.any?
+      filled_excess = excess_slots.select(&:filled?)
+      if filled_excess.any?
+        filled_excess.each do |slot|
+          slot.update!(player_name: nil, player_email: nil, player_phone: nil, tshirt_size: nil, handicap: nil)
+        end
+        SponsorSlotSyncer.new(self).sync_slots(filled_excess)
+      end
+      excess_slots.each(&:destroy!)
     end
+
+    # Ensure slots 1..target_count exist contiguously (also fills any legacy gaps).
+    provision_sponsor_slots! if target_count.positive?
   end
 end

@@ -17,6 +17,73 @@ export function usePostHogReady() {
   return useContext(PostHogReadyContext);
 }
 
+const SENSITIVE_QUERY_KEYS = new Set([
+  'token',
+  'session_token',
+  'access_token',
+  'magic_token',
+  'code',
+]);
+
+const SENSITIVE_PATH_PREFIXES = ['/sponsor-portal', '/score/verify'];
+
+export function isSensitiveAnalyticsRoute(pathname: string, search = ''): boolean {
+  const normalizedPath = pathname.toLowerCase();
+  if (SENSITIVE_PATH_PREFIXES.some((prefix) => normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`))) {
+    return true;
+  }
+  if (!search) return false;
+  const params = new URLSearchParams(search);
+  for (const key of params.keys()) {
+    if (SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) return true;
+  }
+  return false;
+}
+
+export function sanitizeUrlForAnalytics(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl, 'http://localhost');
+    let stripped = false;
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) {
+        parsed.searchParams.delete(key);
+        stripped = true;
+      }
+    }
+    if (!stripped) return rawUrl;
+    const isAbsolute = /^https?:\/\//i.test(rawUrl);
+    return isAbsolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return rawUrl.split('?')[0];
+  }
+}
+
+export function sanitizeSearchForAnalytics(search: string): string {
+  if (!search) return '';
+  const params = new URLSearchParams(search);
+  for (const key of Array.from(params.keys())) {
+    if (SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) {
+      params.delete(key);
+    }
+  }
+  const serialized = params.toString();
+  return serialized ? `?${serialized}` : '';
+}
+
+export function sanitizePostHogProperties(properties: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = { ...properties };
+  for (const [key, value] of Object.entries(sanitized)) {
+    if (typeof value !== 'string') continue;
+    const lower = key.toLowerCase();
+    if (lower.includes('url') || lower.includes('referrer')) {
+      sanitized[key] = sanitizeUrlForAnalytics(value);
+    } else if (lower === '$search' || lower.endsWith('_search')) {
+      sanitized[key] = sanitizeSearchForAnalytics(value);
+    }
+  }
+  return sanitized;
+}
+
 export function PostHogPageView() {
   const location = useLocation();
   const posthogClient = usePostHog();
@@ -26,7 +93,20 @@ export function PostHogPageView() {
   useEffect(() => {
     if (!posthogClient || !isPostHogEnabled || !isReady) return;
 
-    const currentPath = `${location.pathname}${location.search}${location.hash}`;
+    const sensitive = isSensitiveAnalyticsRoute(location.pathname, location.search);
+    if (sensitive) {
+      posthogClient.stopSessionRecording?.();
+      posthogClient.opt_out_capturing?.();
+      lastCapturedPathRef.current = location.pathname;
+      return;
+    }
+
+    if (posthogClient.has_opted_out_capturing?.()) {
+      posthogClient.opt_in_capturing?.();
+    }
+
+    const safeSearch = sanitizeSearchForAnalytics(location.search);
+    const currentPath = `${location.pathname}${safeSearch}${location.hash}`;
 
     // Provider init captures the initial pageview once.
     if (lastCapturedPathRef.current === null && initialCapturedPath === currentPath) {
@@ -37,9 +117,9 @@ export function PostHogPageView() {
     if (lastCapturedPathRef.current === currentPath) return;
 
     posthogClient.capture('$pageview', {
-      $current_url: window.location.href,
+      $current_url: sanitizeUrlForAnalytics(window.location.href),
       $pathname: location.pathname,
-      $search: location.search,
+      $search: safeSearch,
       $hash: location.hash,
       area: location.pathname.startsWith('/admin') ? 'admin' : 'public',
     });
@@ -64,9 +144,21 @@ export function PostHogProvider({ children }: { children: ReactNode }) {
 
     if (typeof window === 'undefined') return;
 
+    const initialSensitive = isSensitiveAnalyticsRoute(window.location.pathname, window.location.search);
+    const safeInitialSearch = sanitizeSearchForAnalytics(window.location.search);
+
+    // Never initialize PostHog on credential-bearing landing pages (e.g. /sponsor-portal?token=...)
+    // so SDK session entry props, autocapture, and replay never see the raw URL.
+    if (initialSensitive && !posthogInitialized) {
+      return;
+    }
+
     if (posthogInitialized) {
-      if (!initialCapturedPath) {
-        initialCapturedPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (initialSensitive) {
+        posthog.stopSessionRecording?.();
+        posthog.opt_out_capturing?.();
+      } else if (!initialCapturedPath) {
+        initialCapturedPath = `${window.location.pathname}${safeInitialSearch}${window.location.hash}`;
       }
       setIsReady(true);
       return;
@@ -79,6 +171,13 @@ export function PostHogProvider({ children }: { children: ReactNode }) {
       capture_pageleave: true,
       autocapture: true,
       disable_session_recording: false,
+      sanitize_properties: sanitizePostHogProperties,
+      before_send: (event) => {
+        if (typeof window !== 'undefined' && isSensitiveAnalyticsRoute(window.location.pathname, window.location.search)) {
+          return null;
+        }
+        return event;
+      },
       session_recording: {
         maskAllInputs: true,
       },
@@ -90,14 +189,14 @@ export function PostHogProvider({ children }: { children: ReactNode }) {
     });
 
     posthog.capture('$pageview', {
-      $current_url: window.location.href,
+      $current_url: sanitizeUrlForAnalytics(window.location.href),
       $pathname: window.location.pathname,
-      $search: window.location.search,
+      $search: safeInitialSearch,
       $hash: window.location.hash,
       area: window.location.pathname.startsWith('/admin') ? 'admin' : 'public',
     });
 
-    initialCapturedPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    initialCapturedPath = `${window.location.pathname}${safeInitialSearch}${window.location.hash}`;
     posthogInitialized = true;
     setIsReady(true);
   }, []);
