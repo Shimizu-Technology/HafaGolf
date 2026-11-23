@@ -40,6 +40,7 @@ export const SponsorAdminCard: React.FC<{
   sponsor: AdminSponsor;
   tournamentId: number;
   teamSize: number;
+  handicapRequired?: boolean;
   courseConfigs: CourseConfig[];
   expanded: boolean;
   onToggleExpand: () => void;
@@ -47,9 +48,9 @@ export const SponsorAdminCard: React.FC<{
   onDelete: () => void;
   onSendInvite: () => Promise<void>;
   onQuickSave: (changes: SponsorQuickEdit) => Promise<boolean>;
-  onSlotsFilledChange: (sponsorId: number, slotsFilled: number) => void;
+  onSlotsFilledChange: (sponsorId: number, slotsFilled: number, highestFilledSlot?: number) => void;
 }> = ({
-  sponsor, tournamentId, teamSize, courseConfigs, expanded, onToggleExpand, onEdit, onDelete,
+  sponsor, tournamentId, teamSize, handicapRequired = false, courseConfigs, expanded, onToggleExpand, onEdit, onDelete,
   onSendInvite, onQuickSave, onSlotsFilledChange,
 }) => {
   const { getToken } = useAuth();
@@ -314,6 +315,7 @@ export const SponsorAdminCard: React.FC<{
           sponsor={sponsor}
           tournamentId={tournamentId}
           teamSize={teamSize}
+          handicapRequired={handicapRequired}
           onSlotsFilledChange={onSlotsFilledChange}
         />
       )}
@@ -337,15 +339,22 @@ const SponsorPlayersPanel: React.FC<{
   sponsor: AdminSponsor;
   tournamentId: number;
   teamSize: number;
-  onSlotsFilledChange: (sponsorId: number, slotsFilled: number) => void;
-}> = ({ sponsor, tournamentId, teamSize, onSlotsFilledChange }) => {
+  handicapRequired: boolean;
+  onSlotsFilledChange: (sponsorId: number, slotsFilled: number, highestFilledSlot?: number) => void;
+}> = ({ sponsor, tournamentId, teamSize, handicapRequired, onSlotsFilledChange }) => {
   const { getToken } = useAuth();
   const [slots, setSlots] = useState<AdminSponsorSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingSlotId, setEditingSlotId] = useState<number | null>(null);
-  const [slotForm, setSlotForm] = useState({ player_name: '', player_email: '', player_phone: '', tshirt_size: '' });
+  const [slotForm, setSlotForm] = useState({ player_name: '', player_email: '', player_phone: '', tshirt_size: '', handicap: '' });
   const [saving, setSaving] = useState(false);
   const latestSponsor = useRef(sponsor.id);
+
+  const summarizeSlots = (list: AdminSponsorSlot[]) => {
+    const filled = list.filter((slot) => !!slot.player_name?.trim());
+    const highest = filled.reduce((max, slot) => Math.max(max, slot.slot_number), 0);
+    return { count: filled.length, highest };
+  };
 
   const fetchSlots = useCallback(async () => {
     latestSponsor.current = sponsor.id;
@@ -362,7 +371,8 @@ const SponsorPlayersPanel: React.FC<{
       const data = await res.json();
       const loaded: AdminSponsorSlot[] = data.slots || [];
       setSlots(loaded);
-      onSlotsFilledChange(sponsor.id, loaded.filter((slot) => !!slot.player_name?.trim()).length);
+      const { count, highest } = summarizeSlots(loaded);
+      onSlotsFilledChange(sponsor.id, count, highest);
     } catch {
       toast.error('Could not load players.');
     } finally {
@@ -383,6 +393,7 @@ const SponsorPlayersPanel: React.FC<{
       player_email: slot.player_email || '',
       player_phone: slot.player_phone || '',
       tshirt_size: slot.tshirt_size || '',
+      handicap: slot.handicap === null || slot.handicap === undefined ? '' : String(slot.handicap),
     });
   };
 
@@ -390,10 +401,20 @@ const SponsorPlayersPanel: React.FC<{
     setSaving(true);
     try {
       const token = await getToken();
+      const handicapStr = slotForm.handicap.trim();
+      const payload: Record<string, unknown> = {
+        player_name: slotForm.player_name,
+        player_email: slotForm.player_email,
+        player_phone: slotForm.player_phone,
+        tshirt_size: slotForm.tshirt_size,
+      };
+      if (handicapRequired || handicapStr !== '') {
+        payload.handicap = handicapStr === '' ? null : Number(handicapStr);
+      }
       const res = await fetch(`${API_URL}/api/v1/tournaments/${tournamentId}/sponsors/${sponsor.id}/slots/${slotId}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(slotForm),
+        body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
@@ -402,7 +423,8 @@ const SponsorPlayersPanel: React.FC<{
       }
       setSlots((prev) => {
         const nextSlots = prev.map((slot) => (slot.id === slotId ? data.slot as AdminSponsorSlot : slot));
-        onSlotsFilledChange(sponsor.id, nextSlots.filter((slot) => !!slot.player_name?.trim()).length);
+        const { count, highest } = summarizeSlots(nextSlots);
+        onSlotsFilledChange(sponsor.id, count, highest);
         return nextSlots;
       });
       toast.success('Player saved');
@@ -438,7 +460,7 @@ const SponsorPlayersPanel: React.FC<{
                         <p className="text-sm font-semibold text-gray-700">Player {slot.slot_number}</p>
                         <input aria-label="Player name" placeholder="Full name" value={slotForm.player_name}
                           onChange={(e) => setSlotForm({ ...slotForm, player_name: e.target.value })} className={inputClass} />
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <input aria-label="Email" type="email" placeholder="Email" value={slotForm.player_email}
                             onChange={(e) => setSlotForm({ ...slotForm, player_email: e.target.value })} className={inputClass} />
                           <input aria-label="Phone" type="tel" placeholder="Phone" value={slotForm.player_phone}
@@ -448,6 +470,20 @@ const SponsorPlayersPanel: React.FC<{
                             <option value="">Shirt size</option>
                             {TSHIRT_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
                           </select>
+                          {handicapRequired && (
+                            <input
+                              aria-label="Handicap"
+                              type="number"
+                              inputMode="decimal"
+                              step="0.1"
+                              min={-10}
+                              max={54}
+                              placeholder="Handicap (required)"
+                              value={slotForm.handicap}
+                              onChange={(e) => setSlotForm({ ...slotForm, handicap: e.target.value })}
+                              className={inputClass}
+                            />
+                          )}
                         </div>
                         <div className="flex justify-end gap-2">
                           <button type="button" onClick={() => setEditingSlotId(null)} className={`${actionButtonClass} border border-gray-300 text-gray-700 hover:bg-gray-100`}>Cancel</button>
@@ -464,7 +500,12 @@ const SponsorPlayersPanel: React.FC<{
                             <>
                               <p className="truncate text-sm font-medium text-gray-900">{slot.player_name}</p>
                               <p className="truncate text-xs text-gray-500">
-                                {[slot.player_email, slot.player_phone, slot.tshirt_size && `Shirt ${slot.tshirt_size}`].filter(Boolean).join(' · ') || 'No contact info'}
+                                {[
+                                  slot.player_email,
+                                  slot.player_phone,
+                                  slot.tshirt_size && `Shirt ${slot.tshirt_size}`,
+                                  slot.handicap !== null && slot.handicap !== undefined && `HCP ${slot.handicap}`,
+                                ].filter(Boolean).join(' · ') || 'No contact info'}
                               </p>
                             </>
                           ) : (

@@ -47,12 +47,13 @@ module Api
         slot_stats = SponsorSlot.where(sponsor_id: sponsors.map(&:id)).group(:sponsor_id).pluck(
           :sponsor_id,
           Arel.sql("COUNT(*)"),
-          Arel.sql("COUNT(*) FILTER (WHERE TRIM(COALESCE(player_name, '')) <> '')")
-        ).to_h { |sponsor_id, total, filled| [sponsor_id, { total: total.to_i, filled: filled.to_i }] }
+          Arel.sql("COUNT(*) FILTER (WHERE TRIM(COALESCE(player_name, '')) <> '')"),
+          Arel.sql("MAX(slot_number) FILTER (WHERE TRIM(COALESCE(player_name, '')) <> '')")
+        ).to_h { |sponsor_id, total, filled, highest| [sponsor_id, { total: total.to_i, filled: filled.to_i, highest_filled: highest.to_i }] }
 
         rows = sponsors.map do |sponsor|
-          stats = slot_stats.fetch(sponsor.id, { total: 0, filled: 0 })
-          admin_sponsor_response(sponsor, filled: stats[:filled])
+          stats = slot_stats.fetch(sponsor.id, { total: 0, filled: 0, highest_filled: 0 })
+          admin_sponsor_response(sponsor, filled: stats[:filled], highest_filled: stats[:highest_filled])
         end
         active_rows = rows.select { |row| row[:active] }
 
@@ -64,6 +65,7 @@ module Api
             name: @tournament.name,
             slug: @tournament.slug,
             team_size: [@tournament.team_size.to_i, 1].max,
+            handicap_required: @tournament.handicap_required?,
             show_public_sponsors: @tournament.show_public_sponsors,
             sponsor_wall_title: @tournament.sponsor_wall_title,
             public_listed: @tournament.public_listed,
@@ -196,8 +198,6 @@ module Api
       # Admin - update a sponsor slot (admins bypass deadline)
       def update_slot
         slot = @sponsor.sponsor_slots.find(params[:slot_id])
-        prev_tshirt = slot.tshirt_size
-        prev_handicap = slot.handicap
 
         attrs = {
           player_name: params[:player_name],
@@ -207,20 +207,25 @@ module Api
         }
         attrs[:tshirt_size] = params[:tshirt_size] if params.key?(:tshirt_size)
         attrs[:handicap] = params[:handicap].presence if params.key?(:handicap)
-        slot.update!(attrs)
+        slot.assign_attributes(attrs)
 
-        cleared_fields = []
-        cleared_fields << :tshirt_size if params.key?(:tshirt_size) && prev_tshirt.present? && slot.tshirt_size.nil?
-        cleared_fields << :handicap if params.key?(:handicap) && !prev_handicap.nil? && slot.handicap.nil?
-
-        begin
-          SponsorSlotSyncer.new(@sponsor).sync_slot(slot, cleared_fields: cleared_fields)
-        rescue ActiveRecord::RecordInvalid => e
-          render json: { error: "Slot saved but player roster sync failed: #{e.message}" }, status: :unprocessable_entity
+        unless slot.valid?
+          render json: { error: slot.errors.full_messages.to_sentence }, status: :unprocessable_entity
           return
         end
 
+        changed_fields = []
+        changed_fields << :tshirt_size if slot.will_save_change_to_tshirt_size?
+        changed_fields << :handicap if slot.will_save_change_to_handicap?
+
+        ActiveRecord::Base.transaction(requires_new: true) do
+          slot.save!
+          SponsorSlotSyncer.new(@sponsor).sync_slot(slot, changed_fields: changed_fields)
+        end
+
         render json: { slot: slot.portal_json }
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: "Could not save player: #{e.record.errors.full_messages.to_sentence}" }, status: :unprocessable_entity
       end
 
       # POST /api/v1/tournaments/:tournament_id/sponsors/reorder
@@ -317,8 +322,12 @@ module Api
         }
       end
 
-      def admin_sponsor_response(sponsor, filled: nil)
-        filled = sponsor.sponsor_slots.count(&:filled?) if filled.nil?
+      def admin_sponsor_response(sponsor, filled: nil, highest_filled: nil)
+        if filled.nil? || highest_filled.nil?
+          filled_slots = sponsor.sponsor_slots.select(&:filled?)
+          filled = filled_slots.length if filled.nil?
+          highest_filled = filled_slots.map(&:slot_number).max.to_i if highest_filled.nil?
+        end
 
         {
           id: sponsor.id,
@@ -340,6 +349,7 @@ module Api
           slot_count: sponsor.slot_count,
           login_email: sponsor.login_email,
           slots_filled: filled,
+          highest_filled_slot: highest_filled,
           has_active_portal_link: sponsor.access_token_valid?,
           portal_link_issued_at: sponsor.portal_link_issued_at&.iso8601,
           sponsor_tier_id: sponsor.sponsor_tier_id,

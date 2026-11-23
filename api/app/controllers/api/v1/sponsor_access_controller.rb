@@ -141,6 +141,11 @@ module Api
       # Mints a portal session for another sponsorship that shares the verified
       # email within the same organization, preserving the original session expiry.
       def switch
+        if @sponsor_session_expires_at.nil? || @sponsor_session_expires_at <= Time.current
+          render json: { error: "Invalid or expired sponsor session" }, status: :unauthorized
+          return
+        end
+
         target = sibling_sponsorships(@sponsor).find { |sponsor| sponsor.id == params[:sponsor_id].to_i }
 
         unless target

@@ -136,10 +136,16 @@ export const SponsorManagementPage: React.FC = () => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleSponsorSlotsFilledChange = useCallback((sponsorId: number, slotsFilled: number) => {
+  const handleSponsorSlotsFilledChange = useCallback((sponsorId: number, slotsFilled: number, highestFilledSlot?: number) => {
     setSponsors((prev) =>
       prev.map((sponsor) =>
-        sponsor.id === sponsorId ? { ...sponsor, slots_filled: slotsFilled } : sponsor
+        sponsor.id === sponsorId
+          ? {
+              ...sponsor,
+              slots_filled: slotsFilled,
+              ...(highestFilledSlot !== undefined ? { highest_filled_slot: highestFilledSlot } : {}),
+            }
+          : sponsor
       )
     );
   }, []);
@@ -181,10 +187,11 @@ export const SponsorManagementPage: React.FC = () => {
 
   const handleQuickSave = async (sponsor: AdminSponsor, changes: SponsorQuickEdit): Promise<boolean> => {
     if (!tournament) return false;
-    if (changes.slot_count < sponsor.slots_filled) {
+    const highestFilled = sponsor.highest_filled_slot ?? 0;
+    if (changes.slot_count < sponsor.slots_filled || changes.slot_count < highestFilled) {
       const confirmed = await requestConfirmation({
         title: 'Remove entered players?',
-        description: `${sponsor.name} has ${sponsor.slots_filled} players entered. Lowering the slots to ${changes.slot_count} removes the extra players from the event.`,
+        description: `${sponsor.name} has players entered in slots up to #${Math.max(highestFilled, sponsor.slots_filled)}. Lowering the slots to ${changes.slot_count} removes players in higher slots from the event.`,
         confirmLabel: 'Lower slots',
         tone: 'danger',
       });
@@ -470,6 +477,7 @@ export const SponsorManagementPage: React.FC = () => {
                     sponsor={sponsor}
                     tournamentId={tournament?.id || 0}
                     teamSize={teamSize}
+                    handicapRequired={Boolean(tournament?.handicap_required)}
                     courseConfigs={courseConfigs}
                     expanded={expandedSponsor === sponsor.id}
                     onToggleExpand={() => setExpandedSponsor(expandedSponsor === sponsor.id ? null : sponsor.id)}

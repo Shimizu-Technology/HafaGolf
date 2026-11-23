@@ -31,6 +31,7 @@ export interface AdminSponsor {
   slot_count: number;
   login_email: string | null;
   slots_filled: number;
+  highest_filled_slot?: number;
   has_active_portal_link: boolean;
   portal_link_issued_at: string | null;
 }
@@ -52,6 +53,7 @@ export interface ManagedTournament {
   name: string;
   slug: string;
   team_size: number;
+  handicap_required?: boolean;
   show_public_sponsors: boolean;
   sponsor_wall_title: string | null;
   public_listed: boolean;

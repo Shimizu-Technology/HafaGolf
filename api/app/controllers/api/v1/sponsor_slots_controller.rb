@@ -26,23 +26,24 @@ module Api
       # PATCH /api/v1/sponsor_slots/:id
       def update
         slot = @sponsor.sponsor_slots.find(params[:id])
-        prev_tshirt = slot.tshirt_size
-        prev_handicap = slot.handicap
+        slot.assign_attributes(slot_attributes(params).merge(confirmed_at: Time.current))
 
-        slot.update!(slot_attributes(params).merge(confirmed_at: Time.current))
-
-        cleared_fields = []
-        cleared_fields << :tshirt_size if params.key?(:tshirt_size) && prev_tshirt.present? && slot.tshirt_size.nil?
-        cleared_fields << :handicap if params.key?(:handicap) && !prev_handicap.nil? && slot.handicap.nil?
-
-        begin
-          SponsorSlotSyncer.new(@sponsor).sync_slot(slot, cleared_fields: cleared_fields)
-        rescue ActiveRecord::RecordInvalid => e
-          render json: { error: "Slot saved but player roster sync failed: #{e.message}" }, status: :unprocessable_entity
+        unless slot.valid?
+          render json: { error: slot.errors.full_messages.to_sentence }, status: :unprocessable_entity
           return
         end
 
+        changed_fields = changed_optional_fields(slot)
+
+        ActiveRecord::Base.transaction(requires_new: true) do
+          slot.save!
+          SponsorSlotSyncer.new(@sponsor).sync_slot(slot, changed_fields: changed_fields)
+        end
+
         render json: { slot: slot.portal_json }
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: "Nothing was saved because the player list could not be updated: #{e.record.errors.full_messages.to_sentence}" },
+               status: :unprocessable_entity
       end
 
       # PATCH /api/v1/sponsor_slots/batch
@@ -80,16 +81,10 @@ module Api
         end
 
         now = Time.current
-        cleared_fields_by_slot_id = {}
+        changed_fields_by_slot_id = {}
         entries.each do |entry|
           slot = slots_by_id[entry[:id].to_i]
-          prev_tshirt = slot.tshirt_size
-          prev_handicap = slot.handicap
           slot.assign_attributes(slot_attributes(entry).merge(confirmed_at: now))
-          cleared = []
-          cleared << :tshirt_size if entry.key?(:tshirt_size) && prev_tshirt.present? && slot.tshirt_size.nil?
-          cleared << :handicap if entry.key?(:handicap) && !prev_handicap.nil? && slot.handicap.nil?
-          cleared_fields_by_slot_id[slot.id] = cleared if cleared.any?
         end
 
         invalid = slots_by_id.values.reject(&:valid?)
@@ -101,13 +96,18 @@ module Api
           return
         end
 
+        slots_by_id.each do |slot_id, slot|
+          changed = changed_optional_fields(slot)
+          changed_fields_by_slot_id[slot_id] = changed if changed.any?
+        end
+
         # requires_new: the request already runs inside the tenant RLS transaction, so a
         # savepoint is what makes a failed roster sync roll back these slot writes.
         ActiveRecord::Base.transaction(requires_new: true) do
           slots_by_id.each_value(&:save!)
           SponsorSlotSyncer.new(@sponsor).sync_slots(
             slots_by_id.values,
-            cleared_fields_by_slot_id: cleared_fields_by_slot_id
+            changed_fields_by_slot_id: changed_fields_by_slot_id
           )
         end
 
@@ -128,6 +128,13 @@ module Api
         return unless sponsor_edit_deadline_passed?
 
         render json: { error: "The deadline for editing player slots has passed." }, status: :forbidden
+      end
+
+      def changed_optional_fields(slot)
+        changed = []
+        changed << :tshirt_size if slot.will_save_change_to_tshirt_size?
+        changed << :handicap if slot.will_save_change_to_handicap?
+        changed
       end
 
       # Name / email / phone keep the legacy "missing means cleared" behavior; the

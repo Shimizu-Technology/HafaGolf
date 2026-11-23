@@ -22,11 +22,13 @@ describe('PostHogProvider URL sanitization', () => {
       .toBe('?tab=info');
     expect(sanitizePostHogProperties({
       $current_url: 'https://club.example.com/sponsor-portal?token=secret123',
+      $session_entry_url: 'https://club.example.com/sponsor-portal?token=secret123',
       $referrer: 'https://club.example.com/sponsor-portal?access_token=xyz',
       $search: '?token=secret123',
       area: 'public',
     })).toEqual({
       $current_url: 'https://club.example.com/sponsor-portal',
+      $session_entry_url: 'https://club.example.com/sponsor-portal',
       $referrer: 'https://club.example.com/sponsor-portal',
       $search: '',
       area: 'public',

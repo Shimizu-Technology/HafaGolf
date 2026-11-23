@@ -71,13 +71,14 @@ export function sanitizeSearchForAnalytics(search: string): string {
 
 export function sanitizePostHogProperties(properties: Record<string, unknown>): Record<string, unknown> {
   const sanitized = { ...properties };
-  for (const key of ['$current_url', '$referrer', '$initial_referrer', '$initial_current_url']) {
-    if (typeof sanitized[key] === 'string') {
-      sanitized[key] = sanitizeUrlForAnalytics(sanitized[key]);
+  for (const [key, value] of Object.entries(sanitized)) {
+    if (typeof value !== 'string') continue;
+    const lower = key.toLowerCase();
+    if (lower.includes('url') || lower.includes('referrer')) {
+      sanitized[key] = sanitizeUrlForAnalytics(value);
+    } else if (lower === '$search' || lower.endsWith('_search')) {
+      sanitized[key] = sanitizeSearchForAnalytics(value);
     }
-  }
-  if (typeof sanitized.$search === 'string') {
-    sanitized.$search = sanitizeSearchForAnalytics(sanitized.$search);
   }
   return sanitized;
 }
@@ -94,8 +95,13 @@ export function PostHogPageView() {
     const sensitive = isSensitiveAnalyticsRoute(location.pathname, location.search);
     if (sensitive) {
       posthogClient.stopSessionRecording?.();
+      posthogClient.opt_out_capturing?.();
       lastCapturedPathRef.current = location.pathname;
       return;
+    }
+
+    if (posthogClient.has_opted_out_capturing?.()) {
+      posthogClient.opt_in_capturing?.();
     }
 
     const safeSearch = sanitizeSearchForAnalytics(location.search);
@@ -140,8 +146,17 @@ export function PostHogProvider({ children }: { children: ReactNode }) {
     const initialSensitive = isSensitiveAnalyticsRoute(window.location.pathname, window.location.search);
     const safeInitialSearch = sanitizeSearchForAnalytics(window.location.search);
 
+    // Never initialize PostHog on credential-bearing landing pages (e.g. /sponsor-portal?token=...)
+    // so SDK session entry props, autocapture, and replay never see the raw URL.
+    if (initialSensitive && !posthogInitialized) {
+      return;
+    }
+
     if (posthogInitialized) {
-      if (!initialCapturedPath) {
+      if (initialSensitive) {
+        posthog.stopSessionRecording?.();
+        posthog.opt_out_capturing?.();
+      } else if (!initialCapturedPath) {
         initialCapturedPath = `${window.location.pathname}${safeInitialSearch}${window.location.hash}`;
       }
       setIsReady(true);
@@ -154,8 +169,14 @@ export function PostHogProvider({ children }: { children: ReactNode }) {
       capture_pageview: false,
       capture_pageleave: true,
       autocapture: true,
-      disable_session_recording: initialSensitive,
+      disable_session_recording: false,
       sanitize_properties: sanitizePostHogProperties,
+      before_send: (event) => {
+        if (typeof window !== 'undefined' && isSensitiveAnalyticsRoute(window.location.pathname, window.location.search)) {
+          return null;
+        }
+        return event;
+      },
       session_recording: {
         maskAllInputs: true,
       },
@@ -166,15 +187,13 @@ export function PostHogProvider({ children }: { children: ReactNode }) {
       },
     });
 
-    if (!initialSensitive) {
-      posthog.capture('$pageview', {
-        $current_url: sanitizeUrlForAnalytics(window.location.href),
-        $pathname: window.location.pathname,
-        $search: safeInitialSearch,
-        $hash: window.location.hash,
-        area: window.location.pathname.startsWith('/admin') ? 'admin' : 'public',
-      });
-    }
+    posthog.capture('$pageview', {
+      $current_url: sanitizeUrlForAnalytics(window.location.href),
+      $pathname: window.location.pathname,
+      $search: safeInitialSearch,
+      $hash: window.location.hash,
+      area: window.location.pathname.startsWith('/admin') ? 'admin' : 'public',
+    });
 
     initialCapturedPath = `${window.location.pathname}${safeInitialSearch}${window.location.hash}`;
     posthogInitialized = true;

@@ -433,7 +433,7 @@ class SponsorPortalTeamSaveTest < ActionDispatch::IntegrationTest
     assert_nil member_one.magic_link_token
     assert_nil member_one.tshirt_size
 
-    # Once checked in, the portal cannot silently replace or remove that player.
+    # Once checked in, neither batch nor single-slot PATCH can silently replace or persist changes.
     member_one.check_in!
     patch "/api/v1/sponsor_slots/batch",
           params: { slots: [
@@ -444,6 +444,39 @@ class SponsorPortalTeamSaveTest < ActionDispatch::IntegrationTest
     assert_response :unprocessable_entity
     assert_equal "Dana Lee", first.reload.player_name
     assert_equal "Dana Lee", member_one.reload.name
+
+    patch "/api/v1/sponsor_slots/#{first.id}",
+          params: { player_name: "Single Patch Intruder" },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :unprocessable_entity
+    assert_equal "Dana Lee", first.reload.player_name
+
+    # Unrelated contact edit does not overwrite staff-entered shirt size or handicap.
+    member_one.undo_check_in!
+    member_one.update_columns(tshirt_size: "2XL", handicap: BigDecimal("8.5"))
+    first.update_columns(tshirt_size: "M", handicap: BigDecimal("14.0"))
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [
+            { id: first.id, player_name: "Dana Lee", player_email: "dana@example.com", player_phone: "671-555-7777", tshirt_size: "M", handicap: 14.0 },
+            { id: second.id, player_name: "Ben Santos" }
+          ] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :success
+    assert_equal "2XL", member_one.reload.tshirt_size
+    assert_equal BigDecimal("8.5"), member_one.handicap
+
+    # Staff cancellation cannot be reopened by a subsequent portal save even after an earlier portal cancel.
+    registration.cancel!(reason: SponsorSlotSyncer::PORTAL_CANCEL_REASON)
+    registration.update!(registration_status: "confirmed", refund_reason: nil, refunded_at: nil)
+    registration.cancel!(admin: @admin_a, reason: "Withdrawn by committee")
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [
+            { id: first.id, player_name: "Dana Lee", player_email: "dana@example.com" },
+            { id: second.id, player_name: "Ben Santos" }
+          ] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :success
+    assert_equal "cancelled", registration.reload.registration_status
   end
 
   test "lowering slot_count removes highest slots contiguously and reconciles the roster" do
