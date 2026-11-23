@@ -86,8 +86,9 @@ Rails.application.configure do
   # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
 
   # ActionCable configuration for real-time updates.
-  # Keep origins explicit and env-driven in production.
-  allowed_frontend_origins = [ENV["FRONTEND_URL"], ENV["FRONTEND_URL_ALT"]].compact.uniq
-  allowed_frontend_origins = ["https://example.com"] if allowed_frontend_origins.empty?
-  config.action_cable.allowed_request_origins = allowed_frontend_origins
+  # Dynamically allow platform admin origins and registered OrganizationDomain hostnames,
+  # matching Rack::Cors (TenantCorsOrigins) so multi-tenant custom domains work over WebSockets.
+  config.action_cable.allowed_request_origins = [
+    ->(origin) { TenantCorsOrigins.allowed?(origin) }
+  ]
 end
