@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '@clerk/react';
 import { useOrganization } from '../components/OrganizationProvider';
+import { useAdmin } from '../contexts';
 import { 
   Gift, 
   Plus,
@@ -615,7 +616,11 @@ export const RaffleManagementPage: React.FC = () => {
   const { requestConfirmation, confirmationDialog } = useConfirmDialog();
   const { tournamentSlug } = useParams<{ tournamentSlug: string }>();
   const { organization } = useOrganization();
+  const { currentAdmin, can } = useAdmin();
   const { getToken } = useAuth();
+  const canDraw = currentAdmin ? can('raffle_draw') : true;
+  const canManagePrizes = currentAdmin ? can('manage_raffle_prizes') : true;
+  const isRafflePosOnly = Boolean(currentAdmin && !canDraw && !canManagePrizes);
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [prizes, setPrizes] = useState<Prize[]>([]);
@@ -633,7 +638,9 @@ export const RaffleManagementPage: React.FC = () => {
   const [prizePage, setPrizePage] = useState(1);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'prizes' | 'tickets' | 'sell' | 'activity'>('prizes');
+  const [activeTab, setActiveTab] = useState<'prizes' | 'tickets' | 'sell' | 'activity'>(
+    isRafflePosOnly ? 'sell' : 'prizes'
+  );
 
   // Sell tickets state
   const [sellBuyerName, setSellBuyerName] = useState('');
@@ -1512,14 +1519,18 @@ export const RaffleManagementPage: React.FC = () => {
         {activeTab === 'prizes' && (
           <div>
             {/* Actions */}
+            {(canManagePrizes || canDraw) && (
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-3 mb-4">
-              <button
-                onClick={() => { setEditingPrize(null); setShowPrizeModal(true); }}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
-              >
-                <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
-                Add Prize
-              </button>
+              {canManagePrizes ? (
+                <button
+                  onClick={() => { setEditingPrize(null); setShowPrizeModal(true); }}
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
+                >
+                  <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
+                  Add Prize
+                </button>
+              ) : <div />}
+              {canDraw && (
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 {prizes.some((p) => p.won) && (
                   <button
@@ -1551,7 +1562,9 @@ export const RaffleManagementPage: React.FC = () => {
                   </button>
                 )}
               </div>
+              )}
             </div>
+            )}
 
             {/* Search + Filters */}
             <div className="mb-4 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
@@ -1672,6 +1685,7 @@ export const RaffleManagementPage: React.FC = () => {
                       <div className="hidden sm:flex items-center gap-2 shrink-0">
                         {prize.won ? (
                           <>
+                            {canDraw && (
                             <button
                               onClick={() => handleResetPrize(prize)}
                               disabled={actionLoading === `reset-${prize.id}` || claimingPrizes.has(prize.id)}
@@ -1680,9 +1694,11 @@ export const RaffleManagementPage: React.FC = () => {
                             >
                               <RotateCcw className="w-5 h-5" />
                             </button>
+                            )}
                           </>
                         ) : (
                           <>
+                            {canDraw && (
                             <button
                               onClick={() => handleDrawPrize(prize)}
                               disabled={actionLoading === `draw-${prize.id}`}
@@ -1695,6 +1711,9 @@ export const RaffleManagementPage: React.FC = () => {
                               )}
                               Draw
                             </button>
+                            )}
+                            {canManagePrizes && (
+                            <>
                             <button
                               onClick={() => { setEditingPrize(prize); setShowPrizeModal(true); }}
                               className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
@@ -1707,13 +1726,17 @@ export const RaffleManagementPage: React.FC = () => {
                             >
                               <Trash2 className="w-5 h-5" />
                             </button>
+                            </>
+                            )}
                           </>
                         )}
                       </div>
                     </div>
                     {/* Mobile action buttons on their own row */}
+                    {(canDraw || canManagePrizes) && (
                     <div className="flex sm:hidden items-center gap-2 mt-3 pt-3 border-t border-gray-100">
                       {prize.won ? (
+                        canDraw && (
                         <button
                           type="button"
                           onClick={() => handleResetPrize(prize)}
@@ -1723,8 +1746,10 @@ export const RaffleManagementPage: React.FC = () => {
                           <RotateCcw className="h-4 w-4" aria-hidden="true" />
                           Reset Draw
                         </button>
+                        )
                       ) : (
                         <>
+                          {canDraw && (
                           <button
                             onClick={() => handleDrawPrize(prize)}
                             disabled={actionLoading === `draw-${prize.id}`}
@@ -1737,6 +1762,9 @@ export const RaffleManagementPage: React.FC = () => {
                             )}
                             Draw
                           </button>
+                          )}
+                          {canManagePrizes && (
+                          <>
                           <button
                             onClick={() => { setEditingPrize(prize); setShowPrizeModal(true); }}
                             className="flex items-center justify-center gap-1.5 py-2 px-3 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg"
@@ -1749,9 +1777,12 @@ export const RaffleManagementPage: React.FC = () => {
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
+                          </>
+                          )}
                         </>
                       )}
                     </div>
+                    )}
                   </div>
 
                   {prize.won && (

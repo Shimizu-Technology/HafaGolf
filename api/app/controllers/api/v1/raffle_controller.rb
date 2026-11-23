@@ -14,14 +14,15 @@ module Api
       skip_around_action :with_tenant_rls_context, only: [:draw, :draw_all, :claim_prize, :resend_winner_notification]
       before_action :set_tournament
       before_action :authorize_public_tournament_access!, only: [:prizes, :tickets, :board, :check_ticket]
-      before_action :authorize_tournament_admin!, only: [
+      before_action :authorize_raffle_prizes_admin!, only: [
         :create_prize, :update_prize, :destroy_prize,
-        :draw_readiness, :clear_spotlight,
-        :draw, :draw_all, :reset_prize, :claim_prize,
-        :mark_ticket_paid, :void_ticket, :destroy_ticket,
-        :sync_tickets, :resend_winner_notification
+        :mark_ticket_paid, :void_ticket, :destroy_ticket, :sync_tickets
       ]
-      before_action :authorize_volunteer_or_admin!, only: [
+      before_action :authorize_raffle_draw_access!, only: [
+        :draw_readiness, :clear_spotlight,
+        :draw, :draw_all, :reset_prize, :claim_prize, :resend_winner_notification
+      ]
+      before_action :authorize_raffle_sell_access!, only: [
         :admin_tickets, :create_tickets, :sell_tickets, :update_ticket_contact, :resend_ticket_confirmation
       ]
       before_action -> { require_feature!(:raffle) }
@@ -1102,16 +1103,20 @@ module Api
         end
       end
 
-      def authorize_tournament_admin!
+      def authorize_raffle_prizes_admin!
+        require_capability!(:manage_raffle_prizes, tournament: @tournament)
+      end
+
+      def authorize_raffle_draw_access!
         if %w[draw draw_all claim_prize resend_winner_notification].include?(action_name)
-          with_user_rls_context { require_tournament_admin!(@tournament) }
+          with_user_rls_context { require_capability!(:raffle_draw, tournament: @tournament) }
         else
-          require_tournament_admin!(@tournament)
+          require_capability!(:raffle_draw, tournament: @tournament)
         end
       end
 
-      def authorize_volunteer_or_admin!
-        require_volunteer_or_admin!(@tournament.organization)
+      def authorize_raffle_sell_access!
+        require_capability!(:raffle_sell, tournament: @tournament)
       end
 
       def evaluate_draw_readiness

@@ -47,29 +47,60 @@ class User < ApplicationRecord
   end
 
   # Organization access checks
+  def membership_for(organization)
+    return nil unless organization
+
+    organization_memberships.find_by(organization: organization)
+  end
+
   def org_admin_for?(organization)
     return true if super_admin?
-    organization_memberships.exists?(organization: organization, role: 'admin')
+    return false unless organization
+
+    organization_memberships.exists?(organization: organization, role: OrganizationMembership::ADMIN_ROLES)
   end
 
   def member_of?(organization)
     return true if super_admin?
+    return false unless organization
+
     organization_memberships.exists?(organization: organization)
   end
 
   def volunteer_for?(organization)
-    organization_memberships.exists?(organization: organization, role: 'volunteer')
+    return false unless organization
+
+    organization_memberships.exists?(organization: organization, role: %w[volunteer checkin_volunteer raffle_volunteer scoring_marshal coordinator])
   end
 
   def org_role_for(organization)
-    return 'admin' if super_admin?
-    organization_memberships.find_by(organization: organization)&.role
+    return 'org_admin' if super_admin?
+    membership_for(organization)&.role
+  end
+
+  def can?(capability, organization:, tournament: nil)
+    return true if super_admin?
+    return false unless organization
+
+    membership_for(organization)&.can?(capability, tournament: tournament) == true
+  end
+
+  def capabilities_for(organization)
+    return OrganizationMembership.all_capabilities_map(true) if super_admin?
+    return OrganizationMembership.all_capabilities_map(false) unless organization
+
+    membership_for(organization)&.effective_capabilities || OrganizationMembership.all_capabilities_map(false)
   end
 
   # Tournament access checks
   def can_manage?(tournament)
     return true if super_admin?
+    return false unless tournament
     return true if org_admin_for?(tournament.organization)
+
+    membership = membership_for(tournament.organization)
+    return true if membership&.can?(:manage_golfers, tournament: tournament)
+
     tournament_assignments.exists?(tournament: tournament)
   end
 
@@ -81,7 +112,7 @@ class User < ApplicationRecord
   def accessible_organization_ids
     return Organization.pluck(:id) if super_admin?
 
-    membership_org_ids = organization_memberships.where(role: %w[admin volunteer]).pluck(:organization_id)
+    membership_org_ids = organization_memberships.where(role: OrganizationMembership::STAFF_ROLES).pluck(:organization_id)
     assigned_org_ids = TenantContext.with_platform_access do
       Tournament.joins(:tournament_assignments)
                 .where(tournament_assignments: { user_id: id })
@@ -93,11 +124,14 @@ class User < ApplicationRecord
 
   def accessible_tournaments
     return Tournament.all if super_admin?
-    
-    org_ids = organization_memberships.where(role: %w[admin volunteer]).pluck(:organization_id)
-    tournament_ids = tournament_assignments.pluck(:tournament_id)
-    
-    Tournament.where(organization_id: org_ids).or(Tournament.where(id: tournament_ids))
+
+    memberships = organization_memberships.where(role: OrganizationMembership::STAFF_ROLES).to_a
+    unscoped_org_ids = memberships.select { |m| m.admin? || m.scoped_tournament_ids.blank? }.map(&:organization_id)
+    scoped_ids = memberships.reject { |m| m.admin? || m.scoped_tournament_ids.blank? }.flat_map(&:scoped_tournament_ids)
+    assigned_ids = tournament_assignments.pluck(:tournament_id)
+    explicit_ids = (scoped_ids + assigned_ids).uniq
+
+    Tournament.where(organization_id: unscoped_org_ids).or(Tournament.where(id: explicit_ids))
   end
 
   private

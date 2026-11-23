@@ -669,9 +669,22 @@ export interface Admin {
   clerk_id: string | null;
   name: string | null;
   email: string;
-  role: 'super_admin' | 'admin' | null;
+  role: 'super_admin' | 'admin' | 'org_admin' | 'tournament_admin' | null;
   is_super_admin: boolean;
-  org_role: 'admin' | 'member' | 'volunteer' | null;
+  org_role:
+    | 'admin'
+    | 'org_admin'
+    | 'coordinator'
+    | 'checkin_volunteer'
+    | 'raffle_volunteer'
+    | 'scoring_marshal'
+    | 'volunteer'
+    | 'member'
+    | null;
+  org_role_label?: string | null;
+  capabilities?: Record<string, boolean>;
+  scoped_tournament_ids?: number[];
+  station_mode?: 'checkin' | 'raffle' | 'scoring' | null;
 }
 
 export interface ActivityLog {
@@ -1497,8 +1510,9 @@ export class ApiClient {
   }
 
   // Admins
-  async getCurrentAdmin(): Promise<Admin> {
-    return this.request('/api/v1/admins/me');
+  async getCurrentAdmin(orgSlug?: string): Promise<Admin> {
+    const query = orgSlug ? `?org=${encodeURIComponent(orgSlug)}` : '';
+    return this.request(`/api/v1/admins/me${query}`);
   }
 
   async getAdmins(): Promise<Admin[]> {

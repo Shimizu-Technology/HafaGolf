@@ -133,23 +133,23 @@ export default function AdminRoutesApp() {
           <Route path="login" element={<AdminLoginPage />} />
           <Route element={<AdminShellPage />}>
             <Route index element={<OrgAdminDashboard />} />
-            <Route path="platform" element={<AdminOnlyRoute><PlatformConsolePage /></AdminOnlyRoute>} />
+            <Route path="platform" element={<AdminOnlyRoute superAdminOnly><PlatformConsolePage /></AdminOnlyRoute>} />
             <Route path="organizations" element={<Navigate to="/admin/platform" replace />} />
-            <Route path="events" element={<AdminOnlyRoute><EventsManagementPage /></AdminOnlyRoute>} />
-            <Route path="events/new" element={<AdminOnlyRoute><CreateTournamentPage /></AdminOnlyRoute>} />
-            <Route path="events/:tournamentSlug" element={<AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute>} />
-            <Route path="events/:tournamentSlug/registrations" element={<AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute>} />
-            <Route path="events/:tournamentSlug/payments" element={<AdminOnlyRoute><PaymentReconciliationPage /></AdminOnlyRoute>} />
-            <Route path="events/:tournamentSlug/checkin" element={<OrgCheckInPage />} />
-            <Route path="events/:tournamentSlug/groups" element={<AdminOnlyRoute><GroupManagementPage /></AdminOnlyRoute>} />
-            <Route path="events/:tournamentSlug/raffle" element={<RaffleManagementPage />} />
-            <Route path="events/:tournamentSlug/sponsors" element={<AdminOnlyRoute><SponsorManagementPage /></AdminOnlyRoute>} />
-            <Route path="events/:tournamentSlug/employee-numbers" element={<AdminOnlyRoute><EmployeeNumbersPage /></AdminOnlyRoute>} />
-            <Route path="events/:tournamentSlug/settings" element={<AdminOnlyRoute><OrgSettingsPage /></AdminOnlyRoute>} />
-            <Route path="events/:tournamentSlug/reports" element={<AdminOnlyRoute><ReportsPage /></AdminOnlyRoute>} />
-            <Route path="sponsors" element={<AdminOnlyRoute><SponsorsOverviewPage /></AdminOnlyRoute>} />
-            <Route path="settings" element={<AdminOnlyRoute><OrgSettingsPage /></AdminOnlyRoute>} />
-            <Route path="activity" element={<AdminOnlyRoute><ActivityLogPage /></AdminOnlyRoute>} />
+            <Route path="events" element={<AdminOnlyRoute anyOf={['manage_golfers', 'manage_groups', 'view_reports', 'manage_settings']}><EventsManagementPage /></AdminOnlyRoute>} />
+            <Route path="events/new" element={<AdminOnlyRoute capability="manage_settings"><CreateTournamentPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug" element={<AdminOnlyRoute capability="manage_golfers"><OrgTournamentAdmin /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/registrations" element={<AdminOnlyRoute capability="manage_golfers"><OrgTournamentAdmin /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/payments" element={<AdminOnlyRoute anyOf={['view_reports', 'manage_finances']}><PaymentReconciliationPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/checkin" element={<AdminOnlyRoute capability="check_in"><OrgCheckInPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/groups" element={<AdminOnlyRoute capability="manage_groups"><GroupManagementPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/raffle" element={<AdminOnlyRoute anyOf={['raffle_sell', 'raffle_draw', 'manage_raffle_prizes']}><RaffleManagementPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/sponsors" element={<AdminOnlyRoute capability="manage_sponsors"><SponsorManagementPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/employee-numbers" element={<AdminOnlyRoute capability="manage_golfers"><EmployeeNumbersPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/settings" element={<AdminOnlyRoute capability="manage_settings"><OrgSettingsPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/reports" element={<AdminOnlyRoute anyOf={['view_reports', 'manage_finances']}><ReportsPage /></AdminOnlyRoute>} />
+            <Route path="sponsors" element={<AdminOnlyRoute capability="manage_sponsors"><SponsorsOverviewPage /></AdminOnlyRoute>} />
+            <Route path="settings" element={<AdminOnlyRoute capability="manage_settings"><OrgSettingsPage /></AdminOnlyRoute>} />
+            <Route path="activity" element={<AdminOnlyRoute anyOf={['view_reports', 'manage_settings', 'manage_golfers']}><ActivityLogPage /></AdminOnlyRoute>} />
           </Route>
 
           <Route path="tournaments/new" element={<LegacyTournamentRedirect fallbackPath="/admin/events/new" />} />

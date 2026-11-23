@@ -56,9 +56,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
       const maxRetries = 3;
       let lastError: Error | null = null;
 
+      const requestedOrg = searchParams.get('org') || undefined;
+
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
-          const admin = await api.getCurrentAdmin();
+          const admin = await api.getCurrentAdmin(requestedOrg);
           console.log('Admin verified:', admin.email);
           setCurrentAdmin(admin);
           setAuthStatus('authorized');
@@ -81,7 +83,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     };
 
     verifyAdminAccess();
-  }, [isLoaded, isSignedIn]);
+  }, [isLoaded, isSignedIn, searchParams]);
 
   if (authStatus === 'loading' || !isLoaded) {
     return (

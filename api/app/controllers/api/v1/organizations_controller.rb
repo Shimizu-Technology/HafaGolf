@@ -526,13 +526,26 @@ module Api
       end
 
       # GET /api/v1/admin/organizations/:slug/tournaments
-      # Admin/volunteer endpoint - returns all tournaments with stats
+      # Admin/volunteer endpoint - returns accessible tournaments with stats
       def admin_tournaments
         organization = Organization.find_by_slug!(params[:slug])
-        require_volunteer_or_admin!(organization)
+        require_any_capability!(
+          :check_in, :raffle_sell, :enter_scores, :manage_golfers,
+          :manage_groups, :manage_sponsors, :view_reports, :manage_finances,
+          :manage_settings, :manage_team,
+          organization: organization
+        )
         return if performed?
 
-        loaded = organization.tournaments
+        can_view_finances = current_user.can?(:view_reports, organization: organization) ||
+                            current_user.can?(:manage_finances, organization: organization)
+        membership = current_user.super_admin? ? nil : current_user.membership_for(organization)
+        tournaments_scope = organization.tournaments
+        if membership && !membership.admin? && membership.scoped_tournament_ids.present?
+          tournaments_scope = tournaments_scope.where(id: membership.scoped_tournament_ids)
+        end
+
+        loaded = tournaments_scope
                               .left_joins(:golfers)
                               .select(
                                 "tournaments.*",
@@ -564,7 +577,7 @@ module Api
           tournament_revenue = (paying_count * (t.entry_fee || 0)) + reg_paid_revenue
           sponsor_teams = t.read_attribute(:sponsor_teams_count).to_i
 
-          {
+          row = {
             id: t.id,
             name: t.name,
             slug: t.slug,
@@ -580,7 +593,6 @@ module Api
             capacity_summary: capacity_summary,
             pending_count: pending_count,
             capacity: t.max_capacity,
-            revenue: tournament_revenue,
             sponsor_reserved_teams: sponsor_teams,
             walkin_fee: t.walkin_fee,
             swipe_simple_url: t.swipe_simple_url,
@@ -591,18 +603,19 @@ module Api
             features: Features.for(organization, t).to_h,
             feature_overrides: Features.for(organization, t).tournament_overrides
           }
+          row[:revenue] = tournament_revenue if can_view_finances
+          row
         end
 
-        total_revenue = tournament_data.sum { |td| td[:revenue].to_i }
         total_registrations = tournament_data.sum { |td| td[:registration_count].to_i }
         active_count = loaded.count { |t| %w[open in_progress].include?(t.status) }
 
         stats = {
           total_tournaments: loaded.size,
           active_tournaments: active_count,
-          total_registrations: total_registrations,
-          total_revenue: total_revenue
+          total_registrations: total_registrations
         }
+        stats[:total_revenue] = tournament_data.sum { |td| td[:revenue].to_i } if can_view_finances
 
         render json: { tournaments: tournament_data, stats: stats }
       rescue ActiveRecord::RecordNotFound
@@ -610,13 +623,21 @@ module Api
       end
 
       # GET /api/v1/admin/organizations/:slug/tournaments/:tournament_slug
-      # Admin/volunteer endpoint - returns tournament details with all golfers
+      # Admin/volunteer endpoint - returns tournament details with golfers (financial totals stripped without view_reports)
       def admin_tournament
         organization = Organization.find_by_slug!(params[:slug])
-        require_volunteer_or_admin!(organization)
+        tournament = organization.tournaments.includes(:organization, :sponsors).find_by!(slug: params[:tournament_slug])
+        require_any_capability!(
+          :check_in, :raffle_sell, :enter_scores, :manage_golfers,
+          :manage_groups, :manage_sponsors, :view_reports, :manage_finances,
+          :manage_settings, :manage_team,
+          tournament: tournament
+        )
         return if performed?
 
-        tournament = organization.tournaments.includes(:organization, :sponsors).find_by!(slug: params[:tournament_slug])
+        can_view_finances = current_user.can?(:view_reports, organization: organization, tournament: tournament) ||
+                            current_user.can?(:manage_finances, organization: organization, tournament: tournament)
+
         golfers = tournament.golfers.includes(:group, :sponsor, :employee_number_record).order(created_at: :desc).to_a
 
         hole_labels = bulk_hole_position_labels(tournament.id, golfers)
@@ -655,7 +676,6 @@ module Api
           cancelled: counts_by_registration.fetch('cancelled', 0),
           paid: confirmed_paid,
           checked_in: golfers.count { |g| g.checked_in_at.present? },
-          revenue: golfers.count { |g| g.payment_status == 'paid' && g.payment_type != 'sponsor' } * (tournament.entry_fee || 0),
           max_capacity: tournament.max_capacity,
           sponsor_reserved_teams: tournament.sponsor_reserved_teams,
           public_capacity: tournament.public_capacity,
@@ -664,6 +684,9 @@ module Api
           at_capacity: tournament.at_capacity?,
           public_at_capacity: tournament.public_at_capacity?
         }
+        if can_view_finances
+          stats[:revenue] = golfers.count { |g| g.payment_status == 'paid' && g.payment_type != 'sponsor' } * (tournament.entry_fee || 0)
+        end
 
         render json: {
           tournament: TournamentSerializer.new(tournament).as_json,
@@ -1012,26 +1035,32 @@ module Api
       # GET /api/v1/admin/organizations/:slug/members
       def members
         org = Organization.find_by!(slug: params[:slug])
-        require_org_admin!(org)
+        require_capability!(:manage_team, organization: org)
         return if performed?
 
         memberships = org.organization_memberships.includes(:user).order(created_at: :asc)
+        tournaments = org.tournaments.order(event_date: :desc, id: :desc).pluck(:id, :name, :slug).map do |id, name, slug|
+          { id: id, name: name, slug: slug }
+        end
 
         render json: {
-          members: memberships.map { |m| member_response(m) }
+          members: memberships.map { |m| member_response(m) },
+          role_catalog: OrganizationMembership.role_catalog,
+          capability_catalog: OrganizationMembership::CAPABILITY_CATALOG,
+          tournaments: tournaments
         }
       end
 
       # POST /api/v1/admin/organizations/:slug/members
       def add_member
         org = Organization.find_by!(slug: params[:slug])
-        require_org_admin!(org)
+        require_capability!(:manage_team, organization: org)
         return if performed?
 
         email = params[:email]&.strip&.downcase
 
-        unless email.present?
-          return render json: { error: "Email is required" }, status: :unprocessable_entity
+        unless email.present? && email.match?(URI::MailTo::EMAIL_REGEXP)
+          return render json: { error: "A valid email address is required" }, status: :unprocessable_entity
         end
 
         user = User.where('LOWER(email) = LOWER(?)', email).first
@@ -1049,11 +1078,33 @@ module Api
           return render json: { error: "This user is already a member of this organization." }, status: :unprocessable_entity
         end
 
-        role = params[:role].presence || 'admin'
+        role = params[:role].presence || 'org_admin'
         unless OrganizationMembership::ROLES.include?(role)
           return render json: { error: "Invalid role: #{role}" }, status: :unprocessable_entity
         end
-        membership = org.organization_memberships.create!(user: user, role: role)
+
+        permissions_override = normalize_member_permissions(params[:permissions])
+        if permissions_override == :invalid
+          return render json: { error: "permissions must be a JSON object of capability booleans" }, status: :unprocessable_entity
+        end
+
+        scoped_ids = params.key?(:scoped_tournament_ids) ? Array(params[:scoped_tournament_ids]).map(&:to_i).select(&:positive?).uniq : []
+
+        membership = org.organization_memberships.create!(
+          user: user,
+          role: role,
+          permissions: permissions_override,
+          scoped_tournament_ids: scoped_ids
+        )
+
+        ActivityLog.log(
+          admin: current_user,
+          action: "admin_created",
+          target: user,
+          organization: org,
+          details: "Invited #{user.email} as #{membership.role_label}",
+          metadata: { role: membership.role, permissions: membership.permissions, scoped_tournament_ids: membership.scoped_tournament_ids }
+        )
 
         SendUserInviteEmailJob.perform_later(user.id, current_user&.id, role, org.id)
 
@@ -1061,12 +1112,14 @@ module Api
           member: member_response(membership),
           invitation_sent: true
         }, status: :created
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: e.record.errors.full_messages.join(', ') }, status: :unprocessable_entity
       end
 
       # POST /api/v1/admin/organizations/:slug/members/:member_id/resend_invite
       def resend_invite
         org = Organization.find_by!(slug: params[:slug])
-        require_org_admin!(org)
+        require_capability!(:manage_team, organization: org)
         return if performed?
 
         membership = org.organization_memberships.find(params[:member_id])
@@ -1084,28 +1137,56 @@ module Api
       # PATCH /api/v1/admin/organizations/:slug/members/:member_id
       def update_member
         org = Organization.find_by!(slug: params[:slug])
-        require_org_admin!(org)
+        require_capability!(:manage_team, organization: org)
         return if performed?
 
         membership = org.organization_memberships.find(params[:member_id])
+        updates = {}
 
-        unless OrganizationMembership::ROLES.include?(params[:role])
-          return render json: { error: "Invalid role" }, status: :unprocessable_entity
+        if params.key?(:role)
+          new_role = params[:role].to_s
+          unless OrganizationMembership::ROLES.include?(new_role)
+            return render json: { error: "Invalid role" }, status: :unprocessable_entity
+          end
+          if membership.admin? && !OrganizationMembership::ADMIN_ROLES.include?(new_role) && org.organization_memberships.admins.count <= 1
+            return render json: { error: "Cannot demote the last admin" }, status: :unprocessable_entity
+          end
+          updates[:role] = new_role
         end
 
-        # Don't let the last admin demote themselves
-        if membership.admin? && params[:role] != 'admin' && org.organization_memberships.admins.count <= 1
-          return render json: { error: "Cannot demote the last admin" }, status: :unprocessable_entity
+        if params.key?(:permissions)
+          perms = normalize_member_permissions(params[:permissions])
+          if perms == :invalid
+            return render json: { error: "permissions must be a JSON object of capability booleans" }, status: :unprocessable_entity
+          end
+          updates[:permissions] = perms
         end
 
-        membership.update!(role: params[:role])
+        if params.key?(:scoped_tournament_ids)
+          updates[:scoped_tournament_ids] = Array(params[:scoped_tournament_ids]).map(&:to_i).select(&:positive?).uniq
+        end
+
+        before_state = { role: membership.role, permissions: membership.permissions, scoped_tournament_ids: membership.scoped_tournament_ids }
+        membership.update!(updates)
+
+        ActivityLog.log(
+          admin: current_user,
+          action: "member_permissions_updated",
+          target: membership.user,
+          organization: org,
+          details: "Updated permissions for #{membership.user.email} (#{membership.role_label})",
+          metadata: { before: before_state, after: { role: membership.role, permissions: membership.permissions, scoped_tournament_ids: membership.scoped_tournament_ids } }
+        )
+
         render json: { member: member_response(membership) }
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: e.record.errors.full_messages.join(', ') }, status: :unprocessable_entity
       end
 
       # DELETE /api/v1/admin/organizations/:slug/members/:member_id
       def remove_member
         org = Organization.find_by!(slug: params[:slug])
-        require_org_admin!(org)
+        require_capability!(:manage_team, organization: org)
         return if performed?
 
         membership = org.organization_memberships.find(params[:member_id])
@@ -1115,7 +1196,18 @@ module Api
           return render json: { error: "Cannot remove the last admin" }, status: :unprocessable_entity
         end
 
+        removed_email = membership.user.email
         membership.destroy!
+
+        ActivityLog.log(
+          admin: current_user,
+          action: "admin_deleted",
+          target: nil,
+          organization: org,
+          details: "Removed #{removed_email} from #{org.name}",
+          metadata: { removed_email: removed_email }
+        )
+
         render json: { success: true }
       end
 
@@ -1149,6 +1241,22 @@ module Api
         end
       end
 
+      def normalize_member_permissions(raw)
+        return {} if raw.nil?
+
+        hash = raw.respond_to?(:to_unsafe_h) ? raw.to_unsafe_h : raw
+        return :invalid unless hash.is_a?(Hash)
+
+        hash.each_with_object({}) do |(k, v), acc|
+          next if v.nil? || v == ""
+          acc[k.to_s] = case v
+                        when true, "true" then true
+                        when false, "false" then false
+                        else v
+                        end
+        end
+      end
+
       def member_response(membership)
         user = membership.user
         {
@@ -1157,6 +1265,11 @@ module Api
           name: user.name || user.email,
           email: user.email,
           role: membership.role,
+          canonical_role: membership.canonical_role,
+          role_label: membership.role_label,
+          permissions: membership.permissions || {},
+          effective_capabilities: membership.effective_capabilities,
+          scoped_tournament_ids: membership.scoped_tournament_ids || [],
           invitation_pending: user.clerk_id&.start_with?('pending_') || false,
           created_at: membership.created_at
         }

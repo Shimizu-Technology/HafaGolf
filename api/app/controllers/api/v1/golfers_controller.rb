@@ -5,9 +5,11 @@ module Api
       skip_around_action :with_tenant_rls_context, only: [:create, :refund]
       before_action :authorize_collection_volunteer_access!, only: [:index]
       before_action :authorize_collection_tournament_access!, only: [:stats, :bulk_send_payment_links]
-      before_action :authorize_golfer_volunteer_access!, only: [:check_in, :undo_check_in, :verify_payment, :promote_and_checkin]
+      before_action :authorize_golfer_checkin_access!, only: [:check_in, :undo_check_in, :promote_and_checkin]
+      before_action :authorize_golfer_door_payment_access!, only: [:verify_payment]
+      before_action :authorize_golfer_finance_access!, only: [:refund, :mark_refunded]
       before_action :authorize_golfer_access!, only: [
-        :show, :update, :destroy, :cancel, :refund, :mark_refunded,
+        :show, :update, :destroy, :cancel,
         :payment_details, :promote, :demote,
         :send_payment_link, :update_payment_status, :mark_paid
       ]
@@ -1211,7 +1213,7 @@ module Api
         tournament = find_tournament
         return render_tournament_required unless tournament
 
-        require_volunteer_or_admin!(tournament.organization)
+        require_any_capability!(:check_in, :manage_golfers, :view_reports, :raffle_sell, tournament: tournament)
       end
 
       def authorize_collection_tournament_access!
@@ -1222,20 +1224,30 @@ module Api
       end
 
       def authorize_golfer_access!
+        golfer = Golfer.find(params[:id])
+        require_tournament_admin!(golfer.tournament)
+      end
+
+      def authorize_golfer_finance_access!
         if action_name == "refund"
           with_user_rls_context do
             golfer = Golfer.includes(:tournament).find(params[:id])
-            require_tournament_admin!(golfer.tournament)
+            require_capability!(:manage_finances, tournament: golfer.tournament)
           end
         else
           golfer = Golfer.find(params[:id])
-          require_tournament_admin!(golfer.tournament)
+          require_capability!(:manage_finances, tournament: golfer.tournament)
         end
       end
 
-      def authorize_golfer_volunteer_access!
+      def authorize_golfer_checkin_access!
         golfer = Golfer.find(params[:id])
-        require_volunteer_or_admin!(golfer.tournament.organization)
+        require_capability!(:check_in, tournament: golfer.tournament)
+      end
+
+      def authorize_golfer_door_payment_access!
+        golfer = Golfer.find(params[:id])
+        require_capability!(:verify_door_payment, tournament: golfer.tournament)
       end
 
       def find_tournament

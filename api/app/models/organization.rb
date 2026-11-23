@@ -55,7 +55,7 @@ class Organization < ApplicationRecord
   end
 
   def admin_count
-    organization_memberships.where(role: 'admin').count
+    organization_memberships.admins.count
   end
 
   def primary_domain
@@ -87,7 +87,7 @@ class Organization < ApplicationRecord
   end
 
   def admin?(user)
-    organization_memberships.exists?(user: user, role: 'admin')
+    organization_memberships.admins.exists?(user: user)
   end
 
   def effective_payment_config
@@ -100,7 +100,7 @@ class Organization < ApplicationRecord
 
   def admin_notification_emails
     emails = users.joins(:organization_memberships)
-                  .where(organization_memberships: { organization_id: id, role: "admin" })
+                  .where(organization_memberships: { organization_id: id, role: OrganizationMembership::ADMIN_ROLES })
                   .pluck(:email)
     emails << contact_email if contact_email.present?
     emails << ENV["PLATFORM_ADMIN_EMAIL"] if emails.empty? && ENV["PLATFORM_ADMIN_EMAIL"].present?
