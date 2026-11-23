@@ -117,7 +117,7 @@ Organizations that already have their own Stripe account can run in `client_proc
    - Render `healthCheckPath` MUST be `/up` (zero DB queries; verified by `RuntimeHygieneTest`).
    - Do **not** point external uptime monitors at `/health` (which queries Postgres).
    - Confirm `config/cable.yml` uses `async` and `SOLID_QUEUE_IN_PUMA=false`.
-   - When using Neon PgBouncer transaction pooling on `DATABASE_APP_URL`, note that `api/config/database.yml` currently sets `prepared_statements: true`; switch it to `false` (via code/config update) if your pooler configuration rejects prepared statements, and rely on `TenantContext` transaction-local `SET LOCAL` GUCs.
+   - `api/config/database.yml` defaults `prepared_statements` to `false` (override with `DB_PREPARED_STATEMENTS=true` only on direct non-pooled Postgres) so Neon PgBouncer transaction pooling on `DATABASE_APP_URL` works out of the box alongside `TenantContext` transaction-local `SET LOCAL` GUCs.
    - Observe Neon compute metrics over a 48-hour idle staging window to confirm compute suspends cleanly.
 
 ---
