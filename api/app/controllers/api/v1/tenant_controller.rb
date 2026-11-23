@@ -28,6 +28,10 @@ module Api
           return render json: { error: "Tenant organization not found for host", host: host }, status: :not_found
         end
 
+        if organization.subscription_status == "canceled"
+          return render json: { error: "Organization is archived", host: host }, status: :not_found
+        end
+
         render json: {
           host: host,
           resolved_by: resolved_by,

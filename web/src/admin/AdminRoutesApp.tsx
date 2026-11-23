@@ -12,7 +12,7 @@ import { AdminProvider, TournamentProvider } from '../contexts';
 import { usePostHogReady } from '../providers/PostHogProvider';
 import { AdminLoginPage } from '../pages/AdminLoginPage';
 import { OrgAdminDashboard } from '../pages/OrgAdminDashboard';
-import { SuperAdminDashboard } from '../pages/SuperAdminDashboard';
+import { PlatformConsolePage } from '../pages/PlatformConsolePage';
 import { EventsManagementPage } from '../pages/EventsManagementPage';
 import { CreateTournamentPage } from '../pages/CreateTournamentPage';
 import { OrgTournamentAdmin } from '../pages/OrgTournamentAdmin';
@@ -133,7 +133,8 @@ export default function AdminRoutesApp() {
           <Route path="login" element={<AdminLoginPage />} />
           <Route element={<AdminShellPage />}>
             <Route index element={<OrgAdminDashboard />} />
-            <Route path="organizations" element={<AdminOnlyRoute><SuperAdminDashboard /></AdminOnlyRoute>} />
+            <Route path="platform" element={<AdminOnlyRoute><PlatformConsolePage /></AdminOnlyRoute>} />
+            <Route path="organizations" element={<Navigate to="/admin/platform" replace />} />
             <Route path="events" element={<AdminOnlyRoute><EventsManagementPage /></AdminOnlyRoute>} />
             <Route path="events/new" element={<AdminOnlyRoute><CreateTournamentPage /></AdminOnlyRoute>} />
             <Route path="events/:tournamentSlug" element={<AdminOnlyRoute><OrgTournamentAdmin /></AdminOnlyRoute>} />

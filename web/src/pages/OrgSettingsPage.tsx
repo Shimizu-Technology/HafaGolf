@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useBlocker, useParams, type BlockerFunction } from 'react-router-dom';
+import { Link, useBlocker, useParams, useSearchParams, type BlockerFunction } from 'react-router-dom';
 import { ArrowLeft, Save } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useOrganization } from '../components/OrganizationProvider';
@@ -44,7 +44,12 @@ export function OrgSettingsPage() {
     organization={organization} tournamentSlug={tournamentSlug} />;
 }
 
+const VALID_SETTINGS_TABS: SettingsTab[] = ['event', 'look', 'registration', 'sponsors', 'payments', 'raffle'];
+
 function SettingsWorkspace({ organization, tournamentSlug }: { organization: Organization; tournamentSlug?: string }) {
+  const [searchParams] = useSearchParams();
+  const initialTabParam = searchParams.get('tab') as SettingsTab | null;
+  const initialTab: SettingsTab = initialTabParam && VALID_SETTINGS_TABS.includes(initialTabParam) ? initialTabParam : 'event';
   const { refreshTournaments } = useTournament();
   const { getToken } = useAuthToken();
   const [initialOrgSlug] = useState(organization.slug);
@@ -53,7 +58,7 @@ function SettingsWorkspace({ organization, tournamentSlug }: { organization: Org
   const [eventDraft, setEventDraft] = useState<TournamentSettings | null>(null);
   const [savedEvent, setSavedEvent] = useState<TournamentSettings | null>(null);
   const [eventDetails, setEventDetails] = useState<Awaited<ReturnType<typeof loadEventSettings>>>(null);
-  const [activeTab, setActiveTab] = useState<SettingsTab>('event');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [saveError, setSaveError] = useState('');
