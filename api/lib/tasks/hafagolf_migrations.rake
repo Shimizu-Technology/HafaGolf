@@ -10,7 +10,12 @@ namespace :hafagolf do
     task maw: :environment do
       reader = HafagolfMigrations::SourceReader.from_database_url(ENV["SOURCE_DATABASE_URL"])
       begin
-        report = HafagolfMigrations::MawImporter.new(source_reader: reader).run!
+        report = HafagolfMigrations::MawImporter.new(
+          source_reader: reader,
+          blob_dir: ENV["LEGACY_BLOB_DIR"],
+          brand_assets_dir: ENV["LEGACY_BRAND_ASSETS_DIR"],
+          asset_host: ENV["ASSET_HOST"] || ENV["API_URL"]
+        ).run!
         puts JSON.pretty_generate(report)
       rescue HafagolfMigrations::VerificationMismatchError => e
         warn e.message
@@ -25,7 +30,11 @@ namespace :hafagolf do
     task giaa: :environment do
       reader = HafagolfMigrations::SourceReader.from_database_url(ENV["SOURCE_DATABASE_URL"])
       begin
-        report = HafagolfMigrations::GiaaImporter.new(source_reader: reader).run!
+        report = HafagolfMigrations::GiaaImporter.new(
+          source_reader: reader,
+          brand_assets_dir: ENV["LEGACY_BRAND_ASSETS_DIR"],
+          asset_host: ENV["ASSET_HOST"] || ENV["API_URL"]
+        ).run!
         puts JSON.pretty_generate(report)
       rescue HafagolfMigrations::VerificationMismatchError => e
         warn e.message
