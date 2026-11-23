@@ -288,6 +288,7 @@ module Tournaments
       {
         use_org_branding: @source.use_org_branding,
         theme_preset: @source.theme_preset,
+        homepage_config: (@source.homepage_config || {}).deep_dup,
         primary_color_override: @source.primary_color_override,
         accent_color_override: @source.accent_color_override,
         logo_url_override: @source.logo_url_override,

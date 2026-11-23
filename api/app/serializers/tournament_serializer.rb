@@ -30,7 +30,7 @@ class TournamentSerializer < ActiveModel::Serializer
              :swipe_simple_url, :walkin_swipe_simple_url,
              :entry_fee_display, :formatted_entry_fee_display, :banner_url_override, :logo_url_override,
              :primary_color_override, :accent_color_override, :signature_image_url_override,
-             :theme_preset, :use_org_branding,
+             :theme_preset, :use_org_branding, :homepage_config,
              :commemorative_banner_url, :tribute_title, :tribute_subtitle, :story_photos,
              :waiver_enabled, :waiver_text, :show_public_sponsors, :sponsor_wall_title,
              # Raffle

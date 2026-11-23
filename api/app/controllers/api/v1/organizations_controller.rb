@@ -35,6 +35,7 @@ module Api
           offseason_cta_label: organization.offseason_cta_label,
           offseason_cta_url: organization.offseason_cta_url,
           settings: organization.settings || {},
+          homepage_config: organization.homepage_config || {},
           features: Features.for(organization).to_h,
           tournament_count: tournament_count
         }
@@ -1193,7 +1194,7 @@ module Api
 
       def tournament_params
         raw = params.require(:tournament)
-        attributes = raw.except(:story_photos).permit(
+        attributes = raw.except(:story_photos, :homepage_config).permit(
           :name, :year, :edition, :event_type, :status, :slug,
           :event_date, :registration_time, :start_time, :check_in_time,
           :location_name, :location_address,
@@ -1213,11 +1214,13 @@ module Api
         )
         # Keep the JSON shape intact so the model can reject malformed entries.
         attributes[:story_photos] = raw[:story_photos].as_json if raw.key?(:story_photos)
+        attributes[:homepage_config] = raw[:homepage_config].as_json if raw.key?(:homepage_config)
         attributes
       end
 
       def organization_params
-        params.require(:organization).permit(
+        raw = params.require(:organization)
+        attributes = raw.except(:homepage_config).permit(
           :name, :slug, :description, :logo_url, :reversed_logo_url, :primary_color,
           :show_homepage_sponsors,
           :banner_url, :contact_email, :contact_phone, :website_url,
@@ -1226,6 +1229,8 @@ module Api
           :offseason_cta_label, :offseason_cta_url,
           settings: {}
         )
+        attributes[:homepage_config] = raw[:homepage_config].as_json if raw.key?(:homepage_config)
+        attributes
       end
 
       def domain_params
@@ -1267,6 +1272,7 @@ module Api
           offseason_cta_label: org.offseason_cta_label,
           offseason_cta_url: org.offseason_cta_url,
           settings: org.settings || {},
+          homepage_config: org.homepage_config || {},
           features: Features.for(org).to_h,
           feature_overrides: Features.for(org).organization_overrides,
           subscription_status: org.subscription_status,

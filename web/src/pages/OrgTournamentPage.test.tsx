@@ -80,26 +80,29 @@ describe('public theme pack layouts', () => {
     });
   }
 
-  it('uses a ceremonial header with the official logo, commemoration, and full-size emblem', async () => {
+  it('uses ceremonial-light with single deduplicated commemorative logo, tribute silhouette, and structured Event Details card', async () => {
     await renderTournament('memorial-formal');
 
     const header = mount.querySelector('[data-hero-variant="ceremonial"]')!;
-    expect(header.querySelector('img[alt="Highland Golf Club"]')?.getAttribute('src')).toBe('/images/organizer.png');
+    // Single-logo deduplication: commemorative banner wins without duplicating the org logo
     expect(header.querySelector('img[alt="Commemorative banner"]')?.getAttribute('src')).toBe('/images/anniversary.png');
-    expect(header.querySelector('img[alt="Tribute emblem"]')?.classList).toContain('md:h-24');
-    expect(header.querySelector('.memorial-hairline')).toBeTruthy();
+    expect(header.querySelector('img[alt="Highland Golf Club"]')).toBeNull();
+    expect(header.querySelector('img[alt="Tribute emblem"]')?.getAttribute('src')).toBe('/images/emblem.png');
+    expect(header.querySelector('[data-status-pill="open"]')).toBeTruthy();
     expect(header.textContent).toContain('5th Annual');
     expect(header.textContent).toContain(tournament.tribute_title);
     expect(header.textContent).toContain(tournament.tribute_subtitle);
+    expect(mount.textContent).toContain('Event Details');
     expect(mount.textContent).not.toContain('Story & Impact');
   });
 
-  it('uses full-bleed photography with the reversed logo, story strip, support actions, and early sponsor wall', async () => {
+  it('uses charity-showcase 2-column framed flyer (object-contain) by default, with story strip, support actions, and early sponsor wall', async () => {
     await renderTournament('charity-bright');
 
     const header = mount.querySelector('[data-hero-variant="celebratory"]')!;
-    expect(header.querySelector('img[src="/images/event.jpg"]')?.classList).toContain('object-cover');
-    expect(header.querySelector('img[alt="Highland Golf Club"]')?.getAttribute('src')).toBe('/images/reversed.png');
+    expect(header.getAttribute('data-artwork-display')).toBe('showcase_split');
+    expect(header.querySelector('img[src="/images/event.jpg"]')?.classList).toContain('object-contain');
+    expect(header.querySelector('[data-status-pill="open"]')).toBeTruthy();
     expect(mount.querySelectorAll('figure')).toHaveLength(3);
     expect(mount.textContent).toContain('Third story');
     expect(mount.textContent).toContain('Support the Cause');
@@ -112,12 +115,23 @@ describe('public theme pack layouts', () => {
     expect(partnersIndex).toBeLessThan(detailsIndex);
   });
 
-  it('shows crest artwork, registration progress and foursome, tier, and donation actions', async () => {
+  it('supports scenic-photo full-bleed background photography with reversed logo when explicitly configured', async () => {
+    await renderTournament('charity-bright', {
+      homepage_config: { archetype: 'scenic-photo', hero_surface: 'photo_scrim', artwork_display: 'full_bleed_bg' },
+    });
+
+    const header = mount.querySelector('[data-hero-variant="celebratory"]')!;
+    expect(header.querySelector('img[src="/images/event.jpg"]')?.classList).toContain('object-cover');
+    expect(header.querySelector('img[alt="Highland Golf Club"]')?.getAttribute('src')).toBe('/images/reversed.png');
+  });
+
+  it('shows crest artwork, registration progress, uniform action cards, and collapses gracefully without artwork', async () => {
     await renderTournament('crest-classic');
 
     const header = mount.querySelector('[data-hero-variant="crest"]')!;
     expect(header.querySelector('img[alt="Tournament crest"]')?.getAttribute('src')).toBe('/images/emblem.png');
     expect(header.querySelector('[role="meter"]')?.getAttribute('aria-valuenow')).toBe('40');
+    expect(mount.querySelectorAll('[data-action-card="true"]').length).toBeGreaterThanOrEqual(3);
     expect(mount.textContent).toContain('Enter a Foursome');
     expect(mount.textContent).toContain('View Sponsor Tiers');
     expect(mount.textContent).toContain('Donate Now');
