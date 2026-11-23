@@ -185,4 +185,77 @@ describe('BroadcastsPage', () => {
     expect(history?.textContent).toContain('15-Minute Shotgun Start Call');
     expect(history?.textContent).toContain('Dry Run');
   });
+
+  it('clears stale preview and disables submit while a channel preview request fails or is pending', async () => {
+    let previewCall = 0;
+    const fetchMock = vi.fn().mockImplementation(async (url: string, opts?: RequestInit) => {
+      if (url.includes('/api/v1/admin/organizations/island-golf/tournaments/classic-2027')) {
+        return {
+          ok: true,
+          json: async () => ({ tournament: { id: 88, name: 'Island Classic 2027', slug: 'classic-2027' } }),
+        };
+      }
+      if (url.endsWith('/api/v1/tournaments/88/broadcasts') && (!opts?.method || opts.method === 'GET')) {
+        return {
+          ok: true,
+          json: async () => ({
+            announcements: [],
+            groups: [],
+            config: { email_configured: true, sms_configured: false, local_dry_run_mode: false },
+          }),
+        };
+      }
+      if (url.endsWith('/api/v1/tournaments/88/broadcasts/preview')) {
+        previewCall += 1;
+        if (previewCall === 1) {
+          return {
+            ok: true,
+            json: async () => ({
+              audience: 'all_confirmed',
+              channel: 'both',
+              effective_channel: 'email',
+              skipped_channel: 'sms',
+              recipient_count: 5,
+              email_recipients: 5,
+              sms_recipients: 0,
+              dry_run: false,
+              email_configured: true,
+              sms_configured: false,
+            }),
+          };
+        }
+        return { ok: false, status: 500, json: async () => ({ error: 'Preview failed' }) };
+      }
+      return { ok: false, json: async () => ({ error: 'Not found' }) };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={['/admin/events/classic-2027/announcements']}>
+          <Routes>
+            <Route path="/admin/events/:tournamentSlug/announcements" element={<BroadcastsPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+    });
+    await flush();
+
+    // Partial channel readiness banner shown for initial both preview
+    expect(mount.querySelector('[data-testid="broadcast-partial-channel-banner"]')).toBeTruthy();
+    const submitBtn = mount.querySelector('[data-testid="broadcast-submit-btn"]') as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(false);
+
+    // Switch channel to email -> second preview fails -> submit MUST be disabled (stale preview cleared)
+    const emailRadio = Array.from(mount.querySelectorAll('button[role="radio"]')).find((b) =>
+      b.textContent?.includes('Email Only')
+    ) as HTMLButtonElement;
+    await act(async () => {
+      emailRadio.click();
+    });
+    await flush();
+
+    expect(submitBtn.disabled).toBe(true);
+  });
 });

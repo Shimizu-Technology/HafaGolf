@@ -630,7 +630,7 @@ module Api
         require_any_capability!(
           :check_in, :raffle_sell, :enter_scores, :manage_golfers,
           :manage_groups, :manage_sponsors, :view_reports, :manage_finances,
-          :manage_settings, :manage_team,
+          :manage_settings, :manage_team, :send_broadcasts,
           tournament: tournament
         )
         return if performed?

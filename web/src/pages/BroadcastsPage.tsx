@@ -67,6 +67,8 @@ interface BroadcastPreview {
   dry_run: boolean;
   email_configured: boolean;
   sms_configured: boolean;
+  effective_channel?: BroadcastChannel;
+  skipped_channel?: 'email' | 'sms' | null;
 }
 
 const AUDIENCE_OPTIONS: Array<{ value: BroadcastAudience; label: string; description: string }> = [
@@ -199,19 +201,29 @@ export const BroadcastsPage: React.FC = () => {
   // Live recipient count preview
   useEffect(() => {
     if (!tournamentId) return;
+    const isCurrent = startPreview();
+
     if (audience === 'specific_groups' && selectedGroupIds.length === 0) {
+      setPreviewLoading(false);
       setPreview({
         recipient_count: 0,
         email_recipients: 0,
         sms_recipients: 0,
-        dry_run: config.local_dry_run_mode,
+        dry_run:
+          channel === 'email'
+            ? !config.email_configured
+            : channel === 'sms'
+              ? !config.sms_configured
+              : !config.email_configured && !config.sms_configured,
         email_configured: config.email_configured,
         sms_configured: config.sms_configured,
+        effective_channel: channel,
+        skipped_channel: null,
       });
       return;
     }
 
-    const isCurrent = startPreview();
+    setPreview(null);
     setPreviewLoading(true);
 
     (async () => {
@@ -232,17 +244,20 @@ export const BroadcastsPage: React.FC = () => {
             },
           }),
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (isCurrent()) setPreview(null);
+          return;
+        }
         const data = await res.json();
         if (!isCurrent()) return;
         setPreview(data);
       } catch {
-        // Non-fatal preview error
+        if (isCurrent()) setPreview(null);
       } finally {
         if (isCurrent()) setPreviewLoading(false);
       }
     })();
-  }, [tournamentId, audience, channel, selectedGroupIds, config.email_configured, config.sms_configured, config.local_dry_run_mode, startPreview]);
+  }, [tournamentId, audience, channel, selectedGroupIds, config.email_configured, config.sms_configured, startPreview]);
 
   const toggleGroupSelection = (groupId: number) => {
     setSelectedGroupIds((prev) =>
@@ -256,12 +271,15 @@ export const BroadcastsPage: React.FC = () => {
   };
 
   const requiresSubject = channel === 'email' || channel === 'both';
+  const previewReady = !previewLoading && preview !== null;
   const recipientCount = preview?.recipient_count ?? 0;
-  const isDryRun = preview?.dry_run ?? config.local_dry_run_mode;
+  const isDryRun = preview ? preview.dry_run : config.local_dry_run_mode;
+  const skippedChannel = preview?.skipped_channel ?? null;
+  const effectiveChannel = preview?.effective_channel ?? channel;
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!tournamentId) return;
+    if (!tournamentId || !previewReady) return;
 
     if (!message.trim()) {
       toast.error('Please enter an announcement message.');
@@ -280,11 +298,15 @@ export const BroadcastsPage: React.FC = () => {
       return;
     }
 
+    const partialChannelNote = skippedChannel
+      ? ` Note: ${skippedChannel.toUpperCase()} is not configured, so only ${effectiveChannel.toUpperCase()} will be sent.`
+      : '';
+
     const confirmed = await requestConfirmation({
       title: isDryRun ? 'Record Dry-Run Broadcast?' : 'Send Tournament Broadcast?',
       description: isDryRun
-        ? `Local Dry-Run Mode is active (outbound email/SMS keys are not configured). Record a simulated ${channelLabel(channel)} broadcast for ${recipientCount} ${recipientCount === 1 ? 'recipient' : 'recipients'} in "${audienceLabel(audience)}"? No real emails or texts will be sent.`
-        : `Send this ${channelLabel(channel)} announcement immediately to ${recipientCount} ${recipientCount === 1 ? 'recipient' : 'recipients'} in "${audienceLabel(audience)}"? This cannot be undone.`,
+        ? `Local Dry-Run Mode is active (outbound email/SMS keys are not configured for ${channelLabel(channel)}). Record a simulated ${channelLabel(channel)} broadcast for ${recipientCount} ${recipientCount === 1 ? 'recipient' : 'recipients'} in "${audienceLabel(audience)}"? No real emails or texts will be sent.`
+        : `Send this ${channelLabel(effectiveChannel)} announcement immediately to ${recipientCount} ${recipientCount === 1 ? 'recipient' : 'recipients'} in "${audienceLabel(audience)}"?${partialChannelNote} This cannot be undone.`,
       confirmLabel: isDryRun ? 'Record Dry Run' : `Send to ${recipientCount} Recipients`,
       tone: isDryRun ? 'default' : 'danger',
     });
@@ -380,7 +402,7 @@ export const BroadcastsPage: React.FC = () => {
         )}
 
         {/* Dry-run / Provider Readiness Banner */}
-        {isDryRun && (
+        {previewReady && isDryRun && (
           <div
             data-testid="broadcast-dry-run-banner"
             className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3 text-sm text-amber-950"
@@ -390,6 +412,22 @@ export const BroadcastsPage: React.FC = () => {
               <p className="font-semibold">Local Dry-Run Mode Active</p>
               <p className="text-xs text-amber-800 mt-0.5">
                 Outbound email/SMS credentials are not configured for this channel. Submitting a broadcast safely records a Dry Run entry in history and the audit log without sending external messages.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {previewReady && !isDryRun && skippedChannel && (
+          <div
+            data-testid="broadcast-partial-channel-banner"
+            className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3 text-sm text-amber-950"
+          >
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">Partial Delivery Readiness ({skippedChannel.toUpperCase()} Not Configured)</p>
+              <p className="text-xs text-amber-800 mt-0.5">
+                {skippedChannel.toUpperCase()} credentials are not configured, so only {effectiveChannel.toUpperCase()} messages will be sent ({recipientCount}{' '}
+                {recipientCount === 1 ? 'recipient' : 'recipients'}).
               </p>
             </div>
           </div>
@@ -555,7 +593,7 @@ export const BroadcastsPage: React.FC = () => {
             <div className="flex items-center justify-end pt-1">
               <button
                 type="submit"
-                disabled={sending || recipientCount <= 0}
+                disabled={sending || !previewReady || recipientCount <= 0}
                 data-testid="broadcast-submit-btn"
                 className="inline-flex min-h-[48px] w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -563,6 +601,11 @@ export const BroadcastsPage: React.FC = () => {
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Sending…
+                  </>
+                ) : !previewReady ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Checking Recipients…
                   </>
                 ) : (
                   <>

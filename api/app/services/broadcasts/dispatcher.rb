@@ -23,6 +23,22 @@ module Broadcasts
       end
     end
 
+    def self.channel_plan(channel)
+      normalized = channel.to_s.strip.downcase
+      dry_run = dry_run_for?(normalized)
+      if dry_run || normalized != "both"
+        return { effective_channel: normalized, skipped_channel: nil, dry_run: dry_run }
+      end
+
+      if email_configured? && !sms_configured?
+        { effective_channel: "email", skipped_channel: "sms", dry_run: false }
+      elsif !email_configured? && sms_configured?
+        { effective_channel: "sms", skipped_channel: "email", dry_run: false }
+      else
+        { effective_channel: "both", skipped_channel: nil, dry_run: false }
+      end
+    end
+
     def self.call(tournament:, sender:, audience:, target_group_ids:, channel:, subject:, message:)
       new(
         tournament: tournament,
@@ -47,19 +63,25 @@ module Broadcasts
     end
 
     def call
+      plan = self.class.channel_plan(@channel)
+      effective_channel = plan[:effective_channel]
+      is_dry_run = plan[:dry_run]
+
       resolved = AudienceResolver.resolve(
         tournament: @tournament,
         audience: @audience,
-        channel: @channel,
+        channel: effective_channel,
         target_group_ids: @target_group_ids
       )
 
-      is_dry_run = self.class.dry_run_for?(@channel)
+      will_deliver_email = %w[email both].include?(effective_channel)
+      will_deliver_sms = %w[sms both].include?(effective_channel)
+
       sent_count = 0
       failed_count = 0
 
       unless is_dry_run
-        if send_email? && self.class.email_configured?
+        if will_deliver_email && self.class.email_configured?
           resolved.emails.each do |email|
             if deliver_email(email)
               sent_count += 1
@@ -69,7 +91,7 @@ module Broadcasts
           end
         end
 
-        if send_sms? && self.class.sms_configured?
+        if will_deliver_sms && self.class.sms_configured?
           resolved.phones.each do |phone|
             if deliver_sms(phone)
               sent_count += 1
@@ -93,12 +115,12 @@ module Broadcasts
         sender: @sender,
         audience: @audience,
         target_group_ids: @audience == "specific_groups" ? @target_group_ids : [],
-        channel: @channel,
+        channel: effective_channel,
         subject: @subject,
         message: @message,
         recipient_count: resolved.recipient_count,
-        email_recipient_count: send_email? ? resolved.email_count : 0,
-        sms_recipient_count: send_sms? ? resolved.sms_count : 0,
+        email_recipient_count: will_deliver_email ? resolved.email_count : 0,
+        sms_recipient_count: will_deliver_sms ? resolved.sms_count : 0,
         sent_count: sent_count,
         failed_count: failed_count,
         dry_run: is_dry_run,
@@ -112,12 +134,14 @@ module Broadcasts
         target: @tournament,
         tournament: @tournament,
         organization: @organization,
-        details: "#{is_dry_run ? '[Dry Run] ' : ''}Sent #{@channel.upcase} broadcast to #{resolved.recipient_count} recipients (#{@audience})",
+        details: "#{is_dry_run ? '[Dry Run] ' : ''}Sent #{effective_channel.upcase} broadcast to #{resolved.recipient_count} recipients (#{@audience})",
         metadata: {
           broadcast_announcement_id: announcement.id,
           audience: @audience,
           target_group_ids: announcement.target_group_ids,
-          channel: @channel,
+          requested_channel: @channel,
+          channel: effective_channel,
+          skipped_channel: plan[:skipped_channel],
           recipient_count: resolved.recipient_count,
           sent_count: sent_count,
           failed_count: failed_count,

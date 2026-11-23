@@ -298,4 +298,58 @@ class BroadcastAnnouncementsTest < ActionDispatch::IntegrationTest
     assert_includes sent_payloads.first[:html], "&lt;b&gt;Hole 1&lt;/b&gt;"
     assert_equal 1, MessageDelivery.where(tournament: @t1, purpose: "tournament_broadcast").count
   end
+
+  test "both channel with only email configured records effective email channel, skips sms cleanly, and send_broadcasts-only user can load admin_tournament" do
+    ENV["RESEND_API_KEY"] = "re_test_key"
+
+    # Custom user with ONLY send_broadcasts capability can load admin_tournament
+    broadcaster = User.create!(
+      clerk_id: "clerk_bcast_only_#{SecureRandom.hex(3)}",
+      email: "broadcaster-#{SecureRandom.hex(3)}@bcast.example.com",
+      name: "Comms Lead",
+      role: "tournament_admin"
+    )
+    @org.organization_memberships.create!(
+      user: broadcaster,
+      role: "checkin_volunteer",
+      permissions: { "check_in" => false, "verify_door_payment" => false, "send_broadcasts" => true }
+    )
+    get "/api/v1/admin/organizations/#{@org.slug}/tournaments/#{@t1.slug}", headers: headers_for(broadcaster)
+    assert_response :success
+
+    # Preview for channel=both when only email is configured reports skipped_channel=sms & sms_recipients=0
+    post "/api/v1/tournaments/#{@t1.id}/broadcasts/preview",
+         params: { audience: "all_confirmed", channel: "both" },
+         headers: headers_for(broadcaster),
+         as: :json
+    assert_response :success
+    preview = JSON.parse(response.body)
+    assert_equal "email", preview["effective_channel"]
+    assert_equal "sms", preview["skipped_channel"]
+    assert_equal 2, preview["email_recipients"]
+    assert_equal 0, preview["sms_recipients"]
+    assert_equal false, preview["dry_run"]
+
+    # Send records effective_channel="email" and sms_recipient_count=0
+    with_stubbed_singleton_method(Resend::Emails, :send, ->(*) { { "id" => "re_partial" } }) do
+      post "/api/v1/tournaments/#{@t1.id}/broadcasts",
+           params: {
+             broadcast: {
+               audience: "all_confirmed",
+               channel: "both",
+               subject: "Schedule Update",
+               message: "Check-in opens at 6:30 AM."
+             }
+           },
+           headers: headers_for(broadcaster),
+           as: :json
+    end
+    assert_response :created
+    body = JSON.parse(response.body)
+    assert_equal "sms", body["skipped_channel"]
+    assert_equal "email", body["announcement"]["channel"]
+    assert_equal 2, body["announcement"]["email_recipient_count"]
+    assert_equal 0, body["announcement"]["sms_recipient_count"]
+    assert_equal 2, body["announcement"]["sent_count"]
+  end
 end

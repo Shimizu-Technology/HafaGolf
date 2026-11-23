@@ -40,10 +40,11 @@ module Api
           return
         end
 
+        plan = Broadcasts::Dispatcher.channel_plan(channel)
         resolved = Broadcasts::AudienceResolver.resolve(
           tournament: @tournament,
           audience: audience,
-          channel: channel,
+          channel: plan[:effective_channel],
           target_group_ids: target_group_ids
         )
 
@@ -53,10 +54,12 @@ module Api
         render json: {
           audience: audience,
           channel: channel,
+          effective_channel: plan[:effective_channel],
+          skipped_channel: plan[:skipped_channel],
           recipient_count: resolved.recipient_count,
-          email_recipients: resolved.email_count,
-          sms_recipients: resolved.sms_count,
-          dry_run: Broadcasts::Dispatcher.dry_run_for?(channel),
+          email_recipients: %w[email both].include?(plan[:effective_channel]) ? resolved.email_count : 0,
+          sms_recipients: %w[sms both].include?(plan[:effective_channel]) ? resolved.sms_count : 0,
+          dry_run: plan[:dry_run],
           email_configured: email_ok,
           sms_configured: sms_ok
         }
@@ -94,10 +97,11 @@ module Api
           return
         end
 
+        plan = Broadcasts::Dispatcher.channel_plan(channel)
         preview_result = Broadcasts::AudienceResolver.resolve(
           tournament: @tournament,
           audience: audience,
-          channel: channel,
+          channel: plan[:effective_channel],
           target_group_ids: target_group_ids
         )
 
@@ -116,11 +120,14 @@ module Api
           message: message
         )
 
+        skipped_note = plan[:skipped_channel].present? ? " (#{plan[:skipped_channel].upcase} skipped because it is not configured)" : ""
+
         render json: {
           announcement: announcement.as_admin_json,
+          skipped_channel: plan[:skipped_channel],
           message: announcement.dry_run? ?
             "Dry run recorded for #{announcement.recipient_count} recipients (no outbound messages sent)." :
-            "Broadcast sent to #{announcement.recipient_count} recipients."
+            "Broadcast sent via #{announcement.channel.upcase} to #{announcement.recipient_count} recipients#{skipped_note}."
         }, status: :created
       rescue ActiveRecord::RecordInvalid => e
         render json: { error: e.record.errors.full_messages.join(", ") }, status: :unprocessable_entity
