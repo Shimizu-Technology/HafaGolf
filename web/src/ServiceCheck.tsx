@@ -2,11 +2,26 @@ import App from './App';
 import { useBackendAvailability } from './hooks/useBackendAvailability';
 import { OffseasonPage } from './pages/OffseasonPage';
 import { PostHogProvider } from './providers/PostHogProvider';
+import { isPlatformHomeUrl } from './utils/adminHost';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const HEALTH_URL = `${API_BASE_URL}/health`;
 
 export function ServiceCheck() {
+  // The platform homepage is static, so a sleeping or offline API must not hide it. Its links to
+  // /admin are full page loads, which run this check again.
+  if (isPlatformHomeUrl(window.location.hostname, window.location.pathname, window.location.search)) {
+    return (
+      <PostHogProvider>
+        <App />
+      </PostHogProvider>
+    );
+  }
+
+  return <BackendGatedApp />;
+}
+
+function BackendGatedApp() {
   const { status, retry } = useBackendAvailability(HEALTH_URL);
 
   if (status === 'checking') {

@@ -1,0 +1,113 @@
+/* Platform homepage only. The still layout is the default; motion is added under
+   prefers-reduced-motion: no-preference and never touches layout properties. */
+
+.ph-root {
+  --ph-evergreen: #0b3b2e;
+  --ph-fairway: #0f4c3a;
+  --ph-paper: #faf8f3;
+  --ph-ink: #111827;
+  --ph-ink-muted: #4b5563;
+  --ph-brass: #b68b3a;
+  --ph-brass-text: #85621f;
+  --ph-brass-light: #d9b56b;
+  --ph-line: #e7e1d3;
+  --ph-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  background: var(--ph-paper);
+  color: var(--ph-ink);
+}
+
+.ph-root :focus-visible {
+  outline: 2px solid var(--ph-brass);
+  outline-offset: 3px;
+  --tw-ring-shadow: 0 0 #0000;
+  box-shadow: none;
+}
+
+.ph-display {
+  font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  letter-spacing: -0.015em;
+}
+
+.ph-ui {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+}
+
+/* Hero word rise: CSS only, finished in about a second, the full text stays the accessible name. */
+.ph-word-mask {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  padding-bottom: 0.12em;
+  margin-bottom: -0.12em;
+}
+
+.ph-word {
+  display: inline-block;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ph-word {
+    animation: ph-word-rise 720ms var(--ph-ease-out) both;
+    animation-delay: calc(var(--ph-word-index, 0) * 55ms);
+  }
+
+  .ph-card-enter {
+    animation: ph-card-enter 360ms var(--ph-ease-out) both;
+  }
+
+  .ph-tilt-card {
+    transition: box-shadow 200ms var(--ph-ease-out);
+  }
+
+  .ph-flow-panel {
+    will-change: opacity, transform;
+  }
+}
+
+@keyframes ph-word-rise {
+  from {
+    opacity: 0;
+    transform: translateY(105%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ph-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) rotateY(-6deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ph-tilt-stage {
+  perspective: 1100px;
+}
+
+.ph-tilt-stage[data-tilt='on'] {
+  cursor: grab;
+  user-select: none;
+}
+
+.ph-tilt-stage[data-tilt='on']:active {
+  cursor: grabbing;
+}
+
+.ph-tilt-card {
+  transform-style: preserve-3d;
+}
+
+/* Before the first scroll frame, only the first pinned stage shows. */
+[data-pinned] .ph-flow-panel:not(:first-child) {
+  opacity: 0;
+}
+
+.ph-progress-rail-fill {
+  transform-origin: top;
+}
