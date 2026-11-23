@@ -28,7 +28,8 @@ const SENSITIVE_QUERY_KEYS = new Set([
 const SENSITIVE_PATH_PREFIXES = ['/sponsor-portal', '/score/verify'];
 
 export function isSensitiveAnalyticsRoute(pathname: string, search = ''): boolean {
-  if (SENSITIVE_PATH_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+  const normalizedPath = pathname.toLowerCase();
+  if (SENSITIVE_PATH_PREFIXES.some((prefix) => normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`))) {
     return true;
   }
   if (!search) return false;

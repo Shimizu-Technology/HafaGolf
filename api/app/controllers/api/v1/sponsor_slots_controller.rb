@@ -40,7 +40,7 @@ module Api
           SponsorSlotSyncer.new(@sponsor).sync_slot(slot, changed_fields: changed_fields)
         end
 
-        render json: { slot: slot.portal_json }
+        render json: { slot: slot.reload.portal_json }
       rescue ActiveRecord::RecordInvalid => e
         render json: { error: "Nothing was saved because the player list could not be updated: #{e.record.errors.full_messages.to_sentence}" },
                status: :unprocessable_entity
@@ -113,7 +113,7 @@ module Api
 
         all_slots = @sponsor.sponsor_slots.reload.order(:slot_number).to_a
         render json: {
-          slots: slots_by_id.values.sort_by(&:slot_number).map(&:portal_json),
+          slots: all_slots.select { |slot| slots_by_id.key?(slot.id) }.map(&:portal_json),
           filled_count: all_slots.count(&:filled?),
           slot_count: all_slots.length
         }

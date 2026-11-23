@@ -465,13 +465,36 @@ class SponsorPortalTeamSaveTest < ActionDispatch::IntegrationTest
     assert_equal "2XL", member_one.reload.tshirt_size
     assert_equal BigDecimal("8.5"), member_one.handicap
 
+    # Replacing a player without changing tshirt_size clears the stale value on the slot too so later saves never re-inherit it.
+    first.update_columns(tshirt_size: "L", handicap: BigDecimal("11.0"))
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [
+            { id: first.id, player_name: "Elena Cruz", player_email: "elena@example.com", tshirt_size: "L", handicap: 11.0 },
+            { id: second.id, player_name: "Ben Santos" }
+          ] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :success
+    assert_nil first.reload.tshirt_size
+    assert_nil first.handicap
+    assert_nil member_one.reload.tshirt_size
+    assert_nil member_one.handicap
+
+    # Clearing an email on a checked-in player counts as an identity change and is blocked.
+    member_one.check_in!
+    patch "/api/v1/sponsor_slots/#{first.id}",
+          params: { player_name: "Elena Cruz", player_email: nil },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :unprocessable_entity
+    assert_equal "elena@example.com", first.reload.player_email
+
     # Staff cancellation cannot be reopened by a subsequent portal save even after an earlier portal cancel.
+    member_one.undo_check_in!
     registration.cancel!(reason: SponsorSlotSyncer::PORTAL_CANCEL_REASON)
     registration.update!(registration_status: "confirmed", refund_reason: nil, refunded_at: nil)
     registration.cancel!(admin: @admin_a, reason: "Withdrawn by committee")
     patch "/api/v1/sponsor_slots/batch",
           params: { slots: [
-            { id: first.id, player_name: "Dana Lee", player_email: "dana@example.com" },
+            { id: first.id, player_name: "Elena Cruz", player_email: "elena@example.com" },
             { id: second.id, player_name: "Ben Santos" }
           ] },
           headers: { "X-Sponsor-Session" => session }, as: :json

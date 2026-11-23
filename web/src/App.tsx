@@ -146,11 +146,12 @@ function RootRoute() {
 
 function AppLayout() {
   const { pathname } = useLocation();
+  const normalizedPath = pathname.toLowerCase();
   const isStaticFlow =
-    pathname === '/admin' ||
-    pathname.startsWith('/admin/') ||
-    pathname === '/sponsor-portal' ||
-    pathname.startsWith('/sponsor-portal/');
+    normalizedPath === '/admin' ||
+    normalizedPath.startsWith('/admin/') ||
+    normalizedPath === '/sponsor-portal' ||
+    normalizedPath.startsWith('/sponsor-portal/');
   return (
     <ErrorBoundary>
       <PostHogPageView />

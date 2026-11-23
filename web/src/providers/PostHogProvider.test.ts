@@ -9,6 +9,7 @@ import {
 describe('PostHogProvider URL sanitization', () => {
   it('flags sponsor portal and credential-bearing query strings as sensitive', () => {
     expect(isSensitiveAnalyticsRoute('/sponsor-portal', '?token=secret123')).toBe(true);
+    expect(isSensitiveAnalyticsRoute('/SPONSOR-PORTAL/login', '')).toBe(true);
     expect(isSensitiveAnalyticsRoute('/sponsor-portal/login', '')).toBe(true);
     expect(isSensitiveAnalyticsRoute('/score/verify', '?token=abc')).toBe(true);
     expect(isSensitiveAnalyticsRoute('/summer-open', '?token=abc')).toBe(true);

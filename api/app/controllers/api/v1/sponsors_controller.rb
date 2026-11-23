@@ -223,7 +223,7 @@ module Api
           SponsorSlotSyncer.new(@sponsor).sync_slot(slot, changed_fields: changed_fields)
         end
 
-        render json: { slot: slot.portal_json }
+        render json: { slot: slot.reload.portal_json }
       rescue ActiveRecord::RecordInvalid => e
         render json: { error: "Could not save player: #{e.record.errors.full_messages.to_sentence}" }, status: :unprocessable_entity
       end

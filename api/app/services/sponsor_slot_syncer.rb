@@ -135,7 +135,7 @@ class SponsorSlotSyncer
 
     old_e = normalized_email(old_email)
     new_e = normalized_email(new_email)
-    old_e.present? && new_e.present? && old_e != new_e
+    old_e.present? && old_e != new_e
   end
 
   def portal_auto_cancelled?(record)
@@ -245,6 +245,18 @@ class SponsorSlotSyncer
                   else
                     existing_member.handicap
                   end
+
+            if replaced
+              if @tournament.handicap_required? && hcp.nil?
+                slot.errors.add(:handicap, "is required for a replacement player")
+                raise ActiveRecord::RecordInvalid, slot
+              end
+
+              stale_slot_updates = {}
+              stale_slot_updates[:tshirt_size] = nil if !changed.include?(:tshirt_size) && slot.tshirt_size.present?
+              stale_slot_updates[:handicap] = nil if !changed.include?(:handicap) && !slot.handicap.nil?
+              slot.update_columns(stale_slot_updates) if stale_slot_updates.any?
+            end
 
             member_attrs = {
               organization_id: @tournament.organization_id,
