@@ -43,9 +43,47 @@ module Api
         end
 
         is_registration = record.is_a?(Registration)
-        entry_fee = is_registration ? (record.payment_amount_cents.presence || record.expected_entry_fee_cents) : record.expected_entry_fee_cents
+        add_on_items = if record.golfer_add_ons.loaded?
+                         record.golfer_add_ons.to_a
+                       else
+                         TenantContext.with_organization(organization.id) do
+                           record.golfer_add_ons.includes(:tournament_add_on).to_a
+                         end
+                       end
+        entry_fee = if is_registration
+                      add_on_items.any? ? record.expected_entry_fee_cents : (record.payment_amount_cents.presence || record.expected_entry_fee_cents)
+                    else
+                      record.expected_entry_fee_cents
+                    end
         display_name = payable_record_name(record)
         customer_email = payable_record_email(record)
+
+        line_items = [{
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "#{tournament&.name || 'Golf Tournament'} Entry Fee",
+              description: "Golf Tournament Registration - #{display_name}",
+            },
+            unit_amount: entry_fee,
+          },
+          quantity: 1,
+        }]
+        add_on_items.each do |item|
+          next unless item.tournament_add_on.present? && item.quantity.to_i.positive?
+
+          line_items << {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: item.tournament_add_on.name,
+                description: item.tournament_add_on.description.presence || "Tournament Add-On"
+              },
+              unit_amount: item.unit_price_cents
+            },
+            quantity: item.quantity
+          }
+        end
 
         metadata = {
           organization_id: organization.id.to_s,
@@ -70,17 +108,7 @@ module Api
           # External Stripe HTTP call runs OUTSIDE any DB transaction using per-request api_key
           session_payload = {
             payment_method_types: ["card"],
-            line_items: [{
-              price_data: {
-                currency: "usd",
-                product_data: {
-                  name: "#{tournament&.name || 'Golf Tournament'} Entry Fee",
-                  description: "Golf Tournament Registration - #{display_name}",
-                },
-                unit_amount: entry_fee,
-              },
-              quantity: 1,
-            }],
+            line_items: line_items,
             mode: "payment",
             success_url: OrgUrlBuilder.public_url(organization, "/payment/success?session_id={CHECKOUT_SESSION_ID}"),
             cancel_url: OrgUrlBuilder.public_url(organization, "/payment/cancel?#{cancel_param}"),
@@ -569,8 +597,8 @@ module Api
         end
 
         record = TenantContext.with_platform_access do
-          Golfer.includes(tournament: :organization).find_by(payment_token: token) ||
-            Registration.includes(:team_members, :employee_number_record, tournament: :organization).find_by(payment_token: token)
+          Golfer.includes({ golfer_add_ons: :tournament_add_on }, tournament: :organization).find_by(payment_token: token) ||
+            Registration.includes(:team_members, :employee_number_record, { golfer_add_ons: :tournament_add_on }, tournament: :organization).find_by(payment_token: token)
         end
 
         unless record
@@ -795,8 +823,8 @@ module Api
 
       def handle_test_mode_confirm(session_id)
         record = TenantContext.with_platform_access do
-          found = Golfer.includes(tournament: :organization).find_by(stripe_checkout_session_id: session_id) ||
-                  Registration.includes(:team_members, :employee_number_record, tournament: :organization).find_by(stripe_checkout_session_id: session_id)
+          found = Golfer.includes({ golfer_add_ons: :tournament_add_on }, tournament: :organization).find_by(stripe_checkout_session_id: session_id) ||
+                  Registration.includes(:team_members, :employee_number_record, { golfer_add_ons: :tournament_add_on }, tournament: :organization).find_by(stripe_checkout_session_id: session_id)
 
           if found.nil? && session_id.start_with?("test_embedded_")
             cached_data = Rails.cache.read("test_embedded_#{session_id}")
@@ -843,7 +871,7 @@ module Api
         end
 
         golfer = record
-        entry_fee = golfer.expected_entry_fee_cents
+        entry_fee = golfer.expected_entry_fee_cents + golfer.add_ons_total_cents
         emails_sent = false
         already_paid = false
 

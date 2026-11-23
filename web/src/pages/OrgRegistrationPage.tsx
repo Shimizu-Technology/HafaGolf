@@ -18,8 +18,11 @@ import {
   UserPlus,
   Trash2,
   Users,
+  Sparkles,
+  Plus,
+  Minus,
 } from 'lucide-react';
-import { api, Tournament } from '../services/api';
+import { api, Tournament, type TournamentAddOn } from '../services/api';
 import { useOrganization } from '../components/OrganizationProvider';
 import { formatEventDate } from '../utils/dates';
 import { SignedInAdminBar } from '../components/SignedInAdminBar';
@@ -109,6 +112,8 @@ export const OrgRegistrationPage: React.FC = () => {
   const [teamName, setTeamName] = useState('');
   const [teamCategory, setTeamCategory] = useState('');
   const [errors, setErrors] = useState<TeamRegistrationValidationErrors>({ players: {} });
+  const [availableAddOns, setAvailableAddOns] = useState<TournamentAddOn[]>([]);
+  const [selectedAddOns, setSelectedAddOns] = useState<Record<number, number>>({});
 
   const teamSize = useMemo(() => normalizeTeamSize(tournament?.team_size), [tournament?.team_size]);
   const allowPartialTeams = Boolean(tournament?.allow_partial_teams);
@@ -184,6 +189,36 @@ export const OrgRegistrationPage: React.FC = () => {
     capacityUnit: tournament?.capacity_unit,
   });
 
+  const selectedAddOnItems = useMemo(() => {
+    return availableAddOns
+      .map((item) => ({ item, quantity: selectedAddOns[item.id] || 0 }))
+      .filter((entry) => entry.quantity > 0);
+  }, [availableAddOns, selectedAddOns]);
+
+  const addOnsTotalCents = useMemo(
+    () => selectedAddOnItems.reduce((sum, entry) => sum + entry.item.price_cents * entry.quantity, 0),
+    [selectedAddOnItems]
+  );
+
+  const grandTotalCents = totalDueCents + addOnsTotalCents;
+
+  const updateAddOnQuantity = (addOn: TournamentAddOn, delta: number) => {
+    setSelectedAddOns((prev) => {
+      const current = prev[addOn.id] || 0;
+      const cap = addOn.remaining_quantity != null
+        ? Math.min(addOn.max_quantity_per_order, addOn.remaining_quantity)
+        : addOn.max_quantity_per_order;
+      const next = Math.max(0, Math.min(cap, current + delta));
+      const updated = { ...prev };
+      if (next === 0) {
+        delete updated[addOn.id];
+      } else {
+        updated[addOn.id] = next;
+      }
+      return updated;
+    });
+  };
+
   const handleValidateEmployeeNumber = async (rawValue?: string) => {
     if (!tournament || !employeePricingEnabled) return;
     const normalized = normalizeEmployeeNumber(rawValue ?? employeeNumberInput);
@@ -242,6 +277,15 @@ export const OrgRegistrationPage: React.FC = () => {
           setPlayers(buildInitialPlayers(data.team_size, Boolean(data.allow_partial_teams)));
           setCurrentStep(1);
           setErrors({ players: {} });
+          setSelectedAddOns({});
+          try {
+            const addOnsRes = await api.getTournamentAddOns(data.id, false);
+            if (!cancelled) {
+              setAvailableAddOns((addOnsRes.add_ons || []).filter((a) => a.active && !a.sold_out));
+            }
+          } catch {
+            if (!cancelled) setAvailableAddOns([]);
+          }
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -359,6 +403,10 @@ export const OrgRegistrationPage: React.FC = () => {
           organizationSlug: orgSlug,
           isEmployee: isEmployeeValidated,
           employeeNumber: isEmployeeValidated ? employeeValidation.employeeNumber : undefined,
+          addOns: selectedAddOnItems.map((entry) => ({
+            add_on_id: entry.item.id,
+            quantity: entry.quantity,
+          })),
         }
       );
 
@@ -1159,10 +1207,99 @@ export const OrgRegistrationPage: React.FC = () => {
                         )}
                       </div>
 
-                      <div className="p-4 bg-neutral-100 rounded-2xl">
+                      {availableAddOns.length > 0 && (
+                        <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-3" data-testid="registration-addons-section">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+                            <div>
+                              <h3 className="text-sm font-semibold text-neutral-900">
+                                Optional Add-Ons &amp; Super Tickets
+                              </h3>
+                              <p className="text-xs text-neutral-600">
+                                Pre-order mulligans or super tickets now — ready for pickup at check-in.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="space-y-2.5">
+                            {availableAddOns.map((addOn) => {
+                              const qty = selectedAddOns[addOn.id] || 0;
+                              const cap = addOn.remaining_quantity != null
+                                ? Math.min(addOn.max_quantity_per_order, addOn.remaining_quantity)
+                                : addOn.max_quantity_per_order;
+                              return (
+                                <div
+                                  key={addOn.id}
+                                  className={`flex items-center justify-between gap-3 rounded-xl border bg-white p-3 transition-colors ${
+                                    qty > 0 ? 'border-brand-500 ring-1 ring-brand-500/20' : 'border-neutral-200'
+                                  }`}
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="text-sm font-semibold text-neutral-900">{addOn.name}</p>
+                                      <span className="text-xs font-bold text-brand-700">
+                                        {formatUsdFromCents(addOn.price_cents)}
+                                      </span>
+                                      {addOn.remaining_quantity != null && addOn.remaining_quantity <= 15 && (
+                                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                                          {addOn.remaining_quantity} left
+                                        </span>
+                                      )}
+                                    </div>
+                                    {addOn.description && (
+                                      <p className="text-xs text-neutral-500 mt-0.5">{addOn.description}</p>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => updateAddOnQuantity(addOn, -1)}
+                                      disabled={qty <= 0}
+                                      aria-label={`Remove ${addOn.name}`}
+                                      className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                                    >
+                                      <Minus className="w-4 h-4" />
+                                    </button>
+                                    <span className="w-6 text-center text-sm font-semibold text-neutral-900" data-testid={`addon-qty-${addOn.id}`}>
+                                      {qty}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateAddOnQuantity(addOn, 1)}
+                                      disabled={qty >= cap}
+                                      aria-label={`Add ${addOn.name}`}
+                                      className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-brand-600 bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-40"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="p-4 bg-neutral-100 rounded-2xl space-y-1.5">
+                        {selectedAddOnItems.length > 0 && (
+                          <>
+                            <div className="flex justify-between items-baseline text-sm text-neutral-600">
+                              <span>Entry Fee</span>
+                              <span>{formatUsdFromCents(totalDueCents)}</span>
+                            </div>
+                            {selectedAddOnItems.map(({ item, quantity }) => (
+                              <div key={item.id} className="flex justify-between items-baseline text-sm text-neutral-600">
+                                <span>{quantity}× {item.name}</span>
+                                <span>{formatUsdFromCents(item.price_cents * quantity)}</span>
+                              </div>
+                            ))}
+                            <div className="border-t border-neutral-200 pt-2 mt-1" />
+                          </>
+                        )}
                         <div className="flex justify-between items-baseline">
                           <span className="text-sm font-medium text-neutral-700">Total</span>
-                          <span className="text-xl font-bold text-neutral-900">{formatUsdFromCents(totalDueCents)}</span>
+                          <span className="text-xl font-bold text-neutral-900" data-testid="registration-grand-total">
+                            {formatUsdFromCents(grandTotalCents)}
+                          </span>
                         </div>
                       </div>
 
@@ -1315,6 +1452,22 @@ export const OrgRegistrationPage: React.FC = () => {
                     <p className="text-xs text-neutral-400">
                       {formatEntryUnitSubtitle(teamSize, allowPartialTeams, tournament.capacity_unit)}
                     </p>
+                  )}
+
+                  {selectedAddOnItems.length > 0 && (
+                    <div className="mt-4 pt-3 border-t border-neutral-100 space-y-1.5">
+                      <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Add-Ons</p>
+                      {selectedAddOnItems.map(({ item, quantity }) => (
+                        <div key={item.id} className="flex justify-between text-xs text-neutral-700">
+                          <span>{quantity}× {item.name}</span>
+                          <span className="font-semibold">{formatUsdFromCents(item.price_cents * quantity)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between items-baseline pt-2 border-t border-neutral-100">
+                        <span className="text-xs font-semibold text-neutral-700">Order Total</span>
+                        <span className="text-lg font-bold text-brand-700">{formatUsdFromCents(grandTotalCents)}</span>
+                      </div>
+                    </div>
                   )}
 
                   {capacitySummary.label && (

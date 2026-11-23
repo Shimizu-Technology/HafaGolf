@@ -12,10 +12,13 @@ class RegistrationSerializer < ActiveModel::Serializer
              :stripe_card_brand, :stripe_card_last4, :stripe_account_origin,
              :refund_amount_cents, :refund_reason, :refunded_at,
              :raffle_tickets_requested, :raffle_bundle_label,
+             :add_ons_summary, :add_ons,
              :player_count, :checked_in_count, :all_checked_in, :partially_checked_in,
              :starting_position_label, :starting_hole_description,
              :team_members,
              :created_at, :updated_at
+
+  attribute :add_ons_total_cents, if: :include_add_on_prices?
 
   def display_team_name
     object.display_team_name
@@ -55,6 +58,24 @@ class RegistrationSerializer < ActiveModel::Serializer
 
   def starting_hole_description
     object.group&.starting_hole_description
+  end
+
+  def add_ons_summary
+    object.add_ons_summary
+  end
+
+  def add_ons_total_cents
+    object.add_ons_total_cents
+  end
+
+  def add_ons
+    object.add_ons_breakdown(include_prices: include_add_on_prices?)
+  end
+
+  def include_add_on_prices?
+    return true unless instance_options.key?(:include_add_on_prices)
+
+    instance_options[:include_add_on_prices] == true
   end
 
   def team_members

@@ -17,7 +17,7 @@ module Api
 
       # GET /api/v1/tournaments/:tournament_id/registrations
       def index
-        registrations = @tournament.registrations.includes(:team_members, :group, :sponsor, :employee_number_record, :tournament)
+        registrations = @tournament.registrations.includes(:team_members, :group, :sponsor, :employee_number_record, :tournament, golfer_add_ons: :tournament_add_on)
 
         status_filter = params[:registration_status].presence || params[:status].presence
         registrations = registrations.where(registration_status: status_filter) if status_filter.present?
@@ -40,9 +40,10 @@ module Api
 
         registrations = registrations.order(created_at: :desc)
         paginated = paginate(registrations)
+        can_view_finances = can_view_tournament_finances?(@tournament)
 
         render json: {
-          registrations: paginated.map { |reg| RegistrationSerializer.new(reg).as_json },
+          registrations: paginated.map { |reg| RegistrationSerializer.new(reg, include_add_on_prices: can_view_finances).as_json },
           capacity_summary: @tournament.capacity_summary,
           meta: pagination_meta(paginated)
         }
@@ -129,6 +130,15 @@ module Api
               end
             end
 
+            add_ons_result = AddOns::SelectionBuilder.resolve!(
+              tournament: tournament,
+              raw_add_ons: params[:add_ons].presence || params.dig(:registration, :add_ons)
+            )
+            unless add_ons_result.ok?
+              error_response = { errors: add_ons_result.errors, status: :unprocessable_entity }
+              raise ActiveRecord::Rollback
+            end
+
             attrs = public_registration_attributes(tournament: tournament)
             attrs[:team_members_attributes] = members_attrs
             attrs[:organization_id] = tournament.organization_id
@@ -138,9 +148,17 @@ module Api
             registration.payment_amount_cents = registration.expected_entry_fee_cents(
               player_count_override: incoming_player_count,
               employee_discount: employee_record.present?
-            )
+            ) + add_ons_result.total_cents
 
             if registration.save
+              if add_ons_result.items.any?
+                AddOns::SelectionBuilder.attach!(
+                  items: add_ons_result.items,
+                  tournament: tournament,
+                  registration: registration
+                )
+              end
+
               if employee_record
                 begin
                   employee_record.claim_for_registration!(registration, team_member: registration.captain)
@@ -191,8 +209,9 @@ module Api
 
       # GET /api/v1/registrations/:id
       def show
+        can_view_finances = can_view_tournament_finances?(@registration.tournament)
         render json: {
-          registration: RegistrationSerializer.new(@registration).as_json
+          registration: RegistrationSerializer.new(@registration, include_add_on_prices: can_view_finances).as_json
         }
       end
 
@@ -406,7 +425,7 @@ module Api
       end
 
       def set_registration
-        @registration = Registration.includes(:tournament, :group, :sponsor, :team_members).find(params[:id])
+        @registration = Registration.includes(:tournament, :group, :sponsor, :team_members, golfer_add_ons: :tournament_add_on).find(params[:id])
       end
 
       def authorize_tournament_volunteer_or_admin!
@@ -435,6 +454,13 @@ module Api
         return if current_user&.volunteer_for?(tournament.organization)
 
         render json: { error: "Forbidden: You do not have access to this tournament" }, status: :forbidden
+      end
+
+      def can_view_tournament_finances?(tournament)
+        return false unless current_user && tournament
+
+        current_user.can?(:view_reports, organization: tournament.organization, tournament: tournament) ||
+          current_user.can?(:manage_finances, organization: tournament.organization, tournament: tournament)
       end
 
       def run_public_create(org)

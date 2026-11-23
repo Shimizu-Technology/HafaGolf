@@ -11,6 +11,7 @@ class Golfer < ApplicationRecord
   has_one :registration, dependent: :nullify
   has_many :scores, dependent: :destroy
   has_many :raffle_tickets, dependent: :nullify
+  has_many :golfer_add_ons, dependent: :destroy
 
   before_destroy :release_employee_number!
 
@@ -221,9 +222,38 @@ class Golfer < ApplicationRecord
       payment_verified_by_name: admin.name || admin.email,
       payment_verified_at: Time.current
     )
-    attrs[:payment_amount_cents] = expected_entry_fee_cents(fallback: nil) if payment_amount_cents.blank?
+    if payment_amount_cents.blank?
+      base_fee = expected_entry_fee_cents(fallback: nil)
+      attrs[:payment_amount_cents] = base_fee.present? ? base_fee + add_ons_total_cents : nil
+    end
     assign_attributes(attrs)
     save!(validate: false)
+  end
+
+  def add_ons_total_cents
+    if golfer_add_ons.loaded?
+      golfer_add_ons.sum(&:line_total_cents)
+    else
+      golfer_add_ons.sum("quantity * unit_price_cents").to_i
+    end
+  end
+
+  def add_ons_summary
+    items = golfer_add_ons.loaded? ? golfer_add_ons : golfer_add_ons.includes(:tournament_add_on).to_a
+    return nil if items.empty?
+
+    items
+      .sort_by { |item| [item.tournament_add_on&.sort_order.to_i, item.id.to_i] }
+      .filter_map { |item| item.tournament_add_on&.name.present? ? "#{item.quantity}× #{item.tournament_add_on.name}" : nil }
+      .join(" · ")
+      .presence
+  end
+
+  def add_ons_breakdown(include_prices: true)
+    items = golfer_add_ons.loaded? ? golfer_add_ons : golfer_add_ons.includes(:tournament_add_on).to_a
+    items
+      .sort_by { |item| [item.tournament_add_on&.sort_order.to_i, item.id.to_i] }
+      .map { |item| item.as_summary_json(include_prices: include_prices) }
   end
 
   def employee_number

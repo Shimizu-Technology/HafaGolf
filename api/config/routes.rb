@@ -230,6 +230,7 @@ Rails.application.routes.draw do
           member do
             post :portal_link
             post :send_portal_invite
+            post :mark_check_paid
             get :slots
             patch 'slots/:slot_id', action: :update_slot, as: :update_slot
           end
@@ -239,8 +240,12 @@ Rails.application.routes.draw do
         resources :sponsor_tiers, only: [:index, :create, :update, :destroy] do
           member do
             post :checkout
+            post :reserve_check
           end
         end
+
+        # Registration Add-Ons (Super Tickets, Mulligans, Contests)
+        resources :add_ons, controller: 'tournament_add_ons', only: [:index, :create, :update, :destroy]
 
         # Standalone Donations
         get 'donations/summary' => 'donations#summary'

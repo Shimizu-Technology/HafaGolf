@@ -23,7 +23,7 @@ class SponsorTier < ApplicationRecord
   scope :online_enabled, -> { where(online_checkout_enabled: true) }
 
   def claimed_count
-    sponsors.where(payment_status: %w[paid pending])
+    sponsors.where(payment_status: %w[paid pending pending_check])
             .or(sponsors.where(active: true, payment_status: "unpaid"))
             .count
   end

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@clerk/react';
 import {
-  ChevronDown, ChevronUp, Copy, Edit, ExternalLink, Mail, Save, SlidersHorizontal, Trash2, Users,
+  CheckCircle2, ChevronDown, ChevronUp, Copy, Edit, ExternalLink, FileText, Mail, Save, SlidersHorizontal, Trash2, Users,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { SponsorMonogram } from './SponsorMonogram';
@@ -48,10 +48,11 @@ export const SponsorAdminCard: React.FC<{
   onDelete: () => void;
   onSendInvite: () => Promise<void>;
   onQuickSave: (changes: SponsorQuickEdit) => Promise<boolean>;
+  onMarkCheckPaid?: (payload: { check_number?: string; check_notes?: string }) => Promise<boolean>;
   onSlotsFilledChange: (sponsorId: number, slotsFilled: number, highestFilledSlot?: number) => void;
 }> = ({
   sponsor, tournamentId, teamSize, handicapRequired = false, courseConfigs, expanded, onToggleExpand, onEdit, onDelete,
-  onSendInvite, onQuickSave, onSlotsFilledChange,
+  onSendInvite, onQuickSave, onMarkCheckPaid, onSlotsFilledChange,
 }) => {
   const { getToken } = useAuth();
   const status = portalStatus(sponsor.slot_count, sponsor.slots_filled);
@@ -67,6 +68,27 @@ export const SponsorAdminCard: React.FC<{
   const [quickEditOpen, setQuickEditOpen] = useState(false);
   const [quickSaving, setQuickSaving] = useState(false);
   const [quickForm, setQuickForm] = useState<SponsorQuickEdit>(() => quickFormFor(sponsor));
+  const [markPaidOpen, setMarkPaidOpen] = useState(false);
+  const [checkNumber, setCheckNumber] = useState(sponsor.check_number || '');
+  const [checkNotes, setCheckNotes] = useState(sponsor.check_notes || '');
+  const [markingPaid, setMarkingPaid] = useState(false);
+
+  const isPendingCheck = sponsor.payment_status === 'pending_check';
+
+  const handleConfirmCheckPaid = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onMarkCheckPaid) return;
+    setMarkingPaid(true);
+    try {
+      const ok = await onMarkCheckPaid({
+        check_number: checkNumber.trim() || undefined,
+        check_notes: checkNotes.trim() || undefined,
+      });
+      if (ok) setMarkPaidOpen(false);
+    } finally {
+      setMarkingPaid(false);
+    }
+  };
 
   const holeCourse = courseConfigs.find((course) => course.key === sponsor.course_key) || courseConfigs[0];
 
@@ -133,12 +155,31 @@ export const SponsorAdminCard: React.FC<{
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="truncate text-base font-semibold text-gray-900">{sponsor.name}</h3>
-              {!sponsor.active && (
+              {isPendingCheck && (
+                <span
+                  data-testid="sponsor-pending-check-badge"
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-900 ring-1 ring-inset ring-amber-300"
+                >
+                  <FileText className="h-3 w-3" aria-hidden="true" />
+                  Pending Check
+                  {sponsor.payment_amount_cents != null && ` · $${(sponsor.payment_amount_cents / 100).toLocaleString()}`}
+                </span>
+              )}
+              {sponsor.payment_status === 'paid' && sponsor.payment_type === 'check' && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 ring-1 ring-inset ring-emerald-200">
+                  <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                  Paid by Check{sponsor.check_number ? ` #${sponsor.check_number}` : ''}
+                </span>
+              )}
+              {!sponsor.active && !isPendingCheck && (
                 <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600 ring-1 ring-inset ring-gray-200">
                   Hidden
                 </span>
               )}
             </div>
+            {sponsor.invoice_number && (
+              <p className="text-xs font-mono text-gray-500">Invoice: {sponsor.invoice_number}</p>
+            )}
             <p className="text-sm text-gray-600">{sponsor.display_label}</p>
             <p className="flex items-center gap-1.5 text-sm text-gray-700">
               <Mail className="h-4 w-4 flex-shrink-0 text-gray-400" aria-hidden="true" />
@@ -162,6 +203,17 @@ export const SponsorAdminCard: React.FC<{
         </div>
 
         <div className="flex flex-col gap-2 lg:w-[22rem]">
+          {isPendingCheck && onMarkCheckPaid && (
+            <button
+              type="button"
+              data-testid="mark-check-paid-btn"
+              onClick={() => setMarkPaidOpen((prev) => !prev)}
+              className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-700`}
+            >
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              Mark Paid &amp; Activate
+            </button>
+          )}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
               type="button"
@@ -238,6 +290,59 @@ export const SponsorAdminCard: React.FC<{
           </div>
         </div>
       </div>
+
+      {markPaidOpen && isPendingCheck && onMarkCheckPaid && (
+        <form onSubmit={handleConfirmCheckPaid} className="border-t border-amber-200 bg-amber-50/70 p-4" aria-label={`Mark check paid for ${sponsor.name}`}>
+          <p className="text-sm font-semibold text-amber-950 mb-3">
+            Record Check Payment &amp; Activate {sponsor.name}
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor={`check-num-${sponsor.id}`} className="mb-1 block text-xs font-medium text-gray-700">
+                Check Number (optional)
+              </label>
+              <input
+                id={`check-num-${sponsor.id}`}
+                type="text"
+                value={checkNumber}
+                onChange={(e) => setCheckNumber(e.target.value)}
+                placeholder="e.g., 1042"
+                className={`${inputClass} bg-white`}
+              />
+            </div>
+            <div>
+              <label htmlFor={`check-notes-${sponsor.id}`} className="mb-1 block text-xs font-medium text-gray-700">
+                Receipt Notes (optional)
+              </label>
+              <input
+                id={`check-notes-${sponsor.id}`}
+                type="text"
+                value={checkNotes}
+                onChange={(e) => setCheckNotes(e.target.value)}
+                placeholder="Received by treasurer"
+                className={`${inputClass} bg-white`}
+              />
+            </div>
+          </div>
+          <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setMarkPaidOpen(false)}
+              className={`${actionButtonClass} border border-gray-300 bg-white text-gray-700 hover:bg-gray-100`}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={markingPaid}
+              className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-700`}
+            >
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              {markingPaid ? 'Activating…' : 'Confirm Payment & Activate'}
+            </button>
+          </div>
+        </form>
+      )}
 
       {quickEditOpen && (
         <form onSubmit={saveQuickEdit} className="border-t border-gray-100 bg-gray-50 p-4" aria-label={`Quick edit ${sponsor.name}`}>

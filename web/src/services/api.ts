@@ -180,6 +180,9 @@ export interface Registration {
   refunded_at: string | null;
   raffle_tickets_requested: number;
   raffle_bundle_label: string | null;
+  add_ons_summary?: string | null;
+  add_ons_total_cents?: number;
+  add_ons?: GolferAddOnItem[];
   player_count: number;
   checked_in_count: number;
   all_checked_in: boolean;
@@ -222,6 +225,7 @@ export interface CreateRegistrationPayload {
   is_employee?: boolean;
   employee_number?: string;
   organization_slug?: string;
+  add_ons?: Array<{ add_on_id: number; quantity: number }>;
 }
 
 export interface CreateRegistrationResponse {
@@ -337,6 +341,7 @@ export interface Tournament {
   waiver_text?: string | null;
   show_public_sponsors?: boolean;
   sponsor_wall_title?: string | null;
+  allow_sponsor_check_invoice?: boolean;
   theme_preset?: 'default-clean' | 'charity-bright' | 'memorial-formal' | 'crest-classic' | 'classic' | 'premium' | 'minimal' | 'event';
   use_org_branding?: boolean;
   homepage_config?: import('../utils/homepageConfig').HomepageConfig;
@@ -487,6 +492,10 @@ export interface Golfer {
   payment_verified_at: string | null;
   payment_verified_by_name: string | null;
   checked_in_by_name: string | null;
+  // Registration add-ons
+  add_ons_summary?: string | null;
+  add_ons_total_cents?: number;
+  add_ons?: GolferAddOnItem[];
 }
 
 export interface PaymentReportSummary {
@@ -2022,6 +2031,102 @@ export class ApiClient {
     });
   }
 
+  async reserveSponsorTierByCheck(
+    tournamentId: number,
+    tierId: number,
+    payload: {
+      name: string;
+      email: string;
+      website_url?: string;
+      description?: string;
+      logoFile?: File | null;
+    }
+  ): Promise<SponsorCheckReservationResponse> {
+    if (payload.logoFile) {
+      const formData = new FormData();
+      formData.append('name', payload.name);
+      formData.append('email', payload.email);
+      if (payload.website_url) formData.append('website_url', payload.website_url);
+      if (payload.description) formData.append('description', payload.description);
+      formData.append('logo', payload.logoFile);
+
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/tournaments/${tournamentId}/sponsor_tiers/${tierId}/reserve_check`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Request failed' }));
+        throw new Error(error.errors?.[0] || error.error || error.message || 'Request failed');
+      }
+      return response.json();
+    }
+
+    return this.request(
+      `/api/v1/tournaments/${tournamentId}/sponsor_tiers/${tierId}/reserve_check`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          sponsor: {
+            name: payload.name,
+            email: payload.email,
+            website_url: payload.website_url,
+            description: payload.description,
+          },
+        }),
+      },
+      false
+    );
+  }
+
+  async markSponsorCheckPaid(
+    tournamentId: number,
+    sponsorId: number,
+    payload?: { check_number?: string; check_notes?: string }
+  ): Promise<{ sponsor: Record<string, unknown>; message: string }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/sponsors/${sponsorId}/mark_check_paid`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
+  // Registration Add-Ons (Super Tickets, Mulligans, Contests)
+  async getTournamentAddOns(tournamentId: number, authenticated = false): Promise<{ add_ons: TournamentAddOn[] }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/add_ons`, {}, authenticated);
+  }
+
+  async createTournamentAddOn(
+    tournamentId: number,
+    payload: TournamentAddOnInput
+  ): Promise<{ add_on: TournamentAddOn; message: string }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/add_ons`, {
+      method: 'POST',
+      body: JSON.stringify({ add_on: payload }),
+    });
+  }
+
+  async updateTournamentAddOn(
+    tournamentId: number,
+    addOnId: number,
+    payload: Partial<TournamentAddOnInput>
+  ): Promise<{ add_on: TournamentAddOn; message: string }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/add_ons/${addOnId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ add_on: payload }),
+    });
+  }
+
+  async deleteTournamentAddOn(
+    tournamentId: number,
+    addOnId: number
+  ): Promise<{ deleted?: boolean; deactivated?: boolean; add_on?: TournamentAddOn; message: string }> {
+    return this.request(`/api/v1/tournaments/${tournamentId}/add_ons/${addOnId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Standalone Donations
   async getDonationsSummary(tournamentId: number): Promise<DonationSummaryResponse> {
     return this.request(`/api/v1/tournaments/${tournamentId}/donations/summary`);
@@ -2120,10 +2225,94 @@ export interface SponsorTiersListResponse {
   sponsor_tiers: PricedSponsorTier[];
   payment_mode: string;
   external_checkout_url: string | null;
+  allow_sponsor_check_invoice?: boolean;
+  checks_payable_to?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  organization_name?: string | null;
+  tournament_name?: string | null;
+  event_date?: string | null;
+  location_name?: string | null;
   tax_receipt_enabled: boolean;
   fmv_per_player_cents: number;
   tax_org_name: string | null;
   tax_org_ein: string | null;
+}
+
+export interface SponsorCheckInvoice {
+  invoice_number: string;
+  invoiced_at: string | null;
+  status: string;
+  organization_name: string;
+  tournament_name: string;
+  event_date: string | null;
+  location_name: string | null;
+  checks_payable_to: string;
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  sponsor_name: string;
+  sponsor_email: string;
+  sponsor_website_url: string | null;
+  sponsor_logo_url: string | null;
+  tier_label: string;
+  tier_description: string | null;
+  included_player_slots: number;
+  benefits: string[];
+  amount_cents: number;
+  tax_receipt: TaxReceiptPayload | null;
+}
+
+export interface SponsorCheckReservationResponse {
+  sponsor: SponsorTierCheckoutResponse['sponsor'] & {
+    invoice_number: string;
+    invoiced_at: string | null;
+    logo_url: string | null;
+  };
+  invoice: SponsorCheckInvoice;
+  message: string;
+}
+
+export type TournamentAddOnCategory = 'mulligans' | 'contest' | 'super_ticket' | 'raffle_bundle' | 'other';
+
+export interface TournamentAddOn {
+  id: number;
+  organization_id: string;
+  tournament_id: number;
+  name: string;
+  description: string | null;
+  price_cents: number;
+  max_quantity_per_order: number;
+  max_total_quantity: number | null;
+  remaining_quantity: number | null;
+  sold_out: boolean;
+  sold_quantity?: number;
+  revenue_cents?: number;
+  category: TournamentAddOnCategory;
+  active: boolean;
+  sort_order: number;
+}
+
+export interface TournamentAddOnInput {
+  name: string;
+  description?: string | null;
+  price_cents: number;
+  max_quantity_per_order?: number;
+  max_total_quantity?: number | null;
+  category?: TournamentAddOnCategory;
+  active?: boolean;
+  sort_order?: number;
+}
+
+export interface GolferAddOnItem {
+  id: number;
+  tournament_add_on_id: number;
+  name: string;
+  category: TournamentAddOnCategory;
+  quantity: number;
+  unit_price_cents?: number;
+  line_total_cents?: number;
 }
 
 export interface SponsorTierCheckoutResponse {

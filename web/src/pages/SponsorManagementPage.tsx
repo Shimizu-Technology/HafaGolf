@@ -226,6 +226,34 @@ export const SponsorManagementPage: React.FC = () => {
     }
   };
 
+  const handleMarkCheckPaid = async (
+    sponsor: AdminSponsor,
+    payload: { check_number?: string; check_notes?: string }
+  ): Promise<boolean> => {
+    if (!tournament) return false;
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_URL}/api/v1/tournaments/${tournament.id}/sponsors/${sponsor.id}/mark_check_paid`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error(apiErrorMessage(data, 'Could not mark check paid.'));
+        return false;
+      }
+      if (data?.sponsor) {
+        replaceSponsor(data.sponsor);
+      }
+      toast.success('Sponsor check marked paid and activated');
+      return true;
+    } catch {
+      toast.error('Could not mark check paid.');
+      return false;
+    }
+  };
+
   const handleToggleWall = async () => {
     if (!tournament) return;
     const next = !tournament.show_public_sponsors;
@@ -485,6 +513,7 @@ export const SponsorManagementPage: React.FC = () => {
                     onDelete={() => handleDelete(sponsor)}
                     onSendInvite={() => handleSendInvite(sponsor)}
                     onQuickSave={(changes) => handleQuickSave(sponsor, changes)}
+                    onMarkCheckPaid={(payload) => handleMarkCheckPaid(sponsor, payload)}
                     onSlotsFilledChange={handleSponsorSlotsFilledChange}
                   />
                 ))}

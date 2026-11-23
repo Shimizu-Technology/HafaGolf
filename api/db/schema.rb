@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_23_160000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_23_170000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -111,6 +111,26 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_160000) do
     t.index ["tournament_id"], name: "index_employee_numbers_on_tournament_id"
     t.index ["used_by_golfer_id"], name: "index_employee_numbers_on_used_by_golfer_id"
     t.index ["used_by_registration_id"], name: "index_employee_numbers_on_used_by_registration_id"
+  end
+
+  create_table "golfer_add_ons", force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id", null: false
+    t.bigint "golfer_id"
+    t.bigint "registration_id"
+    t.bigint "tournament_add_on_id", null: false
+    t.integer "quantity", default: 1, null: false
+    t.integer "unit_price_cents", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["golfer_id"], name: "index_golfer_add_ons_on_golfer_id"
+    t.index ["organization_id"], name: "index_golfer_add_ons_on_organization_id"
+    t.index ["registration_id"], name: "index_golfer_add_ons_on_registration_id"
+    t.index ["tournament_add_on_id"], name: "index_golfer_add_ons_on_tournament_add_on_id"
+    t.index ["tournament_id"], name: "index_golfer_add_ons_on_tournament_id"
+    t.check_constraint "golfer_id IS NOT NULL OR registration_id IS NOT NULL", name: "chk_golfer_add_ons_owner_present"
+    t.check_constraint "quantity > 0", name: "chk_golfer_add_ons_quantity_positive"
+    t.check_constraint "unit_price_cents >= 0", name: "chk_golfer_add_ons_unit_price_non_negative"
   end
 
   create_table "golfers", force: :cascade do |t|
@@ -554,7 +574,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_160000) do
     t.string "legacy_source"
     t.string "legacy_id"
     t.datetime "portal_link_issued_at"
+    t.string "invoice_number"
+    t.string "check_number"
+    t.text "check_notes"
+    t.datetime "invoiced_at"
     t.index ["access_token"], name: "index_sponsors_on_access_token", unique: true, where: "(access_token IS NOT NULL)"
+    t.index ["invoice_number"], name: "index_sponsors_on_invoice_number", unique: true, where: "(invoice_number IS NOT NULL)"
     t.index ["sponsor_tier_id"], name: "index_sponsors_on_sponsor_tier_id"
     t.index ["stripe_checkout_session_id"], name: "index_sponsors_on_stripe_checkout_session_id", unique: true, where: "(stripe_checkout_session_id IS NOT NULL)"
     t.index ["tournament_id", "course_key", "hole_number"], name: "index_sponsors_on_tournament_id_and_course_key_and_hole_number"
@@ -602,6 +627,27 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_160000) do
     t.index ["sponsor_slot_id"], name: "index_team_members_on_sponsor_slot_id_unique", unique: true, where: "(sponsor_slot_id IS NOT NULL)"
     t.index ["tournament_id"], name: "index_team_members_on_tournament_id"
     t.check_constraint "\"position\" >= 1 AND \"position\" <= 4", name: "check_team_members_position_range"
+  end
+
+  create_table "tournament_add_ons", force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id", null: false
+    t.string "name", null: false
+    t.text "description"
+    t.integer "price_cents", default: 0, null: false
+    t.integer "max_quantity_per_order", default: 4, null: false
+    t.integer "max_total_quantity"
+    t.string "category", default: "super_ticket", null: false
+    t.boolean "active", default: true, null: false
+    t.integer "sort_order", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["organization_id"], name: "index_tournament_add_ons_on_organization_id"
+    t.index ["tournament_id", "active", "sort_order"], name: "index_tournament_add_ons_on_tournament_active_sort"
+    t.index ["tournament_id"], name: "index_tournament_add_ons_on_tournament_id"
+    t.check_constraint "max_quantity_per_order > 0", name: "chk_tournament_add_ons_max_per_order_positive"
+    t.check_constraint "max_total_quantity IS NULL OR max_total_quantity > 0", name: "chk_tournament_add_ons_max_total_positive"
+    t.check_constraint "price_cents >= 0", name: "chk_tournament_add_ons_price_non_negative"
   end
 
   create_table "tournament_assignments", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -768,6 +814,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_160000) do
     t.boolean "show_public_sponsors", default: true, null: false
     t.string "sponsor_wall_title"
     t.jsonb "homepage_config", default: {}, null: false
+    t.boolean "allow_sponsor_check_invoice", default: true, null: false
     t.index ["early_bird_deadline"], name: "index_tournaments_on_early_bird_deadline"
     t.index ["event_type"], name: "index_tournaments_on_event_type"
     t.index ["organization_id", "slug"], name: "index_tournaments_on_organization_id_and_slug", unique: true
@@ -802,6 +849,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_160000) do
   add_foreign_key "employee_numbers", "organizations", on_delete: :cascade
   add_foreign_key "employee_numbers", "registrations", column: "used_by_registration_id", on_delete: :nullify
   add_foreign_key "employee_numbers", "tournaments", on_delete: :cascade
+  add_foreign_key "golfer_add_ons", "golfers", on_delete: :cascade
+  add_foreign_key "golfer_add_ons", "organizations", on_delete: :cascade
+  add_foreign_key "golfer_add_ons", "registrations", on_delete: :cascade
+  add_foreign_key "golfer_add_ons", "tournament_add_ons", on_delete: :restrict
+  add_foreign_key "golfer_add_ons", "tournaments", on_delete: :cascade
   add_foreign_key "golfers", "employee_numbers", column: "employee_number_record_id", on_delete: :nullify
   add_foreign_key "golfers", "groups"
   add_foreign_key "golfers", "sponsors"
@@ -846,6 +898,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_160000) do
   add_foreign_key "team_members", "registrations"
   add_foreign_key "team_members", "sponsor_slots", on_delete: :nullify
   add_foreign_key "team_members", "tournaments"
+  add_foreign_key "tournament_add_ons", "organizations", on_delete: :cascade
+  add_foreign_key "tournament_add_ons", "tournaments", on_delete: :cascade
   add_foreign_key "tournament_assignments", "tournaments"
   add_foreign_key "tournament_assignments", "users"
   add_foreign_key "tournament_payouts", "organizations", on_delete: :cascade

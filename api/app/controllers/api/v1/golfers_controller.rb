@@ -20,7 +20,7 @@ module Api
         tournament = find_tournament
         return render_tournament_required unless tournament
 
-        golfers = tournament.golfers.includes(:group)
+        golfers = tournament.golfers.includes(:group, golfer_add_ons: :tournament_add_on)
 
         # Apply filters
         golfers = golfers.where(payment_status: params[:payment_status]) if params[:payment_status].present?
@@ -67,7 +67,7 @@ module Api
 
       # GET /api/v1/golfers/:id
       def show
-        golfer = Golfer.includes(:group).find(params[:id])
+        golfer = Golfer.includes(:group, golfer_add_ons: :tournament_add_on).find(params[:id])
         render json: golfer
       end
 
@@ -162,15 +162,35 @@ module Api
               end
             end
 
+            add_ons_result = AddOns::SelectionBuilder.resolve!(
+              tournament: tournament,
+              raw_add_ons: params[:add_ons].presence || params.dig(:golfer, :add_ons)
+            )
+            unless add_ons_result.ok?
+              error_response = { errors: add_ons_result.errors, status: :unprocessable_entity }
+              raise ActiveRecord::Rollback
+            end
+
             if employee_record
               golfer.is_employee = true
               golfer.employee_number_record = employee_record
-              golfer.payment_amount_cents = tournament.employee_entry_fee if tournament.employee_entry_fee.present?
+              golfer.payment_amount_cents = tournament.employee_entry_fee.to_i + add_ons_result.total_cents if tournament.employee_entry_fee.present?
             else
               golfer.is_employee = false
               golfer.employee_number_record = nil
+              if add_ons_result.total_cents.positive?
+                golfer.payment_amount_cents = golfer.expected_entry_fee_cents + add_ons_result.total_cents
+              end
             end
             if golfer.save
+              if add_ons_result.items.any?
+                AddOns::SelectionBuilder.attach!(
+                  items: add_ons_result.items,
+                  tournament: tournament,
+                  golfer: golfer
+                )
+              end
+
               if employee_record
                 begin
                   employee_record.claim!(golfer)
