@@ -105,7 +105,11 @@ describe('public theme pack layouts', () => {
     expect(mount.textContent).toContain('Support the Cause');
     expect(mount.textContent).toContain('View Raffle Board');
     expect(mount.textContent).toContain('Donate Now');
-    expect(mount.textContent!.indexOf('Community Partners')).toBeLessThan(mount.textContent!.indexOf('Tournament Details'));
+    const partnersIndex = mount.textContent!.indexOf('Community Partners');
+    const detailsIndex = mount.textContent!.indexOf('Tournament Details');
+    expect(partnersIndex).toBeGreaterThanOrEqual(0);
+    expect(detailsIndex).toBeGreaterThanOrEqual(0);
+    expect(partnersIndex).toBeLessThan(detailsIndex);
   });
 
   it('shows crest artwork, registration progress and foursome, tier, and donation actions', async () => {

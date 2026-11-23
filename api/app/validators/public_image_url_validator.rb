@@ -12,7 +12,8 @@ class PublicImageUrlValidator < ActiveModel::EachValidator
       return false unless uri.host.nil? && uri.path.to_s.match?(%r{\A/(?:images|rails/active_storage)/.+})
 
       decoded_path = URI::DEFAULT_PARSER.unescape(uri.path)
-      decoded_path.match?(%r{\A/(?:images|rails/active_storage)/.+}) &&
+      decoded_path.valid_encoding? &&
+        decoded_path.match?(%r{\A/(?:images|rails/active_storage)/.+}) &&
         !decoded_path.match?(/[[:cntrl:]\\]/) &&
         decoded_path.split("/").none? { |part| %w[. ..].include?(part) }
     end

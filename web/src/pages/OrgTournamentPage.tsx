@@ -103,7 +103,8 @@ export function OrgTournamentPage() {
   const isCharity = pack.id === 'charity-bright';
   const isCrest = pack.id === 'crest-classic';
   const featuredActions = isCharity || isCrest;
-  const canJoinFoursome = isCrest && tournament.team_size === 4 && tournament.can_register;
+  const isWaitlistOnly = Boolean((tournament.at_capacity || tournament.public_at_capacity) && tournament.waitlist_enabled);
+  const canJoinFoursome = isCrest && tournament.team_size === 4 && tournament.can_register && !isWaitlistOnly;
   const sponsorShowcase = <PublicSponsors tournament={tournament} pack={pack} />;
   const registrationHref = `/${tournamentSlug}/register`;
 
@@ -203,7 +204,7 @@ export function OrgTournamentPage() {
         status={<span className={`${pack.surfaces.badgeClass} py-1.5 text-sm ${status.bg} ${status.text}`}>{status.label}</span>}
         action={tournament.can_register && (
           <Link to={registrationHref} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-brand-600 px-5 text-sm font-semibold text-brand-foreground ring-1 ring-white/50 hover:bg-brand-700">
-            {isCrest && tournament.team_size === 4 ? 'Register a Foursome' : 'Register to Play'}
+            {isWaitlistOnly ? 'Join Waitlist' : isCrest && tournament.team_size === 4 ? 'Register a Foursome' : 'Register to Play'}
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </Link>
         )}

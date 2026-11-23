@@ -42,7 +42,7 @@ export function MemorialFormalHero({
   pack, title, organizerName, edition, eventLine, status, action, organizationLogoUrl, logoUrl, emblemUrl,
   commemorativeBannerUrl, tributeTitle, tributeSubtitle, photoUrl,
 }: TournamentThemeHeroProps) {
-  const logo = organizationLogoUrl || logoUrl;
+  const logo = logoUrl || organizationLogoUrl;
 
   return (
     <div className="border-b border-[#d8ccae] bg-gradient-to-b from-white to-[#f5f4ee] text-[#1e3553]">
@@ -80,7 +80,7 @@ export function MemorialFormalHero({
 export function CharityBrightHero({
   pack, title, organizerName, edition, eventLine, status, action, organizationLogoUrl, logoUrl, reversedLogoUrl, photoUrl,
 }: TournamentThemeHeroProps) {
-  const normalLogo = organizationLogoUrl || logoUrl;
+  const normalLogo = logoUrl || organizationLogoUrl;
   const logo = reversedLogoUrl || normalLogo;
 
   return (

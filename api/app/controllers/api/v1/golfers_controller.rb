@@ -125,7 +125,11 @@ module Api
             if tournament.waiver_enabled? && ActiveModel::Type::Boolean.new.cast(params[:waiver_accepted])
               golfer.waiver_accepted_at = Time.current
             end
-            golfer.partner_waiver_accepted_at = nil unless tournament.waiver_enabled?
+            if tournament.waiver_enabled? && golfer.partner_name.present? && ActiveModel::Type::Boolean.new.cast(params[:partner_waiver_accepted])
+              golfer.partner_waiver_accepted_at = Time.current
+            else
+              golfer.partner_waiver_accepted_at = nil
+            end
             incoming_players = golfer.partner_name.present? ? 2 : 1
 
             # Re-check unified registration capacity (golfers + registrations/team_members) after acquiring lock
