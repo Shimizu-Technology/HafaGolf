@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { selectAdminOrganization } from '../OrganizationProvider';
+import {
+  selectAdminOrganization,
+  shouldShowPublicOrganizationLoading,
+} from '../OrganizationProvider';
 import { getSafeHttpUrl } from '../../pages/OffseasonPage';
 import type { Organization } from '../../stores/organizationStore';
 
@@ -21,6 +24,27 @@ describe('selectAdminOrganization', () => {
 
   it('returns null cleanly when no organizations exist yet', () => {
     expect(selectAdminOrganization([], 'alpha-golf', null)).toBeNull();
+  });
+});
+
+describe('shouldShowPublicOrganizationLoading', () => {
+  it('holds rendering before initial host-based tenant resolution completes, even with cached org', () => {
+    expect(shouldShowPublicOrganizationLoading('host:fd-golf.example.com', null, false)).toBe(true);
+    expect(shouldShowPublicOrganizationLoading('host:fd-golf.example.com', null, true)).toBe(true);
+  });
+
+  it('releases loading once resolution completes for the current host or slug', () => {
+    expect(shouldShowPublicOrganizationLoading('host:fd-golf.example.com', 'host:fd-golf.example.com', false)).toBe(false);
+    expect(shouldShowPublicOrganizationLoading('slug:alpha-golf', 'slug:alpha-golf', false)).toBe(false);
+  });
+
+  it('holds rendering when navigating to a different explicit org slug or host target', () => {
+    expect(shouldShowPublicOrganizationLoading('slug:beta-charity', 'slug:alpha-golf', false)).toBe(true);
+    expect(shouldShowPublicOrganizationLoading('host:other.example.com', 'host:fd-golf.example.com', false)).toBe(true);
+  });
+
+  it('keeps loading active if store reports isLoading while refetching the same target', () => {
+    expect(shouldShowPublicOrganizationLoading('slug:alpha-golf', 'slug:alpha-golf', true)).toBe(true);
   });
 });
 
