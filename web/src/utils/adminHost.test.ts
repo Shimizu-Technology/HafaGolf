@@ -4,10 +4,13 @@ import {
   DEFAULT_ADMIN_ORIGIN,
   getAdminHostname,
   getAdminOrigin,
+  getOrganizerConsoleHref,
+  isPlatformHomeUrl,
   isAdminHost,
   isDedicatedAdminHost,
   isLocalDevHost,
   shouldRedirectToAdminOrigin,
+  shouldRenderPlatformHome,
 } from './adminHost';
 
 describe('adminHost utilities', () => {
@@ -51,5 +54,35 @@ describe('adminHost utilities', () => {
     expect(
       buildAdminRedirectUrl('/admin', '?org=other-org', '', DEFAULT_ADMIN_ORIGIN, 'island-club')
     ).toBe('https://golf.shimizu-technology.com/admin?org=other-org');
+  });
+
+  it('shows the platform homepage at / on the admin host and bare local dev only', () => {
+    expect(shouldRenderPlatformHome('golf.shimizu-technology.com', '', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(true);
+    expect(shouldRenderPlatformHome('golf.shimizu-technology.com', '?org=island-club', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(true);
+
+    expect(shouldRenderPlatformHome('localhost', '', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(true);
+    expect(shouldRenderPlatformHome('127.0.0.1', '', '', DEFAULT_ADMIN_ORIGIN)).toBe(true);
+    expect(shouldRenderPlatformHome('localhost', '?org=sample-club', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(false);
+    expect(shouldRenderPlatformHome('localhost', '', 'sample-club', DEFAULT_ADMIN_ORIGIN)).toBe(false);
+
+    expect(shouldRenderPlatformHome('club.example.com', '', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(false);
+    expect(shouldRenderPlatformHome('', '', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(false);
+  });
+
+  it('points organizer sign-in at /admin on admin hosts and the admin origin elsewhere', () => {
+    expect(getOrganizerConsoleHref('golf.shimizu-technology.com', DEFAULT_ADMIN_ORIGIN)).toBe('/admin');
+    expect(getOrganizerConsoleHref('localhost', DEFAULT_ADMIN_ORIGIN)).toBe('/admin');
+    expect(getOrganizerConsoleHref('club.example.com', DEFAULT_ADMIN_ORIGIN)).toBe(
+      'https://golf.shimizu-technology.com/admin'
+    );
+  });
+
+  it('recognizes platform homepage URLs so they can skip the API service check', () => {
+    expect(isPlatformHomeUrl('club.example.com', '/platform', '', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(true);
+    expect(isPlatformHomeUrl('club.example.com', '/about/', '', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(true);
+    expect(isPlatformHomeUrl('golf.shimizu-technology.com', '/', '', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(true);
+    expect(isPlatformHomeUrl('golf.shimizu-technology.com', '/admin', '', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(false);
+    expect(isPlatformHomeUrl('club.example.com', '/', '', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(false);
+    expect(isPlatformHomeUrl('localhost', '/', '?org=sample-club', undefined, DEFAULT_ADMIN_ORIGIN)).toBe(false);
   });
 });
