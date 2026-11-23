@@ -65,16 +65,11 @@ async function flush() {
 describe('BroadcastsPage', () => {
   it('loads preview counts, applies templates, requires ConfirmDialog, and updates history on dry-run submit', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string, opts?: RequestInit) => {
-      if (url.includes('/api/v1/admin/organizations/island-golf/tournaments/classic-2027')) {
-        return {
-          ok: true,
-          json: async () => ({ tournament: { id: 88, name: 'Island Classic 2027', slug: 'classic-2027' } }),
-        };
-      }
-      if (url.endsWith('/api/v1/tournaments/88/broadcasts') && (!opts?.method || opts.method === 'GET')) {
+      if (url.endsWith('/api/v1/admin/organizations/island-golf/tournaments/classic-2027/broadcasts') && (!opts?.method || opts.method === 'GET')) {
         return {
           ok: true,
           json: async () => ({
+            tournament: { id: 88, name: 'Island Classic 2027', slug: 'classic-2027' },
             announcements: [],
             groups: [{ id: 1, group_number: 1, hole_number: 1, hole_position_label: '1A' }],
             config: { email_configured: false, sms_configured: false, local_dry_run_mode: true },
@@ -189,16 +184,11 @@ describe('BroadcastsPage', () => {
   it('clears stale preview and disables submit while a channel preview request fails or is pending', async () => {
     let previewCall = 0;
     const fetchMock = vi.fn().mockImplementation(async (url: string, opts?: RequestInit) => {
-      if (url.includes('/api/v1/admin/organizations/island-golf/tournaments/classic-2027')) {
-        return {
-          ok: true,
-          json: async () => ({ tournament: { id: 88, name: 'Island Classic 2027', slug: 'classic-2027' } }),
-        };
-      }
-      if (url.endsWith('/api/v1/tournaments/88/broadcasts') && (!opts?.method || opts.method === 'GET')) {
+      if (url.endsWith('/api/v1/admin/organizations/island-golf/tournaments/classic-2027/broadcasts') && (!opts?.method || opts.method === 'GET')) {
         return {
           ok: true,
           json: async () => ({
+            tournament: { id: 88, name: 'Island Classic 2027', slug: 'classic-2027' },
             announcements: [],
             groups: [],
             config: { email_configured: true, sms_configured: false, local_dry_run_mode: false },

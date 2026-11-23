@@ -145,6 +145,8 @@ export const BroadcastsPage: React.FC = () => {
 
   const [preview, setPreview] = useState<BroadcastPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewRetryNonce, setPreviewRetryNonce] = useState(0);
   const [sending, setSending] = useState(false);
 
   const startLoad = useLatestRequest(`${orgSlug}/${tournamentSlug}`);
@@ -161,19 +163,10 @@ export const BroadcastsPage: React.FC = () => {
       if (!isCurrent()) return;
       const headers = { Authorization: `Bearer ${token}` };
 
-      const eventRes = await fetch(
-        `${API_URL}/api/v1/admin/organizations/${orgSlug}/tournaments/${tournamentSlug}`,
+      const bcastRes = await fetch(
+        `${API_URL}/api/v1/admin/organizations/${orgSlug}/tournaments/${tournamentSlug}/broadcasts`,
         { headers }
       );
-      if (!eventRes.ok) throw new Error('Could not load tournament details.');
-      const eventData = await eventRes.json();
-      if (!isCurrent()) return;
-
-      const t = eventData.tournament || eventData;
-      setTournamentId(t.id);
-      setTournamentName(t.name || '');
-
-      const bcastRes = await fetch(`${API_URL}/api/v1/tournaments/${t.id}/broadcasts`, { headers });
       if (!bcastRes.ok) {
         const errBody = await bcastRes.json().catch(() => null);
         throw new Error(errBody?.error || 'Could not load broadcast announcements.');
@@ -181,6 +174,10 @@ export const BroadcastsPage: React.FC = () => {
       const bcastData = await bcastRes.json();
       if (!isCurrent()) return;
 
+      if (bcastData.tournament) {
+        setTournamentId(bcastData.tournament.id);
+        setTournamentName(bcastData.tournament.name || '');
+      }
       setAnnouncements(bcastData.announcements || []);
       setGroups(bcastData.groups || []);
       if (bcastData.config) {
@@ -202,6 +199,7 @@ export const BroadcastsPage: React.FC = () => {
   useEffect(() => {
     if (!tournamentId) return;
     const isCurrent = startPreview();
+    setPreviewError(null);
 
     if (audience === 'specific_groups' && selectedGroupIds.length === 0) {
       setPreviewLoading(false);
@@ -245,19 +243,25 @@ export const BroadcastsPage: React.FC = () => {
           }),
         });
         if (!res.ok) {
-          if (isCurrent()) setPreview(null);
+          if (isCurrent()) {
+            setPreview(null);
+            setPreviewError("Couldn't count recipients.");
+          }
           return;
         }
         const data = await res.json();
         if (!isCurrent()) return;
         setPreview(data);
       } catch {
-        if (isCurrent()) setPreview(null);
+        if (isCurrent()) {
+          setPreview(null);
+          setPreviewError("Couldn't count recipients.");
+        }
       } finally {
         if (isCurrent()) setPreviewLoading(false);
       }
     })();
-  }, [tournamentId, audience, channel, selectedGroupIds, config.email_configured, config.sms_configured, startPreview]);
+  }, [tournamentId, audience, channel, selectedGroupIds, config.email_configured, config.sms_configured, previewRetryNonce, startPreview]);
 
   const toggleGroupSelection = (groupId: number) => {
     setSelectedGroupIds((prev) =>
@@ -482,6 +486,19 @@ export const BroadcastsPage: React.FC = () => {
                 ))}
               </select>
 
+              {previewError && (
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  <span>{previewError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewRetryNonce((n) => n + 1)}
+                    className="font-semibold underline hover:text-red-950"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
               {preview && (
                 <p className="text-xs text-gray-500">
                   Reachable via Email: <strong>{preview.email_recipients}</strong> · Reachable via SMS:{' '}
@@ -602,10 +619,15 @@ export const BroadcastsPage: React.FC = () => {
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Sending…
                   </>
-                ) : !previewReady ? (
+                ) : previewLoading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Checking Recipients…
+                  </>
+                ) : !previewReady ? (
+                  <>
+                    <AlertTriangle className="h-4 w-4" />
+                    Recipient Count Unavailable
                   </>
                 ) : (
                   <>

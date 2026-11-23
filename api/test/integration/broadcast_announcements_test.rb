@@ -299,10 +299,10 @@ class BroadcastAnnouncementsTest < ActionDispatch::IntegrationTest
     assert_equal 1, MessageDelivery.where(tournament: @t1, purpose: "tournament_broadcast").count
   end
 
-  test "both channel with only email configured records effective email channel, skips sms cleanly, and send_broadcasts-only user can load admin_tournament" do
+  test "both channel with only email configured records effective email channel, skips sms cleanly, and send_broadcasts-only user loads broadcasts by slug without roster PII" do
     ENV["RESEND_API_KEY"] = "re_test_key"
 
-    # Custom user with ONLY send_broadcasts capability can load admin_tournament
+    # Custom user with ONLY send_broadcasts capability CANNOT read full golfer roster (403)
     broadcaster = User.create!(
       clerk_id: "clerk_bcast_only_#{SecureRandom.hex(3)}",
       email: "broadcaster-#{SecureRandom.hex(3)}@bcast.example.com",
@@ -315,7 +315,15 @@ class BroadcastAnnouncementsTest < ActionDispatch::IntegrationTest
       permissions: { "check_in" => false, "verify_door_payment" => false, "send_broadcasts" => true }
     )
     get "/api/v1/admin/organizations/#{@org.slug}/tournaments/#{@t1.slug}", headers: headers_for(broadcaster)
+    assert_response :forbidden
+
+    # Instead, broadcaster loads the slug-scoped broadcasts endpoint returning minimal tournament metadata (no golfer PII)
+    get "/api/v1/admin/organizations/#{@org.slug}/tournaments/#{@t1.slug}/broadcasts", headers: headers_for(broadcaster)
     assert_response :success
+    slug_body = JSON.parse(response.body)
+    assert_equal @t1.id, slug_body.dig("tournament", "id")
+    assert_equal @t1.name, slug_body.dig("tournament", "name")
+    assert_nil slug_body["golfers"]
 
     # Preview for channel=both when only email is configured reports skipped_channel=sms & sms_recipients=0
     post "/api/v1/tournaments/#{@t1.id}/broadcasts/preview",

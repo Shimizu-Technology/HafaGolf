@@ -103,6 +103,7 @@ Rails.application.routes.draw do
       get 'admin/organizations/:slug/tournaments' => 'organizations#admin_tournaments'
       post 'admin/organizations/:slug/tournaments' => 'organizations#create_tournament'
       get 'admin/organizations/:slug/tournaments/:tournament_slug' => 'organizations#admin_tournament'
+      get 'admin/organizations/:slug/tournaments/:tournament_slug/broadcasts' => 'broadcasts#index'
       post 'admin/organizations/:slug/tournaments/:tournament_slug/golfers' => 'organizations#create_golfer'
       patch 'admin/organizations/:slug/tournaments/:tournament_slug/golfers/:golfer_id' => 'organizations#update_golfer'
       post 'admin/organizations/:slug/tournaments/:tournament_slug/golfers/:golfer_id/cancel' => 'organizations#cancel_golfer'

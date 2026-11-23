@@ -22,6 +22,11 @@ module Api
         sms_ok = Broadcasts::Dispatcher.sms_configured?
 
         render json: {
+          tournament: {
+            id: @tournament.id,
+            name: @tournament.name,
+            slug: @tournament.slug
+          },
           announcements: announcements.map(&:as_admin_json),
           groups: groups,
           config: {
@@ -136,7 +141,12 @@ module Api
       private
 
       def set_tournament
-        @tournament = Tournament.includes(:organization).find(params[:tournament_id])
+        if params[:tournament_id].present?
+          @tournament = Tournament.includes(:organization).find(params[:tournament_id])
+        else
+          organization = Organization.find_by_slug!(params[:slug])
+          @tournament = organization.tournaments.includes(:organization).find_by!(slug: params[:tournament_slug])
+        end
       end
 
       def authorize_broadcast_access!
