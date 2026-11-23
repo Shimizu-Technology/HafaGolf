@@ -209,6 +209,9 @@ class OrganizationMembership < ApplicationRecord
       unless v == true || v == false
         errors.add(:permissions, "'#{k}' must be a boolean")
       end
+      if k.to_s == "manage_team" && v == true && !admin?
+        errors.add(:permissions, "cannot grant 'manage_team' to non-admin roles")
+      end
     end
   end
 
@@ -223,7 +226,23 @@ class OrganizationMembership < ApplicationRecord
       return
     end
 
-    cleaned = scoped_tournament_ids.map(&:to_i).select(&:positive?).uniq
+    raw_values = read_attribute_before_type_cast(:scoped_tournament_ids)
+    if raw_values.is_a?(Array)
+      invalid_entry = raw_values.find do |v|
+        !(v.is_a?(Integer) && v.positive?) && !(v.is_a?(String) && v.match?(/\A[1-9]\d*\z/))
+      end
+      if invalid_entry
+        errors.add(:scoped_tournament_ids, "must contain only positive integer tournament IDs")
+        return
+      end
+    end
+
+    if scoped_tournament_ids.any? { |id| !id.is_a?(Integer) || id <= 0 }
+      errors.add(:scoped_tournament_ids, "must contain only positive integer tournament IDs")
+      return
+    end
+
+    cleaned = scoped_tournament_ids.uniq
     self.scoped_tournament_ids = cleaned
     return if cleaned.empty? || organization_id.blank?
 

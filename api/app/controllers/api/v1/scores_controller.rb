@@ -328,7 +328,7 @@ module Api
       def authorize_admin_for_tournament!
         return unless admin_authenticated?
 
-        require_tournament_admin!(@tournament)
+        require_capability!(:enter_scores, tournament: @tournament)
       end
 
       def score_references_belong_to_tournament?(score)

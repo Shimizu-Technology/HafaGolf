@@ -688,19 +688,22 @@ module Api
           stats[:revenue] = golfers.count { |g| g.payment_status == 'paid' && g.payment_type != 'sponsor' } * (tournament.entry_fee || 0)
         end
 
+        golfer_fields = [
+          :id, :name, :email, :phone, :company, :registration_status,
+          :payment_status, :payment_method, :payment_type, :checked_in_at, :created_at,
+          :paid_at, :payment_verified_by_name, :payment_verified_at,
+          :checked_in_by_name, :payment_notes, :receipt_number,
+          :partner_name, :partner_email, :partner_phone,
+          :team_name, :team_category, :registration_source, :group_id,
+          :sponsor_id, :sponsor_name, :notes,
+          :is_employee, :employee_number_record_id
+        ]
+        golfer_fields << :payment_amount_cents if can_view_finances
+
         render json: {
           tournament: TournamentSerializer.new(tournament).as_json,
           golfers: golfers.map { |g|
-            g.as_json(
-              only: [:id, :name, :email, :phone, :company, :registration_status,
-                     :payment_status, :payment_method, :payment_type, :checked_in_at, :created_at,
-                     :paid_at, :payment_verified_by_name, :payment_verified_at,
-                     :checked_in_by_name, :payment_notes, :payment_amount_cents, :receipt_number,
-                     :partner_name, :partner_email, :partner_phone,
-                     :team_name, :team_category, :registration_source, :group_id,
-                     :sponsor_id, :sponsor_name, :notes,
-                     :is_employee, :employee_number_record_id]
-            ).merge(
+            g.as_json(only: golfer_fields).merge(
               "last_name" => g.last_name,
               "employee_number" => g.employee_number,
               "expected_entry_fee_cents" => g.expected_entry_fee_cents,
@@ -1035,7 +1038,7 @@ module Api
       # GET /api/v1/admin/organizations/:slug/members
       def members
         org = Organization.find_by!(slug: params[:slug])
-        require_capability!(:manage_team, organization: org)
+        require_org_admin!(org)
         return if performed?
 
         memberships = org.organization_memberships.includes(:user).order(created_at: :asc)
@@ -1054,7 +1057,7 @@ module Api
       # POST /api/v1/admin/organizations/:slug/members
       def add_member
         org = Organization.find_by!(slug: params[:slug])
-        require_capability!(:manage_team, organization: org)
+        require_org_admin!(org)
         return if performed?
 
         email = params[:email]&.strip&.downcase
@@ -1088,7 +1091,10 @@ module Api
           return render json: { error: "permissions must be a JSON object of capability booleans" }, status: :unprocessable_entity
         end
 
-        scoped_ids = params.key?(:scoped_tournament_ids) ? Array(params[:scoped_tournament_ids]).map(&:to_i).select(&:positive?).uniq : []
+        scoped_ids = params.key?(:scoped_tournament_ids) ? parse_scoped_tournament_ids(params[:scoped_tournament_ids]) : []
+        if scoped_ids == :invalid
+          return render json: { error: "scoped_tournament_ids must be an array of positive tournament IDs" }, status: :unprocessable_entity
+        end
 
         membership = org.organization_memberships.create!(
           user: user,
@@ -1119,7 +1125,7 @@ module Api
       # POST /api/v1/admin/organizations/:slug/members/:member_id/resend_invite
       def resend_invite
         org = Organization.find_by!(slug: params[:slug])
-        require_capability!(:manage_team, organization: org)
+        require_org_admin!(org)
         return if performed?
 
         membership = org.organization_memberships.find(params[:member_id])
@@ -1137,10 +1143,14 @@ module Api
       # PATCH /api/v1/admin/organizations/:slug/members/:member_id
       def update_member
         org = Organization.find_by!(slug: params[:slug])
-        require_capability!(:manage_team, organization: org)
+        require_org_admin!(org)
         return if performed?
 
         membership = org.organization_memberships.find(params[:member_id])
+        if membership.user_id == current_user.id && !current_user.super_admin?
+          return render json: { error: "Forbidden: Cannot modify your own role or permissions" }, status: :forbidden
+        end
+
         updates = {}
 
         if params.key?(:role)
@@ -1163,7 +1173,11 @@ module Api
         end
 
         if params.key?(:scoped_tournament_ids)
-          updates[:scoped_tournament_ids] = Array(params[:scoped_tournament_ids]).map(&:to_i).select(&:positive?).uniq
+          parsed_ids = parse_scoped_tournament_ids(params[:scoped_tournament_ids])
+          if parsed_ids == :invalid
+            return render json: { error: "scoped_tournament_ids must be an array of positive tournament IDs" }, status: :unprocessable_entity
+          end
+          updates[:scoped_tournament_ids] = parsed_ids
         end
 
         before_state = { role: membership.role, permissions: membership.permissions, scoped_tournament_ids: membership.scoped_tournament_ids }
@@ -1186,7 +1200,7 @@ module Api
       # DELETE /api/v1/admin/organizations/:slug/members/:member_id
       def remove_member
         org = Organization.find_by!(slug: params[:slug])
-        require_capability!(:manage_team, organization: org)
+        require_org_admin!(org)
         return if performed?
 
         membership = org.organization_memberships.find(params[:member_id])
@@ -1239,6 +1253,23 @@ module Api
           prefix = tournament.starting_position_prefix(grp.starting_course_key)
           labels[g.id] = [prefix, "#{grp.hole_number}#{letter}"].compact.join(' ')
         end
+      end
+
+      def parse_scoped_tournament_ids(raw)
+        return [] if raw.nil?
+        return :invalid unless raw.is_a?(Array)
+
+        parsed = []
+        raw.each do |entry|
+          if entry.is_a?(Integer) && entry.positive?
+            parsed << entry
+          elsif entry.is_a?(String) && entry.strip.match?(/\A[1-9]\d*\z/)
+            parsed << entry.strip.to_i
+          else
+            return :invalid
+          end
+        end
+        parsed.uniq
       end
 
       def normalize_member_permissions(raw)

@@ -24,6 +24,7 @@ import { SponsorManagementPage } from '../pages/SponsorManagementPage';
 import { EmployeeNumbersPage } from '../pages/EmployeeNumbersPage';
 import { OrgSettingsPage } from '../pages/OrgSettingsPage';
 import { ReportsPage } from '../pages/ReportsPage';
+import { ScorecardPage } from '../pages/ScorecardPage';
 import { SponsorsOverviewPage } from '../pages/SponsorsOverviewPage';
 import { ActivityLogPage } from '../pages/ActivityLogPage';
 
@@ -142,6 +143,7 @@ export default function AdminRoutesApp() {
             <Route path="events/:tournamentSlug/payments" element={<AdminOnlyRoute anyOf={['view_reports', 'manage_finances']}><PaymentReconciliationPage /></AdminOnlyRoute>} />
             <Route path="events/:tournamentSlug/checkin" element={<AdminOnlyRoute capability="check_in"><OrgCheckInPage /></AdminOnlyRoute>} />
             <Route path="events/:tournamentSlug/groups" element={<AdminOnlyRoute capability="manage_groups"><GroupManagementPage /></AdminOnlyRoute>} />
+            <Route path="events/:tournamentSlug/scoring" element={<AdminOnlyRoute capability="enter_scores"><ScorecardPage /></AdminOnlyRoute>} />
             <Route path="events/:tournamentSlug/raffle" element={<AdminOnlyRoute anyOf={['raffle_sell', 'raffle_draw', 'manage_raffle_prizes']}><RaffleManagementPage /></AdminOnlyRoute>} />
             <Route path="events/:tournamentSlug/sponsors" element={<AdminOnlyRoute capability="manage_sponsors"><SponsorManagementPage /></AdminOnlyRoute>} />
             <Route path="events/:tournamentSlug/employee-numbers" element={<AdminOnlyRoute capability="manage_golfers"><EmployeeNumbersPage /></AdminOnlyRoute>} />

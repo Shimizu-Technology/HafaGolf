@@ -337,19 +337,21 @@ function SellTicketsTab({
 
   return (
     <div className="space-y-6">
-      {/* Revenue summary */}
+      {/* Ticket summary (revenue card only shown when user has financial report access) */}
       {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className={`grid grid-cols-2 ${typeof stats.additional_revenue_cents === 'number' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
           <div className="bg-white rounded-xl shadow-sm p-4 text-center">
             <p className="text-2xl font-bold text-brand-600">{stats.paid}</p>
             <p className="text-xs text-slate-500 mt-1">Total tickets sold</p>
           </div>
-          <div className="bg-white rounded-xl shadow-sm p-4 text-center">
-            <p className="text-2xl font-bold text-emerald-600">
-              ${((stats.additional_revenue_cents || 0) / 100).toFixed(0)}
-            </p>
-            <p className="text-xs text-slate-500 mt-1">Ticket revenue</p>
-          </div>
+          {typeof stats.additional_revenue_cents === 'number' && (
+            <div className="bg-white rounded-xl shadow-sm p-4 text-center">
+              <p className="text-2xl font-bold text-emerald-600">
+                ${(stats.additional_revenue_cents / 100).toFixed(0)}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">Ticket revenue</p>
+            </div>
+          )}
           <div className="bg-white rounded-xl shadow-sm p-4 text-center">
             <p className="text-2xl font-bold text-slate-900">{stats.purchased || 0}</p>
             <p className="text-xs text-slate-500 mt-1">Purchased tickets</p>

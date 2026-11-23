@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminLayout } from './AdminLayout';
+import { AdminOnlyRoute } from './AdminRouteGuard';
 
 const mockAdminState = {
   isVolunteer: true,
@@ -12,7 +13,7 @@ const mockAdminState = {
   isStationOnly: true,
   stationMode: 'checkin' as 'checkin' | 'raffle' | 'scoring' | null,
   orgRoleLabel: 'Check-In Volunteer',
-  can: (cap: string) => cap === 'check_in' || cap === 'verify_door_payment',
+  can: ((cap: string) => cap === 'check_in' || cap === 'verify_door_payment') as (cap: string) => boolean,
 };
 
 vi.mock('@clerk/react', () => ({
@@ -53,6 +54,10 @@ afterEach(async () => {
 
 describe('AdminLayout Volunteer Station Mode', () => {
   it('renders streamlined Volunteer Station Bar with zero admin sidebar links for Check-In Volunteer', async () => {
+    mockAdminState.stationMode = 'checkin';
+    mockAdminState.orgRoleLabel = 'Check-In Volunteer';
+    mockAdminState.can = (cap: string) => cap === 'check_in' || cap === 'verify_door_payment';
+
     await act(async () => {
       root.render(
         <MemoryRouter initialEntries={['/admin/events/spring-classic/checkin']}>
@@ -66,9 +71,38 @@ describe('AdminLayout Volunteer Station Mode', () => {
     expect(mount.querySelector('[data-testid="volunteer-station-bar"]')).toBeTruthy();
     expect(mount.textContent).toContain('Check-In Station');
     expect(mount.textContent).toContain('Check-In Desk Content');
-    // Must not expose full admin sidebar links
     expect(mount.textContent).not.toContain('Payments');
     expect(mount.textContent).not.toContain('Settings');
     expect(mount.textContent).not.toContain('Reports');
+  });
+
+  it('allows Scoring Marshal to land on /scoring station while blocking /checkin', async () => {
+    mockAdminState.stationMode = 'scoring';
+    mockAdminState.orgRoleLabel = 'Scoring Marshal';
+    mockAdminState.can = (cap: string) => cap === 'enter_scores';
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={['/admin/events/spring-classic/scoring']}>
+          <AdminLayout>
+            <Routes>
+              <Route
+                path="/admin/events/:tournamentSlug/scoring"
+                element={
+                  <AdminOnlyRoute capability="enter_scores">
+                    <div>Scoring Marshal Station Active</div>
+                  </AdminOnlyRoute>
+                }
+              />
+              <Route path="/admin" element={<div>Redirected Home</div>} />
+            </Routes>
+          </AdminLayout>
+        </MemoryRouter>
+      );
+    });
+
+    expect(mount.querySelector('[data-testid="volunteer-station-bar"]')).toBeTruthy();
+    expect(mount.textContent).toContain('Scoring Station');
+    expect(mount.textContent).toContain('Scoring Marshal Station Active');
   });
 });

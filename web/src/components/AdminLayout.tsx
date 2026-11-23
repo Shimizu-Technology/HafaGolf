@@ -210,6 +210,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
               icon: Flag,
               match: () => routeSection === 'groups',
             },
+            {
+              label: 'Scoring',
+              path: adminEventPath(activeTournament.slug, 'scoring'),
+              icon: ClipboardList,
+              match: () => routeSection === 'scoring',
+            },
             ...(eventRaffleEnabled
               ? [
                   {
@@ -264,6 +270,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           return can('check_in');
         case 'Hole Assignment':
           return can('manage_groups');
+        case 'Scoring':
+          return can('enter_scores');
         case 'Raffle':
           return can('raffle_sell') || can('raffle_draw') || can('manage_raffle_prizes');
         case 'Sponsors':
@@ -324,7 +332,18 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   };
 
   if (isStationOnly) {
-    const canSwitchDesks = Boolean(activeTournament && can('check_in') && can('raffle_sell') && eventRaffleEnabled);
+    const stationTabs = activeTournament
+      ? [
+          ...(can('check_in') ? [{ key: 'checkin', label: 'Check-In', path: adminEventPath(activeTournament.slug, 'checkin') }] : []),
+          ...(can('raffle_sell') && eventRaffleEnabled
+            ? [{ key: 'raffle', label: 'Raffle', path: adminEventPath(activeTournament.slug, 'raffle') }]
+            : []),
+          ...(can('enter_scores')
+            ? [{ key: 'scoring', label: 'Scoring', path: adminEventPath(activeTournament.slug, 'scoring') }]
+            : []),
+        ]
+      : [];
+    const canSwitchDesks = stationTabs.length > 1;
     const stationTitle =
       stationMode === 'raffle'
         ? 'Raffle POS Station'
@@ -381,26 +400,20 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 </select>
               )}
 
-              {canSwitchDesks && activeTournament && (
+              {canSwitchDesks && (
                 <div className="inline-flex rounded-xl bg-white/10 p-0.5 text-xs font-semibold">
-                  <button
-                    type="button"
-                    onClick={() => handleNavigate(adminEventPath(activeTournament.slug, 'checkin'))}
-                    className={`rounded-lg px-2.5 py-1.5 transition ${
-                      routeSection === 'checkin' ? 'bg-white text-brand-700' : 'text-white/90 hover:bg-white/10'
-                    }`}
-                  >
-                    Check-In
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleNavigate(adminEventPath(activeTournament.slug, 'raffle'))}
-                    className={`rounded-lg px-2.5 py-1.5 transition ${
-                      routeSection === 'raffle' ? 'bg-white text-brand-700' : 'text-white/90 hover:bg-white/10'
-                    }`}
-                  >
-                    Raffle
-                  </button>
+                  {stationTabs.map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => handleNavigate(tab.path)}
+                      className={`rounded-lg px-2.5 py-1.5 transition ${
+                        routeSection === tab.key ? 'bg-white text-brand-700' : 'text-white/90 hover:bg-white/10'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
               )}
 

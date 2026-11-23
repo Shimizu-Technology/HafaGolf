@@ -556,6 +556,21 @@ module Api
         per_page = 50 if params[:per_page].blank?
         paginated = tickets.offset((page - 1) * per_page).limit(per_page)
 
+        can_view_finances = current_user.can?(:view_reports, organization: @tournament.organization, tournament: @tournament) ||
+                            current_user.can?(:manage_finances, organization: @tournament.organization, tournament: @tournament)
+
+        stats_payload = {
+          total: stat_row[0].to_i,
+          paid: stat_row[1].to_i,
+          pending: stat_row[2].to_i,
+          winners: stat_row[3].to_i,
+          voided: stat_row[4].to_i,
+          complimentary: stat_row[5].to_i,
+          purchased: stat_row[6].to_i,
+          needs_attention: needs_attention_ids.size
+        }
+        stats_payload[:additional_revenue_cents] = stat_row[7].to_i if can_view_finances
+
         render json: {
           tickets: paginated.map { |t|
             ticket_response(t, admin: true, delivery_status: delivery_summary_service.summary_for_ticket(t))
@@ -566,17 +581,7 @@ module Api
             total: total_filtered,
             total_pages: (total_filtered.to_f / per_page).ceil
           },
-          stats: {
-            total: stat_row[0].to_i,
-            paid: stat_row[1].to_i,
-            pending: stat_row[2].to_i,
-            winners: stat_row[3].to_i,
-            voided: stat_row[4].to_i,
-            complimentary: stat_row[5].to_i,
-            purchased: stat_row[6].to_i,
-            needs_attention: needs_attention_ids.size,
-            additional_revenue_cents: stat_row[7].to_i
-          }
+          stats: stats_payload
         }
       end
 

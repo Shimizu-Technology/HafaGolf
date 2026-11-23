@@ -82,7 +82,13 @@ class User < ApplicationRecord
     return true if super_admin?
     return false unless organization
 
-    membership_for(organization)&.can?(capability, tournament: tournament) == true
+    membership = membership_for(organization)
+    return membership.can?(capability, tournament: tournament) == true if membership
+
+    # Legacy fallback: users with explicit tournament_assignments but no org membership
+    return false unless tournament
+
+    tournament_assignments.exists?(tournament: tournament)
   end
 
   def capabilities_for(organization)
@@ -92,14 +98,13 @@ class User < ApplicationRecord
     membership_for(organization)&.effective_capabilities || OrganizationMembership.all_capabilities_map(false)
   end
 
-  # Tournament access checks
+  # Tournament access checks (explicit org_admin or legacy tournament_assignment only — never widened by manage_golfers)
   def can_manage?(tournament)
     return true if super_admin?
     return false unless tournament
     return true if org_admin_for?(tournament.organization)
 
-    membership = membership_for(tournament.organization)
-    return true if membership&.can?(:manage_golfers, tournament: tournament)
+    return false if membership_for(tournament.organization).present?
 
     tournament_assignments.exists?(tournament: tournament)
   end

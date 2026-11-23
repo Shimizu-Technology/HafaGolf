@@ -20,6 +20,8 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const { setCurrentAdmin } = useAdmin();
   const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
   const authSetupRef = useRef(false);
+  const authRequestSeqRef = useRef(0);
+  const requestedOrg = searchParams.get('org') || undefined;
 
   useEffect(() => {
     api.setAuthTokenGetter(() => getToken());
@@ -39,51 +41,68 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   }, [user]);
 
   useEffect(() => {
+    const requestSeq = ++authRequestSeqRef.current;
+    let cancelled = false;
+
     const verifyAdminAccess = async () => {
       if (!isLoaded) return;
-      
+
       if (!isSignedIn) {
-        setAuthStatus('not-signed-in');
+        if (!cancelled && authRequestSeqRef.current === requestSeq) {
+          setCurrentAdmin(null);
+          setAuthStatus('not-signed-in');
+        }
         return;
       }
 
-      while (!authSetupRef.current) {
+      // Never expose previous organization's capabilities while re-authorizing a new org context
+      setCurrentAdmin(null);
+      setAuthStatus('loading');
+
+      while (!authSetupRef.current && !cancelled) {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
-
-      await new Promise(resolve => setTimeout(resolve, 100));
+      if (cancelled || authRequestSeqRef.current !== requestSeq) return;
 
       const maxRetries = 3;
       let lastError: Error | null = null;
 
-      const requestedOrg = searchParams.get('org') || undefined;
-
       for (let attempt = 0; attempt < maxRetries; attempt++) {
+        if (cancelled || authRequestSeqRef.current !== requestSeq) return;
         try {
           const admin = await api.getCurrentAdmin(requestedOrg);
-          console.log('Admin verified:', admin.email);
+          if (cancelled || authRequestSeqRef.current !== requestSeq) return;
           setCurrentAdmin(admin);
           setAuthStatus('authorized');
           return;
         } catch (error) {
+          if (cancelled || authRequestSeqRef.current !== requestSeq) return;
           lastError = error as Error;
-          console.log(`Admin verification attempt ${attempt + 1} failed:`, lastError.message);
-          
-          if (lastError.message?.includes('not authorized') || 
-              lastError.message?.includes('Access denied')) {
+
+          if (
+            lastError.message?.includes('not authorized') ||
+            lastError.message?.includes('Access denied') ||
+            lastError.message?.includes('Forbidden')
+          ) {
             break;
           }
-          
+
           await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
         }
       }
 
-      console.error('Admin verification failed after retries:', lastError);
-      setAuthStatus('unauthorized');
+      if (!cancelled && authRequestSeqRef.current === requestSeq) {
+        console.error('Admin verification failed after retries:', lastError);
+        setCurrentAdmin(null);
+        setAuthStatus('unauthorized');
+      }
     };
 
-    verifyAdminAccess();
-  }, [isLoaded, isSignedIn, searchParams]);
+    void verifyAdminAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, requestedOrg, setCurrentAdmin]);
 
   if (authStatus === 'loading' || !isLoaded) {
     return (

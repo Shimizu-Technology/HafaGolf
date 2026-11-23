@@ -385,7 +385,7 @@ export function TeamAccessPanel({ request, organizationSlug }: { request: Settin
                                 <input
                                   type="checkbox"
                                   checked={effective}
-                                  disabled={editRole === 'org_admin'}
+                                  disabled={editRole === 'org_admin' || cap.key === 'manage_team'}
                                   onChange={(e) => {
                                     const nextVal = e.target.checked;
                                     setEditOverrides((prev) => {

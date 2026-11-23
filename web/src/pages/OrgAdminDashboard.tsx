@@ -280,9 +280,10 @@ export const OrgAdminDashboard: React.FC = () => {
     );
   }
 
-  // Streamlined Volunteer Station Mode: land directly in Check-In or Raffle POS
+  // Streamlined Volunteer Station Mode: land directly in Check-In, Raffle POS, or Scoring
   if (isStationOnly && nextTournament) {
-    const targetSection = stationMode === 'raffle' ? 'raffle' : 'checkin';
+    const targetSection =
+      stationMode === 'raffle' ? 'raffle' : stationMode === 'scoring' ? 'scoring' : 'checkin';
     return <Navigate to={adminEventPath(nextTournament.slug, targetSection)} replace />;
   }
 

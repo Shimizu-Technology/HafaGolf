@@ -4,15 +4,12 @@ module Api
       skip_before_action :authenticate_user!, only: [:create, :registration_status]
       skip_around_action :with_tenant_rls_context, only: [:create, :refund]
       before_action :authorize_collection_volunteer_access!, only: [:index]
-      before_action :authorize_collection_tournament_access!, only: [:stats, :bulk_send_payment_links]
+      before_action :authorize_collection_stats_access!, only: [:stats]
+      before_action :authorize_collection_finance_access!, only: [:bulk_send_payment_links]
       before_action :authorize_golfer_checkin_access!, only: [:check_in, :undo_check_in, :promote_and_checkin]
       before_action :authorize_golfer_door_payment_access!, only: [:verify_payment]
-      before_action :authorize_golfer_finance_access!, only: [:refund, :mark_refunded]
-      before_action :authorize_golfer_access!, only: [
-        :show, :update, :destroy, :cancel,
-        :payment_details, :promote, :demote,
-        :send_payment_link, :update_payment_status, :mark_paid
-      ]
+      before_action :authorize_golfer_finance_access!, only: [:payment_details, :refund, :mark_refunded, :send_payment_link, :update_payment_status, :mark_paid]
+      before_action :authorize_golfer_manage_access!, only: [:show, :update, :destroy, :cancel, :promote, :demote]
 
       VALID_CHECKIN_PAYMENT_METHODS = %w[
         cash check credit card stripe swipe_simple swipe_simple_confirmed other
@@ -598,9 +595,8 @@ module Api
       # POST /api/v1/golfers/:id/mark_waiver_signed
       def mark_waiver_signed
         golfer = Golfer.find(params[:id])
-        unless current_user.can_manage?(golfer.tournament) || current_user.volunteer_for?(golfer.tournament.organization)
-          return render json: { error: "Forbidden: You do not have access to this tournament" }, status: :forbidden
-        end
+        require_any_capability!(:check_in, :manage_golfers, tournament: golfer.tournament)
+        return if performed?
         return unless verify_tenant_match!(golfer.tournament.organization_id, status: :forbidden)
 
         unless golfer.tournament.waiver_enabled?
@@ -1216,16 +1212,28 @@ module Api
         require_any_capability!(:check_in, :manage_golfers, :view_reports, :raffle_sell, tournament: tournament)
       end
 
-      def authorize_collection_tournament_access!
+      def authorize_collection_stats_access!
         tournament = find_tournament
         return render_tournament_required unless tournament
 
-        require_tournament_admin!(tournament)
+        require_any_capability!(:manage_golfers, :view_reports, :check_in, tournament: tournament)
       end
 
-      def authorize_golfer_access!
+      def authorize_collection_finance_access!
+        tournament = find_tournament
+        return render_tournament_required unless tournament
+
+        require_capability!(:manage_finances, tournament: tournament)
+      end
+
+      def authorize_golfer_manage_access!
         golfer = Golfer.find(params[:id])
-        require_tournament_admin!(golfer.tournament)
+        require_capability!(:manage_golfers, tournament: golfer.tournament)
+      end
+
+      def authorize_golfer_payment_read_access!
+        golfer = Golfer.find(params[:id])
+        require_any_capability!(:view_reports, :manage_finances, tournament: golfer.tournament)
       end
 
       def authorize_golfer_finance_access!

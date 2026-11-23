@@ -16,13 +16,17 @@ module Api
 
       # GET /api/v1/admins/me
       def me
-        scope_org = @organization_scope
-        if params[:org].present?
-          candidate = Organization.find_by("LOWER(slug) = ?", params[:org].to_s.strip.downcase)
-          if candidate && (current_user.super_admin? || current_user.member_of?(candidate))
-            scope_org = candidate
+        requested_slug = params[:org].presence || params[:organization_slug].presence
+        if requested_slug.present?
+          candidate = Organization.find_by("LOWER(slug) = ?", requested_slug.to_s.strip.downcase)
+          unless candidate && (current_user.super_admin? || current_user.member_of?(candidate))
+            return render json: { error: "Forbidden: You do not have access to this organization" }, status: :forbidden
           end
+          scope_org = candidate
+        else
+          scope_org = @organization_scope
         end
+
         render json: current_user, serializer: AdminSerializer, scope_organization: scope_org
       end
 
