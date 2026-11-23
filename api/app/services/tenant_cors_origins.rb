@@ -17,6 +17,7 @@ module TenantCorsOrigins
 
     uri = URI.parse(origin.to_s)
     return false unless %w[http https].include?(uri.scheme) && uri.host.present?
+    return false if Rails.env.production? && uri.scheme != "https"
 
     normalized_origin = normalize_origin(uri)
     return true if static_allowed_origins.include?(normalized_origin)

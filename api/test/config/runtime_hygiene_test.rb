@@ -160,6 +160,7 @@ class RuntimeHygieneTest < ActionDispatch::IntegrationTest
     original_app = Rails.application
     original_env = Rails.env
     previous_admin_origin = ENV["ADMIN_ORIGIN"]
+    previous_cors_origins = ENV["CORS_ALLOWED_ORIGINS"]
 
     begin
       Rails.application = fake_app
@@ -176,9 +177,10 @@ class RuntimeHygieneTest < ActionDispatch::IntegrationTest
     TenantCorsOrigins.invalidate!
 
     ENV["ADMIN_ORIGIN"] = "https://golf.shimizu-technology.com"
+    ENV["CORS_ALLOWED_ORIGINS"] = "http://legacy.example.net,https://preview.example.net"
     Rails.env = ActiveSupport::StringInquirer.new("production")
 
-    server = ActionCable::Server::Base.new
+    server = ActionCable::Server::Base.new(config: ActionCable::Server::Base.config.dup)
     server.config.disable_request_forgery_protection = false
     server.config.allow_same_origin_as_host = false
     server.config.allowed_request_origins = captured_origins
@@ -196,12 +198,15 @@ class RuntimeHygieneTest < ActionDispatch::IntegrationTest
 
     assert check_origin.call("https://ws-tenant.example.com"), "Expected registered HTTPS tenant domain to be allowed"
     assert check_origin.call("https://golf.shimizu-technology.com"), "Expected ADMIN_ORIGIN to be allowed"
+    assert check_origin.call("https://preview.example.net"), "Expected configured HTTPS static origin to be allowed"
+    assert_not check_origin.call("http://legacy.example.net"), "Expected configured HTTP static origin to be rejected in production"
     assert_not check_origin.call("http://ws-tenant.example.com"), "Expected non-HTTPS tenant domain to be rejected in production"
     assert_not check_origin.call("https://unregistered.example.net"), "Expected unregistered domain to be rejected"
     assert_not check_origin.call(nil), "Expected missing Origin header to be rejected"
   ensure
     Rails.env = original_env if defined?(original_env) && original_env
     ENV["ADMIN_ORIGIN"] = previous_admin_origin
+    ENV["CORS_ALLOWED_ORIGINS"] = previous_cors_origins
     TenantCorsOrigins.invalidate!
   end
 end
