@@ -75,6 +75,7 @@ class ActivityLog < ApplicationRecord
     sponsor_portal_invite_sent
     sponsor_check_reserved
     sponsor_check_paid
+    broadcast_sent
   ].freeze
 
   validates :action, presence: true, inclusion: { in: ACTIONS }

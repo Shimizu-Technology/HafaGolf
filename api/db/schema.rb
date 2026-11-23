@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_23_170000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_23_180000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -60,6 +60,33 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_170000) do
     t.index ["organization_id"], name: "index_activity_logs_on_organization_id"
     t.index ["target_type", "target_id"], name: "index_activity_logs_on_target_type_and_target_id"
     t.index ["tournament_id"], name: "index_activity_logs_on_tournament_id"
+  end
+
+  create_table "broadcast_announcements", force: :cascade do |t|
+    t.uuid "organization_id", null: false
+    t.bigint "tournament_id", null: false
+    t.bigint "sender_id"
+    t.string "audience", null: false
+    t.bigint "target_group_ids", default: [], null: false, array: true
+    t.string "channel", null: false
+    t.string "subject"
+    t.text "message", null: false
+    t.integer "recipient_count", default: 0, null: false
+    t.integer "email_recipient_count", default: 0, null: false
+    t.integer "sms_recipient_count", default: 0, null: false
+    t.integer "sent_count", default: 0, null: false
+    t.integer "failed_count", default: 0, null: false
+    t.boolean "dry_run", default: false, null: false
+    t.string "status", default: "completed", null: false
+    t.datetime "sent_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["organization_id"], name: "index_broadcast_announcements_on_organization_id"
+    t.index ["sender_id"], name: "index_broadcast_announcements_on_sender_id"
+    t.index ["tournament_id", "created_at"], name: "index_broadcast_announcements_on_tournament_created_at"
+    t.check_constraint "failed_count >= 0", name: "chk_broadcast_announcements_failed_count_non_negative"
+    t.check_constraint "recipient_count >= 0", name: "chk_broadcast_announcements_recipient_count_non_negative"
+    t.check_constraint "sent_count >= 0", name: "chk_broadcast_announcements_sent_count_non_negative"
   end
 
   create_table "donations", force: :cascade do |t|
@@ -843,6 +870,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_23_170000) do
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "activity_logs", "tournaments"
   add_foreign_key "activity_logs", "users", column: "admin_id"
+  add_foreign_key "broadcast_announcements", "organizations", on_delete: :cascade
+  add_foreign_key "broadcast_announcements", "tournaments", on_delete: :cascade
+  add_foreign_key "broadcast_announcements", "users", column: "sender_id", on_delete: :nullify
   add_foreign_key "donations", "organizations", on_delete: :cascade
   add_foreign_key "donations", "tournaments", on_delete: :cascade
   add_foreign_key "employee_numbers", "golfers", column: "used_by_golfer_id", on_delete: :nullify
