@@ -127,7 +127,10 @@ class SponsorSlotSyncer
   end
 
   def normalized_email(value)
-    value.to_s.strip.downcase.presence
+    email = value.to_s.strip.downcase.presence
+    return nil if email.nil? || email.end_with?("@sponsored.local")
+
+    email
   end
 
   def identity_changed?(old_name:, old_email:, new_name:, new_email:)

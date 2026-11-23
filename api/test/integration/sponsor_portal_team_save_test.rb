@@ -487,6 +487,20 @@ class SponsorPortalTeamSaveTest < ActionDispatch::IntegrationTest
     assert_response :unprocessable_entity
     assert_equal "elena@example.com", first.reload.player_email
 
+    # An email-less captain (whose legacy Golfer uses a @sponsored.local placeholder) can still have a routine save after check-in.
+    s3, s4 = slots_for(@sponsor)[2..3]
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [{ id: s3.id, player_name: "No Email Captain", player_email: nil }, { id: s4.id, player_name: nil }] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :success
+    team2_golfer = @tournament_a.golfers.find_by!(sponsor_id: @sponsor.id, team_name: "Harbor Bank - Team 2")
+    team2_golfer.update_columns(checked_in_at: Time.current, waiver_accepted_at: Time.current)
+    patch "/api/v1/sponsor_slots/batch",
+          params: { slots: [{ id: s3.id, player_name: "No Email Captain", player_email: nil, player_phone: "671-555-3333" }, { id: s4.id, player_name: "Added Partner" }] },
+          headers: { "X-Sponsor-Session" => session }, as: :json
+    assert_response :success
+    assert team2_golfer.reload.waiver_accepted_at.present?
+
     # Staff cancellation cannot be reopened by a subsequent portal save even after an earlier portal cancel.
     member_one.undo_check_in!
     registration.cancel!(reason: SponsorSlotSyncer::PORTAL_CANCEL_REASON)
