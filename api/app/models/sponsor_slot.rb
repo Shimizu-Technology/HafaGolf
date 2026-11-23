@@ -1,4 +1,6 @@
 class SponsorSlot < ApplicationRecord
+  attr_accessor :historical_import
+
   TSHIRT_SIZES = %w[S M L XL 2XL 3XL].freeze
 
   belongs_to :sponsor
@@ -11,7 +13,7 @@ class SponsorSlot < ApplicationRecord
   validates :tshirt_size, inclusion: { in: TSHIRT_SIZES }, allow_blank: true
   validates :handicap, numericality: { greater_than_or_equal_to: -10, less_than_or_equal_to: 54 }, allow_nil: true
   validates :player_email, format: { with: URI::MailTo::EMAIL_REGEXP }, allow_blank: true
-  validate :handicap_required_when_filled
+  validate :handicap_required_when_filled, unless: :historical_import
 
   before_validation :normalize_player_details
 

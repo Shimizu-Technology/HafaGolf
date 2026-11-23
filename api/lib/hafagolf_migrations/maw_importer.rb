@@ -4,6 +4,8 @@ require "digest"
 require_relative "database_guard"
 require_relative "verifier"
 require_relative "source_reader"
+require_relative "backfill"
+require_relative "legacy_assets"
 
 module HafagolfMigrations
   # Idempotent, re-runnable Make-A-Wish Guam & CNMI importer.
@@ -15,14 +17,28 @@ module HafagolfMigrations
   # - `message_deliveries.organization_id` backfill
   # - Cent-exact JSON verification report (rolls back on any mismatch)
   class MawImporter
+    include Backfill
+
     LEGACY_SOURCE = "maw"
     ORG_SLUG = "make-a-wish-guam"
     PRIMARY_HOST = "golfforwishes.com"
     WWW_HOST = "www.golfforwishes.com"
 
-    def initialize(source_reader:, expected_db_name: ENV["EXPECTED_DB_NAME"])
+    BRAND_OVERRIDES = %i[banner_url_override logo_url_override signature_image_url_override].freeze
+    TOURNAMENT_PARITY_FIELDS = %w[
+      primary_color_override accent_color_override use_org_branding course_rating slope_rating
+      handicap_required handicap_max tee_times_enabled tee_time_interval_minutes use_flights event_type
+      waiver_enabled waiver_text commemorative_banner_url tribute_title tribute_subtitle
+      show_public_sponsors sponsor_wall_title
+    ].freeze
+
+    def initialize(source_reader:, expected_db_name: ENV["EXPECTED_DB_NAME"], blob_dir: ENV["LEGACY_BLOB_DIR"],
+                   brand_assets_dir: ENV["LEGACY_BRAND_ASSETS_DIR"], asset_host: ENV["ASSET_HOST"] || ENV["API_URL"],
+                   allow_missing_attachments: ActiveModel::Type::Boolean.new.cast(ENV["ALLOW_MISSING_ATTACHMENTS"]) == true)
       @source = source_reader
       @expected_db_name = expected_db_name
+      @allow_missing_attachments = allow_missing_attachments
+      @asset_options = { blob_dir: blob_dir, brand_assets_dir: brand_assets_dir, asset_host: asset_host }
     end
 
     def run!
@@ -33,6 +49,7 @@ module HafagolfMigrations
       report = nil
       TenantContext.with_platform_access do
         ActiveRecord::Base.transaction(requires_new: true) do
+          lock_destination!
           org = import_organization!
           import_domains!(org)
           import_payment_config!(org)
@@ -40,7 +57,7 @@ module HafagolfMigrations
           tournament_map = import_tournaments!(org)
           group_map = import_groups!(tournament_map)
           sponsor_map = import_sponsors!(tournament_map)
-          golfer_map = import_golfers!(org, tournament_map, group_map, sponsor_map)
+          golfer_map = import_golfers!(org, tournament_map, group_map, sponsor_map, user_map)
           import_sponsor_slots!(sponsor_map, golfer_map)
           batch_map = import_raffle_batches!(tournament_map, user_map)
           prize_map = import_raffle_prizes!(tournament_map)
@@ -49,7 +66,12 @@ module HafagolfMigrations
           import_message_deliveries!(org, tournament_map, golfer_map, ticket_map, sponsor_map)
           import_activity_logs!(org, tournament_map, user_map)
 
-          report = verify_import!(org, tournament_map)
+          assets = import_assets!(org, tournament_map.values, sponsor_map, prize_map)
+          report = verify_import!(org, tournament_map, assets: assets)
+          report["attachments_migrated"] = assets.migrated_count
+          report["attachments_expected"] = assets.expected_attachments
+          report["attachments_present"] = assets.attached_attachments
+          report["attachments_missing"] = assets.missing_attachments
         end
       end
 
@@ -61,31 +83,64 @@ module HafagolfMigrations
     def import_organization!
       src_org = @source.rows("organizations").first || {}
       org = Organization.find_or_initialize_by(slug: ORG_SLUG)
-      if org.new_record?
-        org.assign_attributes(
-          name: src_org["name"].presence || "Make-A-Wish Guam & CNMI",
-          description: src_org["description"].presence || "Golf for Wishes Charity Tournament",
-          primary_color: valid_hex(src_org["primary_color"], "#0057B8"),
-          contact_email: src_org["contact_email"].presence,
-          contact_phone: src_org["contact_phone"].presence,
-          website_url: src_org["website_url"].presence || "https://golfforwishes.com",
-          subscription_status: "active",
-          settings: (org.settings || {}).merge(
-            "secondary_color" => valid_hex(src_org["secondary_color"], "#003D82"),
-            "accent_color" => valid_hex(src_org["accent_color"], "#F5A623"),
-            "features" => ((org.settings || {})["features"] || {}).merge(
-              "raffle" => true,
-              "sponsor_portal" => true,
-              "sms_notifications" => true,
-              "waitlist" => true,
-              "scoring" => false,
-              "live_leaderboard" => false
-            )
-          )
-        )
-        org.save!
-      end
+      attrs = organization_brand_attributes(src_org).merge(
+        "name" => src_org["name"].presence || "Make-A-Wish Guam & CNMI",
+        "description" => src_org["description"].presence || "Golf for Wishes Charity Tournament",
+        "primary_color" => valid_hex(src_org["primary_color"], "#0057B8"),
+        "contact_email" => src_org["contact_email"].presence,
+        "contact_phone" => src_org["contact_phone"].presence,
+        "website_url" => src_org["website_url"].presence || "https://golfforwishes.com",
+        "subscription_status" => "active"
+      )
+      assign_backfill(org, attrs)
+      org.settings = merge_missing_json(organization_settings(src_org), org.settings || {})
+      org.save! if org.new_record? || org.changed?
       org
+    end
+
+    def organization_settings(row)
+      settings = sanitize_settings(parse_json(row["settings"], {}, expected_type: Hash))
+      defaults = {
+        "secondary_color" => valid_hex(row["secondary_color"], "#003D82"),
+        "accent_color" => valid_hex(row["accent_color"], "#F5A623"),
+        "features" => {
+          "raffle" => true,
+          "sponsor_portal" => true,
+          "sms_notifications" => true,
+          "waitlist" => true,
+          "scoring" => false,
+          "live_leaderboard" => false
+        }
+      }
+      merge_missing_json(defaults, settings)
+    end
+
+    def sanitize_settings(value)
+      case value
+      when Hash
+        value.each_with_object({}) do |(key, item), clean|
+          next if key.to_s.match?(/stripe|secret|password|smtp_pass|credential|publishable|(?:api|access|private|public|webhook|signing)[_-]?key|token/i)
+          next if item.is_a?(String) && item.match?(/\A(?:sk|pk|rk|whsec)_(?:live|test)?/i)
+
+          clean[key.to_s] = sanitize_settings(item)
+        end
+      when Array
+        value.map { |item| sanitize_settings(item) }
+      else
+        value
+      end
+    end
+
+    def import_assets!(org, tournaments, sponsors, prizes)
+      assets = LegacyAssets.new(source: @source, **@asset_options)
+      assets.import_attachments(sponsors: sponsors, prizes: prizes)
+      assets.replace_blob_urls(tournaments, BRAND_OVERRIDES)
+      assets.wire_brand_asset("maw-logo.png", [[org, :logo_url]], match_filename: true)
+      assets.wire_brand_asset("maw-logo-rev.png", [[org, :reversed_logo_url]], match_filename: true)
+      hero_targets = [[org, :banner_url]] + tournaments.filter_map { |t| [t, :banner_url_override] if t.banner_url_override.blank? }
+      assets.wire_brand_asset("maw-hero.jpg", hero_targets, match_filename: true)
+      assets.wire_brand_asset("maw-star-icon.png", tournaments.map { |t| [t, :signature_image_url_override] }, match_filename: true)
+      assets
     end
 
     def import_domains!(org)
@@ -155,78 +210,87 @@ module HafagolfMigrations
       @source.rows("tournaments").each do |row|
         slug = row["slug"].presence || "maw-#{row['year'] || 2026}-#{row['id']}"
         tournament = org.tournaments.find_or_initialize_by(slug: slug)
+        attrs = {
+          name: row["name"].presence || "Golf for Wishes #{row['year'] || 2026}",
+          year: (row["year"] || 2026).to_i,
+          edition: row["edition"],
+          status: valid_tournament_status(row["status"]),
+          event_date: row["event_date"],
+          registration_time: row["registration_time"],
+          check_in_time: row["check_in_time"],
+          start_time: row["start_time"],
+          location_name: row["location_name"],
+          location_address: row["location_address"],
+          format_name: row["format_name"],
+          tournament_format: row["tournament_format"],
+          scoring_type: row["scoring_type"],
+          team_size: (row["team_size"] || 2).to_i,
+          max_capacity: (row["max_capacity"] || 144).to_i,
+          reserved_slots: (row["reserved_slots"] || 0).to_i,
+          entry_fee: (row["entry_fee"] || 25_000).to_i,
+          entry_fee_display: row["entry_fee_display"],
+          early_bird_fee: row["early_bird_fee"]&.to_i,
+          early_bird_deadline: row["early_bird_deadline"],
+          walkin_fee: row["walkin_fee"]&.to_i,
+          walkin_registration_open: truthy?(row["walkin_registration_open"]),
+          registration_open: truthy?(row["registration_open"]),
+          registration_deadline: row["registration_deadline"],
+          sponsor_edit_deadline: row["sponsor_edit_deadline"],
+          waitlist_enabled: row["waitlist_enabled"].nil? ? true : truthy?(row["waitlist_enabled"]),
+          waitlist_max: row["waitlist_max"]&.to_i,
+          allow_cash: row["allow_cash"].nil? ? true : truthy?(row["allow_cash"]),
+          allow_check: row["allow_check"].nil? ? true : truthy?(row["allow_check"]),
+          allow_card: row["allow_card"].nil? ? true : truthy?(row["allow_card"]),
+          allow_partial_teams: truthy?(row["allow_partial_teams"]),
+          checks_payable_to: row["checks_payable_to"],
+          payment_instructions: row["payment_instructions"],
+          fee_includes: row["fee_includes"],
+          swipe_simple_url: row["swipe_simple_url"],
+          walkin_swipe_simple_url: row["walkin_swipe_simple_url"],
+          contact_name: row["contact_name"],
+          contact_email: row["contact_email"],
+          contact_phone: row["contact_phone"],
+          course_name: row["course_name"],
+          tee_name: row["tee_name"],
+          total_holes: row["total_holes"]&.to_i,
+          total_par: row["total_par"]&.to_i,
+          shotgun_start: row["shotgun_start"].nil? ? true : truthy?(row["shotgun_start"]),
+          public_listed: row["public_listed"].nil? ? true : truthy?(row["public_listed"]),
+          banner_url_override: row["banner_url_override"],
+          logo_url_override: row["logo_url_override"],
+          signature_image_url_override: row["signature_image_url_override"],
+          tournament_info: row["tournament_info"],
+          event_schedule: row["event_schedule"],
+          flights_config: parse_json(row["flights_config"], nil),
+          hole_pars: parse_json(row["hole_pars"], nil),
+          hole_handicaps: parse_json(row["hole_handicaps"], nil),
+          raffle_enabled: truthy?(row["raffle_enabled"]),
+          raffle_ticket_price_cents: row["raffle_ticket_price_cents"]&.to_i,
+          raffle_tickets_per_purchase: row["raffle_tickets_per_purchase"]&.to_i,
+          raffle_max_tickets_per_person: row["raffle_max_tickets_per_person"]&.to_i,
+          raffle_description: row["raffle_description"],
+          raffle_draw_time: row["raffle_draw_time"],
+          raffle_auto_draw: truthy?(row["raffle_auto_draw"])
+        }.compact
+        attrs.merge!(row.slice(*TOURNAMENT_PARITY_FIELDS).compact.symbolize_keys)
+        attrs[:waiver_enabled] = true if row["waiver_enabled"].nil?
         if tournament.new_record?
-          attrs = {
-            name: row["name"].presence || "Golf for Wishes #{row['year'] || 2026}",
-            year: (row["year"] || 2026).to_i,
-            edition: row["edition"],
-            status: valid_tournament_status(row["status"]),
-            event_date: row["event_date"],
-            registration_time: row["registration_time"],
-            check_in_time: row["check_in_time"],
-            start_time: row["start_time"],
-            location_name: row["location_name"],
-            location_address: row["location_address"],
-            format_name: row["format_name"],
-            tournament_format: row["tournament_format"],
-            scoring_type: row["scoring_type"],
-            team_size: (row["team_size"] || 2).to_i,
-            max_capacity: (row["max_capacity"] || 144).to_i,
-            reserved_slots: (row["reserved_slots"] || 0).to_i,
-            entry_fee: (row["entry_fee"] || 25_000).to_i,
-            entry_fee_display: row["entry_fee_display"],
-            early_bird_fee: row["early_bird_fee"]&.to_i,
-            early_bird_deadline: row["early_bird_deadline"],
-            walkin_fee: row["walkin_fee"]&.to_i,
-            walkin_registration_open: truthy?(row["walkin_registration_open"]),
-            registration_open: truthy?(row["registration_open"]),
-            registration_deadline: row["registration_deadline"],
-            sponsor_edit_deadline: row["sponsor_edit_deadline"],
-            waitlist_enabled: row["waitlist_enabled"].nil? ? true : truthy?(row["waitlist_enabled"]),
-            waitlist_max: row["waitlist_max"]&.to_i,
-            allow_cash: row["allow_cash"].nil? ? true : truthy?(row["allow_cash"]),
-            allow_check: row["allow_check"].nil? ? true : truthy?(row["allow_check"]),
-            allow_card: row["allow_card"].nil? ? true : truthy?(row["allow_card"]),
-            allow_partial_teams: truthy?(row["allow_partial_teams"]),
-            checks_payable_to: row["checks_payable_to"],
-            payment_instructions: row["payment_instructions"],
-            fee_includes: row["fee_includes"],
-            swipe_simple_url: row["swipe_simple_url"],
-            walkin_swipe_simple_url: row["walkin_swipe_simple_url"],
-            contact_name: row["contact_name"],
-            contact_email: row["contact_email"],
-            contact_phone: row["contact_phone"],
-            course_name: row["course_name"],
-            tee_name: row["tee_name"],
-            total_holes: row["total_holes"]&.to_i,
-            total_par: row["total_par"]&.to_i,
-            shotgun_start: row["shotgun_start"].nil? ? true : truthy?(row["shotgun_start"]),
-            public_listed: row["public_listed"].nil? ? true : truthy?(row["public_listed"]),
-            banner_url_override: row["banner_url_override"],
-            logo_url_override: row["logo_url_override"],
-            signature_image_url_override: row["signature_image_url_override"],
-            tournament_info: row["tournament_info"],
-            event_schedule: row["event_schedule"],
-            config: parse_json(row["config"], {}, expected_type: Hash),
-            flights_config: parse_json(row["flights_config"], nil),
-            hole_pars: parse_json(row["hole_pars"], nil),
-            hole_handicaps: parse_json(row["hole_handicaps"], nil),
-            theme_preset: "charity-bright",
-            raffle_enabled: truthy?(row["raffle_enabled"]),
-            raffle_ticket_price_cents: row["raffle_ticket_price_cents"]&.to_i,
-            raffle_tickets_per_purchase: row["raffle_tickets_per_purchase"]&.to_i,
-            raffle_max_tickets_per_person: row["raffle_max_tickets_per_person"]&.to_i,
-            raffle_description: row["raffle_description"],
-            raffle_draw_time: row["raffle_draw_time"],
-            raffle_auto_draw: truthy?(row["raffle_auto_draw"])
-          }.compact
-          attrs[:config] = {} unless attrs[:config].is_a?(Hash)
-          if tournament.respond_to?(:capacity_unit=)
-            attrs[:capacity_unit] = attrs[:team_size] > 1 ? "teams" : "players"
-          end
-          tournament.assign_attributes(attrs)
-          tournament.save!
+          attrs[:capacity_unit] = attrs[:team_size] > 1 ? "teams" : "players"
         end
+        assign_backfill(
+          tournament,
+          attrs,
+          %i[handicap_required use_flights tee_times_enabled raffle_enabled walkin_registration_open]
+        )
+        if tournament.new_record? || tournament.theme_preset.blank? || tournament.theme_preset == "classic"
+          tournament.theme_preset = "charity-bright"
+        end
+        config = sanitize_settings(parse_json(row["config"], {}, expected_type: Hash))
+        unless row["raffle_hold_winner_on_screen"].nil?
+          config = config.merge("raffle_hold_winner_on_screen" => truthy?(row["raffle_hold_winner_on_screen"]))
+        end
+        tournament.config = merge_missing_json(config, tournament.config || {})
+        tournament.save! if tournament.new_record? || tournament.changed?
         map[row["id"].to_s] = tournament
       end
       map
@@ -241,11 +305,10 @@ module HafagolfMigrations
         group = tournament.groups.find_or_initialize_by(
           group_number: (row["group_number"] || row["id"]).to_i
         )
-        group.assign_attributes(
+        save_backfill!(group,
           hole_number: row["hole_number"]&.to_i,
           starting_course_key: row["starting_course_key"].presence
         )
-        group.save!
         map[row["id"].to_s] = group
       end
       map
@@ -261,13 +324,13 @@ module HafagolfMigrations
           legacy_source: LEGACY_SOURCE,
           legacy_id: row["id"].to_s
         )
-        sponsor.assign_attributes(
+        assign_backfill(sponsor,
           name: row["name"].presence || "Sponsor #{row['id']}",
           tier: row["tier"].presence || "silver",
           description: row["description"],
           login_email: row["login_email"] || row["contact_email"],
           website_url: row["website_url"],
-          logo_url: row["logo_url"],
+          logo_url: (row["logo_url"].presence unless sponsor.logo.attached?),
           course_key: row["course_key"],
           slot_count: (row["slot_count"] || 0).to_i,
           hole_number: row["hole_number"]&.to_i,
@@ -275,23 +338,25 @@ module HafagolfMigrations
           active: row["active"].nil? ? true : truthy?(row["active"])
         )
         # Expire historical portal tokens on archived/completed past events
-        if sponsor.respond_to?(:access_token=) && tournament.status.in?(%w[completed archived])
+        if sponsor.new_record? && tournament.status.in?(%w[completed archived])
           sponsor.access_token = nil
         end
-        sponsor.save!
+        sponsor.save! if sponsor.new_record? || sponsor.changed?
         map[row["id"].to_s] = sponsor
       end
       map
     end
 
-    def import_golfers!(org, tournament_map, group_map, sponsor_map)
+    def import_golfers!(org, tournament_map, group_map, sponsor_map, user_map)
       map = {}
       @source.rows("golfers").each do |row|
         tournament = tournament_map[row["tournament_id"].to_s]
         next unless tournament
 
         legacy_tag = "[legacy:#{LEGACY_SOURCE}:#{row['id']}]"
-        golfer = find_existing_golfer(tournament, row, legacy_tag) || tournament.golfers.new
+        registration = bridge_registration(tournament, row["id"])
+        golfer = legacy_golfer(tournament, registration, legacy_tag)
+        token = import_payment_token(golfer, registration, row["payment_token"])
 
         has_stripe = row["stripe_payment_intent_id"].present? || row["stripe_checkout_session_id"].present?
         base_notes = row["notes"].to_s
@@ -302,6 +367,8 @@ module HafagolfMigrations
           email: row["email"].presence || "legacy-maw-#{row['id']}@migrated.invalid",
           phone: row["phone"].presence || "000-000-0000",
           company: row["company"],
+          address: row["address"],
+          mobile: row["mobile"],
           team_name: row["team_name"],
           tshirt_size: row["tshirt_size"],
           partner_name: row["partner_name"],
@@ -318,7 +385,13 @@ module HafagolfMigrations
           payment_amount_cents: row["payment_amount_cents"]&.to_i,
           refund_amount_cents: row["refund_amount_cents"]&.to_i,
           payment_notes: row["payment_notes"],
+          payment_token: token,
+          payment_verified_at: row["payment_verified_at"],
+          payment_verified_by_id: user_map[row["payment_verified_by_id"].to_s]&.id,
+          payment_verified_by_name: row["payment_verified_by_name"],
           refund_reason: row["refund_reason"],
+          refunded_by_id: user_map[row["refunded_by_id"].to_s]&.id,
+          stripe_fee_cents: row["stripe_fee_cents"],
           position: row["position"]&.to_i,
           hole_number: row["hole_number"]&.to_i,
           raffle_tickets_requested: (row["raffle_tickets_requested"] || 0).to_i,
@@ -332,7 +405,9 @@ module HafagolfMigrations
           paid_at: row["paid_at"],
           refunded_at: row["refunded_at"],
           checked_in_at: row["checked_in_at"],
-          waiver_accepted_at: row["waiver_accepted_at"] || Time.current,
+          checked_in_by_id: user_map[row["checked_in_by_id"].to_s]&.id,
+          checked_in_by_name: row["checked_in_by_name"],
+          waiver_accepted_at: row["waiver_accepted_at"],
           group: group_map[row["group_id"].to_s],
           sponsor: sponsor_map[row["sponsor_id"].to_s],
           notes: notes_with_tag
@@ -341,19 +416,16 @@ module HafagolfMigrations
           attrs[:stripe_account_origin] = "legacy_#{LEGACY_SOURCE}"
         end
 
-        golfer.assign_attributes(attrs)
-        golfer.save!
-        sync_real_team_bridge!(org, tournament, golfer, row)
+        golfer.historical_import = true
+        save_backfill!(golfer, attrs)
+        sync_real_team_bridge!(registration, org, tournament, golfer, row, token)
         map[row["id"].to_s] = golfer
       end
       map
     end
 
-    def sync_real_team_bridge!(org, tournament, golfer, row)
-      return unless defined?(Registration) && defined?(TeamMember)
-
-      reg = Registration.find_or_initialize_by(legacy_source: LEGACY_SOURCE, legacy_id: row["id"].to_s)
-      reg.assign_attributes(
+    def sync_real_team_bridge!(reg, org, tournament, golfer, row, token)
+      assign_backfill(reg,
         organization: org,
         tournament: tournament,
         golfer_id: golfer.id,
@@ -363,6 +435,7 @@ module HafagolfMigrations
         contact_email: golfer.email,
         contact_phone: golfer.phone,
         company: golfer.company,
+        team_name: golfer.team_name,
         team_category: golfer.team_category,
         registration_source: golfer.registration_source,
         registration_status: golfer.registration_status,
@@ -370,80 +443,109 @@ module HafagolfMigrations
         payment_status: golfer.payment_status,
         payment_method: golfer.payment_method,
         payment_amount_cents: golfer.payment_amount_cents,
+        receipt_number: golfer.receipt_number,
+        payment_notes: golfer.payment_notes,
+        payment_verified_at: golfer.payment_verified_at,
+        payment_verified_by_id: golfer.payment_verified_by_id,
+        payment_verified_by_name: golfer.payment_verified_by_name,
+        payment_token: token,
         refund_amount_cents: golfer.refund_amount_cents,
+        refund_reason: golfer.refund_reason,
+        refunded_by_id: golfer.refunded_by_id,
+        stripe_checkout_session_id: golfer.stripe_checkout_session_id,
         stripe_payment_intent_id: golfer.stripe_payment_intent_id,
-        stripe_account_origin: golfer.respond_to?(:stripe_account_origin) ? golfer.stripe_account_origin : nil,
+        stripe_card_brand: golfer.stripe_card_brand,
+        stripe_card_last4: golfer.stripe_card_last4,
+        stripe_refund_id: golfer.stripe_refund_id,
+        stripe_account_origin: golfer.stripe_account_origin,
         paid_at: golfer.paid_at,
-        refunded_at: golfer.refunded_at
+        refunded_at: golfer.refunded_at,
+        raffle_tickets_requested: golfer.raffle_tickets_requested,
+        raffle_bundle_label: golfer.raffle_bundle_label,
+        notes: row["notes"]
       )
 
-      # Composite "<golfer_id>:<position>" keys so Player 1 and Player 2 are uniquely idempotent
-      m1_attrs = {
+      member_defaults = {
         organization: org,
         tournament: tournament,
+        company: golfer.company,
+        checked_in_at: golfer.checked_in_at,
+        checked_in_by_id: golfer.checked_in_by_id,
+        checked_in_by_name: golfer.checked_in_by_name,
+        legacy_source: LEGACY_SOURCE
+      }
+      members = [member_defaults.merge(
         position: 1,
         is_captain: true,
         name: golfer.name,
         email: golfer.email,
         phone: golfer.phone,
-        company: golfer.company,
+        mobile: golfer.mobile,
+        address: golfer.address,
+        tshirt_size: golfer.tshirt_size,
         waiver_accepted_at: golfer.waiver_accepted_at,
-        checked_in_at: golfer.checked_in_at,
-        legacy_source: LEGACY_SOURCE,
         legacy_id: "#{row['id']}:1"
-      }
-
-      m2_attrs = if golfer.partner_name.present?
-                   {
-                     organization: org,
-                     tournament: tournament,
-                     position: 2,
-                     is_captain: false,
-                     name: golfer.partner_name,
-                     email: golfer.partner_email,
-                     phone: golfer.partner_phone,
-                     company: golfer.company,
-                     waiver_accepted_at: golfer.waiver_accepted_at,
-                     checked_in_at: golfer.checked_in_at,
-                     legacy_source: LEGACY_SOURCE,
-                     legacy_id: "#{row['id']}:2"
-                   }
-                 end
-
-      if reg.new_record?
-        reg.team_members.build(m1_attrs)
-        reg.team_members.build(m2_attrs) if m2_attrs
-        reg.save!
-      else
-        reg.save!
-
-        m1 = TeamMember.find_or_initialize_by(legacy_source: LEGACY_SOURCE, legacy_id: "#{row['id']}:1")
-        m1.assign_attributes(m1_attrs.merge(registration: reg))
-        m1.save!
-
-        if m2_attrs
-          m2 = TeamMember.find_or_initialize_by(legacy_source: LEGACY_SOURCE, legacy_id: "#{row['id']}:2")
-          m2.assign_attributes(m2_attrs.merge(registration: reg))
-          m2.save!
-        end
+      )]
+      if golfer.partner_name.present?
+        members << member_defaults.merge(
+          position: 2,
+          is_captain: false,
+          name: golfer.partner_name,
+          email: golfer.partner_email,
+          phone: golfer.partner_phone,
+          tshirt_size: golfer.partner_tshirt_size,
+          waiver_accepted_at: golfer.partner_waiver_accepted_at,
+          legacy_id: "#{row['id']}:2"
+        )
       end
+      sync_members!(reg, members)
     end
 
-    def import_sponsor_slots!(sponsor_map, _golfer_map)
-      @source.rows("sponsor_slots").each do |row|
+    def import_sponsor_slots!(sponsor_map, golfer_map)
+      @source.rows("sponsor_slots").sort_by { |row| row["slot_number"].to_i }.each do |row|
         sponsor = sponsor_map[row["sponsor_id"].to_s]
         next unless sponsor
 
         slot = sponsor.sponsor_slots.find_or_initialize_by(slot_number: (row["slot_number"] || 1).to_i)
-        slot.assign_attributes(
+        assign_backfill(slot,
           tournament_id: sponsor.tournament_id,
           player_name: row["player_name"],
           player_email: row["player_email"],
           player_phone: row["player_phone"],
-          confirmed_at: row["confirmed_at"]
+          confirmed_at: row["confirmed_at"],
+          tshirt_size: row["tshirt_size"],
+          handicap: row["handicap"]
         )
-        slot.save!
+        if slot.new_record? || slot.changed?
+          # Legacy filled slots can predate the handicap requirement.
+          slot.historical_import = true
+          slot.save!
+        end
+
+        link_sponsor_slot!(slot, golfer_map[row["golfer_id"].to_s])
       end
+    end
+
+    def link_sponsor_slot!(slot, golfer)
+      return if slot.team_member
+
+      members = TeamMember.joins(:registration).where(
+        legacy_source: LEGACY_SOURCE, tournament_id: slot.tournament_id,
+        registrations: { sponsor_id: slot.sponsor_id }
+      )
+      members = members.where(registrations: { golfer_id: golfer.id }) if golfer
+
+      matches = if slot.player_email.present?
+                  members.where("LOWER(team_members.email) = ?", slot.player_email.downcase)
+                elsif slot.player_name.present?
+                  members.where("LOWER(team_members.name) = ?", slot.player_name.downcase)
+                else
+                  members.none
+                end
+      candidates = matches.limit(2).to_a
+      member = candidates.first if candidates.one?
+      member ||= members.find_by(position: 1) if golfer && candidates.empty?
+      member.update!(sponsor_slot: slot) if member && member.sponsor_slot_id.nil?
     end
 
     def import_raffle_batches!(tournament_map, user_map)
@@ -456,7 +558,7 @@ module HafagolfMigrations
         batch = tournament.raffle_sale_batches.where("payment_notes LIKE ?", "%#{batch_key}%").first ||
                 tournament.raffle_sale_batches.new
         notes = (row["payment_notes"] || row["notes"]).to_s
-        batch.assign_attributes(
+        save_backfill!(batch,
           buyer_name: (row["buyer_name"] || row["purchaser_name"]).presence || "Raffle Buyer",
           buyer_email: row["buyer_email"] || row["purchaser_email"],
           buyer_phone: row["buyer_phone"] || row["purchaser_phone"],
@@ -468,7 +570,6 @@ module HafagolfMigrations
           sold_by_user: user_map[row["sold_by_user_id"].to_s],
           payment_notes: notes.include?(batch_key) ? notes : [notes.presence, batch_key].compact.join(" ")
         )
-        batch.save!
         map[row["id"].to_s] = batch
       end
       map
@@ -484,13 +585,13 @@ module HafagolfMigrations
           legacy_source: LEGACY_SOURCE,
           legacy_id: row["id"].to_s
         )
-        prize.assign_attributes(
+        save_backfill!(prize,
           name: row["name"].presence || "Prize #{row['id']}",
           position: (row["position"] || row["id"]).to_i,
           description: row["description"],
           value_cents: (row["value_cents"] || 0).to_i,
           tier: row["tier"].presence || "standard",
-          image_url: row["image_url"],
+          image_url: (row["image_url"].presence unless prize.image.attached?),
           sponsor_name: row["sponsor_name"],
           sponsor_logo_url: row["sponsor_logo_url"],
           winner_name: row["winner_name"],
@@ -501,7 +602,6 @@ module HafagolfMigrations
           won_at: row["won_at"] || row["drawn_at"],
           claimed_at: row["claimed_at"]
         )
-        prize.save!
         map[row["id"].to_s] = prize
       end
       map
@@ -523,7 +623,7 @@ module HafagolfMigrations
         ticket = tournament.raffle_tickets.find_or_initialize_by(ticket_number: ticket_num)
         golfer = golfer_map[row["golfer_id"].to_s]
         registration = golfer ? registrations_by_legacy_id[row["golfer_id"].to_s] : nil
-        ticket.assign_attributes(
+        save_backfill!(ticket,
           sequence_number: (row["sequence_number"] || row["id"]).to_i,
           purchaser_name: row["purchaser_name"].presence || "Raffle Buyer",
           purchaser_email: row["purchaser_email"],
@@ -545,7 +645,6 @@ module HafagolfMigrations
           raffle_prize: prize_map[row["raffle_prize_id"].to_s],
           sold_by_user: user_map[row["sold_by_user_id"].to_s]
         )
-        ticket.save!
         map[row["id"].to_s] = ticket
       end
       map
@@ -559,7 +658,7 @@ module HafagolfMigrations
         ticket = ticket_map[row["winning_ticket_id"].to_s]
         next unless prize && ticket
 
-        prize.update!(winning_ticket_id: ticket.id) if prize.winning_ticket_id != ticket.id
+        save_backfill!(prize, winning_ticket_id: ticket.id)
       end
     end
 
@@ -577,7 +676,7 @@ module HafagolfMigrations
                       when "Sponsor" then sponsor_map[row["messageable_id"].to_s]
                       else ticket_map[row["raffle_ticket_id"].to_s] || golfer_map[row["golfer_id"].to_s] || sponsor_map[row["sponsor_id"].to_s]
                       end
-        delivery.assign_attributes(
+        save_backfill!(delivery,
           tournament: tournament,
           channel: row["channel"].presence || "sms",
           provider: row["provider"].presence || "clicksend",
@@ -586,7 +685,6 @@ module HafagolfMigrations
           status: row["status"].presence || "pending",
           messageable: messageable
         )
-        delivery.save!
       end
     end
 
@@ -611,7 +709,7 @@ module HafagolfMigrations
       end
     end
 
-    def verify_import!(org, tournament_map)
+    def verify_import!(org, tournament_map, assets: nil)
       src_golfers = @source.rows("golfers")
       src_tickets = @source.rows("raffle_tickets")
       tournament_ids = tournament_map.values.map(&:id)
@@ -622,6 +720,10 @@ module HafagolfMigrations
         "tournaments" => @source.rows("tournaments").size,
         "groups" => @source.rows("groups").size,
         "golfers" => src_golfers.size,
+        "waivers_signed" => src_golfers.count { |g| g["waiver_accepted_at"].present? },
+        "partner_waivers_signed" => src_golfers.count { |g| g["partner_waiver_accepted_at"].present? },
+        "checked_in_golfers" => src_golfers.count { |g| g["checked_in_at"].present? },
+        "payment_verified_golfers" => src_golfers.count { |g| g["payment_verified_at"].present? },
         "golfers_confirmed" => src_golfers.count { |g| valid_registration_status(g["registration_status"]) == "confirmed" },
         "golfers_waitlist" => src_golfers.count { |g| valid_registration_status(g["registration_status"]) == "waitlist" },
         "golfers_cancelled" => src_golfers.count { |g| valid_registration_status(g["registration_status"]) == "cancelled" },
@@ -643,6 +745,10 @@ module HafagolfMigrations
         "tournaments" => Tournament.where(id: tournament_ids).count,
         "groups" => Group.where(tournament_id: tournament_ids).count,
         "golfers" => tgt_golfers.count,
+        "waivers_signed" => tgt_golfers.where.not(waiver_accepted_at: nil).count,
+        "partner_waivers_signed" => tgt_golfers.where.not(partner_waiver_accepted_at: nil).count,
+        "checked_in_golfers" => tgt_golfers.where.not(checked_in_at: nil).count,
+        "payment_verified_golfers" => tgt_golfers.where.not(payment_verified_at: nil).count,
         "golfers_confirmed" => tgt_golfers.where(registration_status: "confirmed").count,
         "golfers_waitlist" => tgt_golfers.where(registration_status: "waitlist").count,
         "golfers_cancelled" => tgt_golfers.where(registration_status: "cancelled").count,
@@ -661,9 +767,16 @@ module HafagolfMigrations
       }
 
       if defined?(TeamMember) && defined?(Registration)
+        source_metrics["registrations"] = src_golfers.size
+        target_metrics["registrations"] = Registration.where(tournament_id: tournament_ids).count
         expected_members = src_golfers.sum { |g| g["partner_name"].present? ? 2 : 1 }
         source_metrics["team_members"] = expected_members
         target_metrics["team_members"] = TeamMember.where(tournament_id: tournament_ids).count
+      end
+
+      if assets && assets.expected_attachments.positive? && !@allow_missing_attachments
+        source_metrics["attachments"] = assets.expected_attachments
+        target_metrics["attachments"] = assets.attached_attachments
       end
 
       orphans = {
@@ -671,12 +784,9 @@ module HafagolfMigrations
         "golfer_sponsors" => tgt_golfers.where.not(sponsor_id: nil).where.not(sponsor_id: Sponsor.where(tournament_id: tournament_ids).select(:id)).count,
         "prize_winning_tickets" => RafflePrize.where(tournament_id: tournament_ids).where.not(winning_ticket_id: nil).where.not(winning_ticket_id: tgt_tickets.select(:id)).count
       }
+      orphans["missing_attachments"] = assets.missing_attachments.size if assets && !@allow_missing_attachments
 
       Verifier.verify!(source_metrics: source_metrics, target_metrics: target_metrics, orphans: orphans)
-    end
-
-    def find_existing_golfer(tournament, row, legacy_tag)
-      tournament.golfers.where("notes LIKE ?", "%#{legacy_tag}%").first
     end
 
     def valid_hex(val, fallback)
@@ -693,10 +803,6 @@ module HafagolfMigrations
 
     def valid_payment_status(status)
       %w[paid unpaid pending refunded].include?(status) ? status : "unpaid"
-    end
-
-    def truthy?(val)
-      ActiveModel::Type::Boolean.new.cast(val) == true
     end
 
     def parse_json(val, fallback, expected_type: nil)

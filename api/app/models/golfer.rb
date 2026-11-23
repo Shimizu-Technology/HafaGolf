@@ -1,4 +1,6 @@
 class Golfer < ApplicationRecord
+  attr_accessor :historical_import
+
   belongs_to :tournament
   belongs_to :group, optional: true
   belongs_to :sponsor, optional: true
@@ -21,7 +23,7 @@ class Golfer < ApplicationRecord
   validates :payment_status, inclusion: { in: %w[paid unpaid pending refunded], allow_nil: true }
   validates :registration_status, inclusion: { in: %w[confirmed waitlist cancelled pending], allow_nil: true }
   validates :waiver_accepted_at, presence: true,
-            if: -> { !sponsored? && tournament&.waiver_enabled != false && (new_record? || will_save_change_to_waiver_accepted_at?) }
+            if: -> { !historical_import && !sponsored? && tournament&.waiver_enabled != false && (new_record? || will_save_change_to_waiver_accepted_at?) }
   validates :tournament_id, presence: true
   validates :team_category, inclusion: { in: %w[Male Female Co-Ed] }, allow_blank: true, unless: :sponsored?
   validate :team_category_required_for_unsponsored_registration
@@ -536,7 +538,7 @@ class Golfer < ApplicationRecord
   end
 
   def should_send_immediate_emails?
-    %w[pay_on_day swipe_simple walk_in].include?(payment_type)
+    !historical_import && %w[pay_on_day swipe_simple walk_in].include?(payment_type)
   end
 
   def set_registration_status
