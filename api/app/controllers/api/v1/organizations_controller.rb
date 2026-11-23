@@ -638,7 +638,7 @@ module Api
         can_view_finances = current_user.can?(:view_reports, organization: organization, tournament: tournament) ||
                             current_user.can?(:manage_finances, organization: organization, tournament: tournament)
 
-        golfers = tournament.golfers.includes(:group, :sponsor, :employee_number_record).order(created_at: :desc).to_a
+        golfers = tournament.golfers.includes(:group, :sponsor, :employee_number_record, golfer_add_ons: :tournament_add_on).order(created_at: :desc).to_a
 
         hole_labels = bulk_hole_position_labels(tournament.id, golfers)
 
@@ -704,15 +704,19 @@ module Api
         render json: {
           tournament: TournamentSerializer.new(tournament).as_json,
           golfers: golfers.map { |g|
-            g.as_json(only: golfer_fields).merge(
+            row = g.as_json(only: golfer_fields).merge(
               "last_name" => g.last_name,
               "waiver_signed" => g.waiver_accepted_at.present?,
               "employee_number" => g.employee_number,
               "expected_entry_fee_cents" => g.expected_entry_fee_cents,
               "hole_position_label" => hole_labels[g.id],
               "starting_hole_description" => g.group&.starting_hole_description,
-              "sponsor_display_name" => g.sponsor_name.presence || g.sponsor&.name
+              "sponsor_display_name" => g.sponsor_name.presence || g.sponsor&.name,
+              "add_ons_summary" => g.add_ons_summary,
+              "add_ons" => g.add_ons_breakdown(include_prices: can_view_finances)
             )
+            row["add_ons_total_cents"] = g.add_ons_total_cents if can_view_finances
+            row
           },
           stats: stats
         }

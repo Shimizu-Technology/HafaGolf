@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { LiabilityWaiver } from '../LiabilityWaiver';
 import { SettingsCheckbox, SettingsInput, SettingsSection, SettingsSelect, SettingsTextarea, settingsButton } from './SettingsFields';
+import { TournamentAddOnsPanel } from './TournamentAddOnsPanel';
 import type { RegistrationMode, TournamentDraftProps } from './settingsForm';
 
 export function RegistrationAndWaiverTab({ tournamentSettings: event, handleTournamentChange: change, organizationName, sponsorReservedTeams, sponsorReservedSlots }: TournamentDraftProps & {
@@ -69,6 +70,7 @@ export function RegistrationAndWaiverTab({ tournamentSettings: event, handleTour
           </>
         )}
       </SettingsSection>
+      <TournamentAddOnsPanel tournamentId={event.id} />
       <SettingsSection title="Liability waiver">
         <SettingsCheckbox label="Require a waiver for every player" checked={event.waiver_enabled}
           onChange={(value) => change('waiver_enabled', value)} />

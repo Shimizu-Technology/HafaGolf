@@ -41,7 +41,7 @@ class TournamentSerializer < ActiveModel::Serializer
              # Walk-in
              :walkin_fee, :walkin_registration_open,
              # Sponsor
-             :sponsor_edit_deadline, :sponsor_tiers,
+             :sponsor_edit_deadline, :sponsor_tiers, :allow_sponsor_check_invoice,
              # IRS >$75 Quid-Pro-Quo Tax Receipts
              :tax_receipt_enabled, :tax_org_name, :tax_org_ein,
              :fmv_per_player_cents, :tax_receipt_disclaimer,

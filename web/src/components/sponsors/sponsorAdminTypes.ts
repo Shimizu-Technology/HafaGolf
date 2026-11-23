@@ -34,6 +34,16 @@ export interface AdminSponsor {
   highest_filled_slot?: number;
   has_active_portal_link: boolean;
   portal_link_issued_at: string | null;
+  sponsor_tier_id?: number | null;
+  payment_type?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+  payment_amount_cents?: number | null;
+  invoice_number?: string | null;
+  check_number?: string | null;
+  check_notes?: string | null;
+  invoiced_at?: string | null;
+  paid_at?: string | null;
 }
 
 export interface CourseConfig {

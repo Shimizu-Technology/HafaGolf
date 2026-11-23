@@ -411,6 +411,7 @@ module Api
           :theme_preset, :use_org_branding,
           :commemorative_banner_url, :tribute_title, :tribute_subtitle,
           :waiver_enabled, :waiver_text, :show_public_sponsors, :sponsor_wall_title,
+          :allow_sponsor_check_invoice,
           :raffle_include_with_registration, :raffle_hold_winner_on_screen,
           config: {},
           team_categories: [],

@@ -8,9 +8,10 @@ module Api
       before_action :authorize_public_tournament_access!, only: [:index, :show, :by_hole]
       before_action :authorize_sponsors_read!, only: [:manage]
       before_action :authorize_tournament_admin!, only: [:create, :update, :destroy, :reorder, :slots, :update_slot]
+      before_action :authorize_mark_check_paid!, only: [:mark_check_paid]
       before_action :authorize_org_admin!, only: [:portal_link, :send_portal_invite]
       before_action -> { require_feature!(:sponsors) }
-      before_action :set_sponsor, only: [:show, :update, :destroy, :slots, :update_slot, :portal_link, :send_portal_invite]
+      before_action :set_sponsor, only: [:show, :update, :destroy, :slots, :update_slot, :portal_link, :send_portal_invite, :mark_check_paid]
       before_action :require_portal_ready!, only: [:portal_link, :send_portal_invite]
 
       # GET /api/v1/tournaments/:tournament_id/sponsors
@@ -133,6 +134,45 @@ module Api
           render json: { error: "The invite email could not be sent. Use Copy Portal Link to share it another way." },
                  status: :unprocessable_entity
         end
+      end
+
+      # POST /api/v1/tournaments/:tournament_id/sponsors/:id/mark_check_paid
+      # Admin - marks a pending-check sponsor reservation as paid and activates it
+      def mark_check_paid
+        if @sponsor.payment_status == 'paid' && @sponsor.active?
+          render json: { error: 'Sponsor is already marked paid and active.' }, status: :unprocessable_entity
+          return
+        end
+
+        if %w[refunded cancelled expired].include?(@sponsor.payment_status)
+          render json: { error: "Cannot mark a #{@sponsor.payment_status} sponsor as paid." }, status: :unprocessable_entity
+          return
+        end
+
+        @sponsor.mark_check_paid!(
+          check_number: params[:check_number],
+          check_notes: params[:check_notes]
+        )
+
+        ActivityLog.log(
+          admin: current_user,
+          action: 'sponsor_check_paid',
+          target: @sponsor,
+          tournament: @tournament,
+          details: "Marked check paid and activated sponsor #{@sponsor.name}#{@sponsor.check_number.present? ? " (Check ##{@sponsor.check_number})" : ''}",
+          metadata: {
+            sponsor_id: @sponsor.id,
+            invoice_number: @sponsor.invoice_number,
+            check_number: @sponsor.check_number,
+            check_notes: @sponsor.check_notes,
+            amount_cents: @sponsor.payment_amount_cents
+          }
+        )
+
+        render json: {
+          sponsor: admin_sponsor_response(@sponsor.reload),
+          message: 'Sponsor check marked paid and activated'
+        }
       end
 
       # GET /api/v1/tournaments/:tournament_id/sponsors/:id
@@ -263,6 +303,12 @@ module Api
         require_any_capability!(:manage_sponsors, :manage_groups, :view_reports, :check_in, tournament: @tournament)
       end
 
+      def authorize_mark_check_paid!
+        return unless verify_tenant_match!(@tournament.organization_id, status: :not_found, message: 'Tournament not found')
+
+        require_any_capability!(:manage_sponsors, :manage_finances, tournament: @tournament)
+      end
+
       def authorize_tournament_admin!
         return unless verify_tenant_match!(@tournament.organization_id, status: :not_found, message: 'Tournament not found')
 
@@ -362,6 +408,10 @@ module Api
           payment_status: sponsor.payment_status,
           payment_method: sponsor.payment_method,
           payment_amount_cents: sponsor.payment_amount_cents,
+          invoice_number: sponsor.invoice_number,
+          check_number: sponsor.check_number,
+          check_notes: sponsor.check_notes,
+          invoiced_at: sponsor.invoiced_at&.iso8601,
           paid_at: sponsor.paid_at&.iso8601
         }
       end

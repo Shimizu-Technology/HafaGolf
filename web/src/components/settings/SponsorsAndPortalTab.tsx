@@ -29,6 +29,11 @@ export function SponsorsAndPortalTab({ draft, update, organizationSlug, event }:
       {settings && change && (
         <>
           <SettingsSection title="Sponsor portal" description="Sponsors can use their invitation link to enter player names and details.">
+            <SettingsCheckbox
+              label="Allow sponsors to reserve a tier and pay by check (generates a printable invoice)"
+              checked={settings.allow_sponsor_check_invoice}
+              onChange={(value) => change('allow_sponsor_check_invoice', value)}
+            />
             <SettingsInput label="Deadline for sponsors to edit their teams" type="datetime-local"
               value={settings.sponsor_edit_deadline.slice(0, 16)} onChange={(value) => change('sponsor_edit_deadline', value)}
               help="After this time, sponsors need to contact you to make changes." />

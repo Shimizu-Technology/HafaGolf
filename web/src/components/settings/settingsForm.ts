@@ -130,6 +130,7 @@ export interface TournamentSettings extends TournamentMedia {
   course_configs: CourseConfigDef[];
   sponsor_edit_deadline: string;
   sponsor_tiers: SponsorTierDef[];
+  allow_sponsor_check_invoice: boolean;
   event_schedule: string;
   payment_instructions: string;
   check_in_time: string;
@@ -270,6 +271,7 @@ export function tournamentDraft(t: Tournament): TournamentSettings {
       { key: 'bronze', label: 'Bronze', sort_order: 4 },
       { key: 'hole', label: 'Hole Sponsor', sort_order: 5 },
     ],
+    allow_sponsor_check_invoice: t.allow_sponsor_check_invoice ?? true,
     event_schedule: t.event_schedule || '',
     tournament_info: t.tournament_info || '',
     payment_instructions: t.payment_instructions || '',
@@ -345,6 +347,7 @@ export function tournamentPayload(tournamentSettings: TournamentSettings) {
     })),
     sponsor_edit_deadline: tournamentSettings.sponsor_edit_deadline || null,
     sponsor_tiers: tournamentSettings.sponsor_tiers,
+    allow_sponsor_check_invoice: tournamentSettings.allow_sponsor_check_invoice,
     event_schedule: tournamentSettings.event_schedule || null,
     tournament_info: tournamentSettings.tournament_info || null,
     payment_instructions: tournamentSettings.payment_instructions || null,

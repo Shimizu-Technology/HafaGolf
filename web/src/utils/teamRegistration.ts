@@ -277,6 +277,7 @@ export function buildRegistrationPayload(
     waiverEnabled?: boolean;
     isEmployee?: boolean;
     employeeNumber?: string;
+    addOns?: Array<{ add_on_id: number; quantity: number }>;
   }
 ): CreateRegistrationPayload {
   const captain = state.players[0];
@@ -314,6 +315,7 @@ export function buildRegistrationPayload(
     ...(options?.isEmployee && options?.employeeNumber
       ? { is_employee: true, employee_number: options.employeeNumber }
       : {}),
+    ...(options?.addOns && options.addOns.length > 0 ? { add_ons: options.addOns } : {}),
     organization_slug: options?.organizationSlug,
   };
 }

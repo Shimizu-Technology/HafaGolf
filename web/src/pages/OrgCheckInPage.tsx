@@ -27,6 +27,7 @@ import {
   Building2,
   BadgeCheck,
   Clock,
+  Sparkles,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { adminEventPath } from '../utils/adminRoutes';
@@ -926,6 +927,15 @@ export const OrgCheckInPage: React.FC = () => {
                         Start {reg.starting_position_label}
                       </p>
                     )}
+                    {reg.add_ons_summary && (
+                      <div
+                        data-testid="checkin-addons-badge"
+                        className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-amber-100 border border-amber-200 px-2.5 py-1 text-xs font-semibold text-amber-900"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>{reg.add_ons_summary}</span>
+                      </div>
+                    )}
                   </div>
 
                   {reg.payment_status !== 'paid' && (
@@ -1093,6 +1103,15 @@ export const OrgCheckInPage: React.FC = () => {
                     </div>
                   )}
                   {golfer.company && <p className="text-gray-400 text-[11px] sm:text-xs truncate">{golfer.company}</p>}
+                  {golfer.add_ons_summary && (
+                    <div
+                      data-testid="checkin-addons-badge"
+                      className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-amber-100 border border-amber-200 px-2 py-0.5 text-[11px] sm:text-xs font-semibold text-amber-900"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span className="truncate">{golfer.add_ons_summary}</span>
+                    </div>
+                  )}
                   {startingPositionSummary(golfer) && (
                     <div className="mt-1 flex items-start gap-1.5 text-[11px] text-brand-700 sm:text-xs">
                       <Flag className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
@@ -1193,6 +1212,22 @@ export const OrgCheckInPage: React.FC = () => {
                   <div className="flex items-center gap-3">
                     <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
                     <span className="text-gray-700">{selectedGolfer.company}</span>
+                  </div>
+                )}
+                {selectedGolfer.add_ons_summary && (
+                  <div
+                    data-testid="checkin-addons-badge"
+                    className="rounded-xl border border-amber-200 bg-amber-50 p-3 flex items-start gap-2.5"
+                  >
+                    <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">
+                        Pre-Ordered Add-Ons (Hand at Check-In)
+                      </p>
+                      <p className="text-sm font-semibold text-amber-950 mt-0.5">
+                        {selectedGolfer.add_ons_summary}
+                      </p>
+                    </div>
                   </div>
                 )}
                 {startingPositionSummary(selectedGolfer) && (
@@ -1352,6 +1387,17 @@ export const OrgCheckInPage: React.FC = () => {
               {confirmingCheckIn.partner_name && (
                 <p className="text-gray-500 text-sm mt-1">Team: {confirmingCheckIn.name} & {confirmingCheckIn.partner_name}</p>
               )}
+              {confirmingCheckIn.add_ons_summary && (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-800 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                    Hand Player Add-Ons
+                  </p>
+                  <p className="text-sm font-semibold text-amber-950 mt-0.5">
+                    {confirmingCheckIn.add_ons_summary}
+                  </p>
+                </div>
+              )}
               {startingPositionSummary(confirmingCheckIn) && (
                 <>
                   <p className="text-gray-400 text-xs mt-1">{startingPositionSummary(confirmingCheckIn)?.label}</p>
@@ -1445,6 +1491,19 @@ export const OrgCheckInPage: React.FC = () => {
               <div className="flex items-center gap-3">
                 <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
                 <span className="text-gray-700 text-sm">{selectedGolfer.company}</span>
+              </div>
+            )}
+            {selectedGolfer.add_ons_summary && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 flex items-start gap-2.5">
+                <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">
+                    Pre-Ordered Add-Ons
+                  </p>
+                  <p className="text-sm font-semibold text-amber-950 mt-0.5">
+                    {selectedGolfer.add_ons_summary}
+                  </p>
+                </div>
               </div>
             )}
 

@@ -18,6 +18,7 @@ class Registration < ApplicationRecord
   has_many :team_members, -> { order(:position) }, dependent: :destroy, inverse_of: :registration
   has_many :scores, dependent: :destroy
   has_many :raffle_tickets, dependent: :nullify
+  has_many :golfer_add_ons, dependent: :destroy
   has_one :employee_number_record, class_name: "EmployeeNumber", foreign_key: :used_by_registration_id
 
   before_destroy :release_claimed_employee_numbers!, prepend: true
@@ -161,6 +162,32 @@ class Registration < ApplicationRecord
     employee_number_record&.employee_number
   end
 
+  def add_ons_total_cents
+    if golfer_add_ons.loaded?
+      golfer_add_ons.sum(&:line_total_cents)
+    else
+      golfer_add_ons.sum("quantity * unit_price_cents").to_i
+    end
+  end
+
+  def add_ons_summary
+    items = golfer_add_ons.loaded? ? golfer_add_ons : golfer_add_ons.includes(:tournament_add_on).to_a
+    return nil if items.empty?
+
+    items
+      .sort_by { |item| [item.tournament_add_on&.sort_order.to_i, item.id.to_i] }
+      .filter_map { |item| item.tournament_add_on&.name.present? ? "#{item.quantity}× #{item.tournament_add_on.name}" : nil }
+      .join(" · ")
+      .presence
+  end
+
+  def add_ons_breakdown(include_prices: true)
+    items = golfer_add_ons.loaded? ? golfer_add_ons : golfer_add_ons.includes(:tournament_add_on).to_a
+    items
+      .sort_by { |item| [item.tournament_add_on&.sort_order.to_i, item.id.to_i] }
+      .map { |item| item.as_summary_json(include_prices: include_prices) }
+  end
+
   def verify_payment!(admin:, method: nil, notes: nil, amount_cents: nil)
     attrs = {
       payment_status: "paid",
@@ -172,7 +199,7 @@ class Registration < ApplicationRecord
       payment_verified_at: Time.current
     }
     attrs[:registration_status] = "confirmed" if registration_status == "pending"
-    attrs[:payment_amount_cents] = amount_cents || payment_amount_cents || expected_entry_fee_cents
+    attrs[:payment_amount_cents] = amount_cents || payment_amount_cents || (expected_entry_fee_cents + add_ons_total_cents)
 
     update!(attrs)
   end

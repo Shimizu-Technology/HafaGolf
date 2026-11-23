@@ -13,7 +13,7 @@ class Sponsor < ApplicationRecord
   # Legacy constant kept for backwards compatibility with scopes/seeds.
   DEFAULT_TIERS = %w[title platinum gold silver bronze hole].freeze
   TIERS = DEFAULT_TIERS
-  PAYMENT_STATUSES = %w[unpaid pending paid refunded expired cancelled].freeze
+  PAYMENT_STATUSES = %w[unpaid pending pending_check paid refunded expired cancelled].freeze
 
   # Validations
   validates :name, presence: true
@@ -124,6 +124,39 @@ class Sponsor < ApplicationRecord
 
   def portal_eligible?
     active? && tournament.present? && tournament.status != 'archived'
+  end
+
+  def pending_check?
+    payment_status == 'pending_check'
+  end
+
+  def assign_invoice_number!
+    return invoice_number if invoice_number.present?
+
+    year_part = tournament&.year || Time.current.year
+    loop do
+      candidate = "INV-#{year_part}-#{tournament_id}-#{SecureRandom.hex(3).upcase}"
+      unless self.class.exists?(invoice_number: candidate)
+        self.invoice_number = candidate
+        self.invoiced_at ||= Time.current
+        return candidate
+      end
+    end
+  end
+
+  def mark_check_paid!(check_number: nil, check_notes: nil)
+    with_lock do
+      update!(
+        payment_status: 'paid',
+        payment_type: payment_type.presence || 'check',
+        payment_method: 'check',
+        active: true,
+        paid_at: paid_at || Time.current,
+        check_number: check_number.to_s.strip.presence || self.check_number,
+        check_notes: check_notes.to_s.strip.presence || self.check_notes
+      )
+      provision_sponsor_slots! if slot_count.to_i.positive?
+    end
   end
 
   def generate_portal_session_token!(verified_email:, expires_at: nil)
@@ -249,7 +282,7 @@ class Sponsor < ApplicationRecord
 
   def sync_sponsor_slots
     return unless saved_change_to_slot_count?
-    return if payment_status == "pending" && !active?
+    return if %w[pending pending_check].include?(payment_status) && !active?
 
     target_count = slot_count.to_i
     excess_slots = sponsor_slots.where("slot_number > ?", target_count).order(slot_number: :desc).to_a

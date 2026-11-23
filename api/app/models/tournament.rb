@@ -16,6 +16,8 @@ class Tournament < ApplicationRecord
   has_many :sponsors, dependent: :destroy
   has_many :employee_numbers, dependent: :destroy
   has_many :sponsor_tiers, dependent: :destroy
+  has_many :tournament_add_ons, dependent: :destroy
+  has_many :golfer_add_ons, dependent: :destroy
   has_many :donations, dependent: :destroy
   has_many :activity_logs, dependent: :nullify
   has_many :message_deliveries, dependent: :nullify
@@ -63,7 +65,7 @@ class Tournament < ApplicationRecord
   validates :logo_url_override, public_image_url: true, allow_blank: true, if: :will_save_change_to_logo_url_override?
   validates :signature_image_url_override, public_image_url: true, allow_blank: true, if: :will_save_change_to_signature_image_url_override?
   validate :valid_story_photos
-  validates :waiver_enabled, :show_public_sponsors, inclusion: { in: [true, false] }
+  validates :waiver_enabled, :show_public_sponsors, :allow_sponsor_check_invoice, inclusion: { in: [true, false] }
 
   validates :theme_preset, presence: true, inclusion: { in: THEME_PRESETS }
   validates :capacity_unit, presence: true, inclusion: { in: CAPACITY_UNITS }
