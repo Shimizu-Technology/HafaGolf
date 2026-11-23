@@ -15,6 +15,7 @@ import {
   HandCoins,
   Home,
   LayoutDashboard,
+  Megaphone,
   Menu,
   Printer,
   Settings,
@@ -223,6 +224,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
               icon: Printer,
               match: () => routeSection === 'printables',
             },
+            {
+              label: 'Announcements',
+              path: adminEventPath(activeTournament.slug, 'announcements'),
+              icon: Megaphone,
+              match: () => routeSection === 'announcements',
+            },
             ...(eventRaffleEnabled
               ? [
                   {
@@ -281,6 +288,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           return can('enter_scores');
         case 'Printables':
           return can('manage_groups') || can('view_reports') || can('check_in');
+        case 'Announcements':
+          return can('send_broadcasts');
         case 'Raffle':
           return can('raffle_sell') || can('raffle_draw') || can('manage_raffle_prizes');
         case 'Sponsors':

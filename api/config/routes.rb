@@ -247,6 +247,13 @@ Rails.application.routes.draw do
         # Registration Add-Ons (Super Tickets, Mulligans, Contests)
         resources :add_ons, controller: 'tournament_add_ons', only: [:index, :create, :update, :destroy]
 
+        # Day-Of Broadcast Announcements (SMS / Email)
+        resources :broadcasts, only: [:index, :create] do
+          collection do
+            post :preview
+          end
+        end
+
         # Standalone Donations
         get 'donations/summary' => 'donations#summary'
         post 'donations/checkout' => 'donations#checkout'

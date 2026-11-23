@@ -18,6 +18,7 @@ class Tournament < ApplicationRecord
   has_many :sponsor_tiers, dependent: :destroy
   has_many :tournament_add_ons, dependent: :destroy
   has_many :golfer_add_ons, dependent: :destroy
+  has_many :broadcast_announcements, dependent: :destroy
   has_many :donations, dependent: :destroy
   has_many :activity_logs, dependent: :nullify
   has_many :message_deliveries, dependent: :nullify
