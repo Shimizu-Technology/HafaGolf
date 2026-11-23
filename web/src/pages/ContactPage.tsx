@@ -24,7 +24,7 @@ export function ContactPage() {
   const [website, setWebsite] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState(false);
+  const [submitted, setSubmitted] = useState<{ name: string; email: string } | null>(null);
   const [showEmailFallback, setShowEmailFallback] = useState(false);
 
   useEffect(() => {
@@ -69,6 +69,9 @@ export function ContactPage() {
       return;
     }
 
+    const submittedName = name.trim();
+    const submittedEmail = email.trim();
+
     setSubmitting(true);
     try {
       const res = await fetch(`${apiUrl}/api/v1/platform/inquiries`, {
@@ -77,8 +80,8 @@ export function ContactPage() {
         body: JSON.stringify({
           inquiry: {
             inquiry_type: inquiryType,
-            name: name.trim(),
-            email: email.trim(),
+            name: submittedName,
+            email: submittedEmail,
             organization_name: organizationName.trim(),
             estimated_date: estimatedDate.trim(),
             message: message.trim(),
@@ -94,7 +97,7 @@ export function ContactPage() {
         return;
       }
 
-      setSubmitted(true);
+      setSubmitted({ name: submittedName, email: submittedEmail });
     } catch {
       setShowEmailFallback(true);
       setError('Could not reach the server right now. You can send your note directly by email below.');
@@ -120,8 +123,8 @@ export function ContactPage() {
                 Message received
               </h2>
               <p className="mx-auto mt-2 max-w-md text-base text-[var(--ph-ink-muted)]">
-                Thanks, {name.trim()}. We received your note and will get back to{' '}
-                <strong className="font-medium text-[var(--ph-ink)]">{email.trim()}</strong> shortly.
+                Thanks, {submitted.name}. We received your note and will get back to{' '}
+                <strong className="font-medium text-[var(--ph-ink)]">{submitted.email}</strong> shortly.
               </p>
               <div className="mt-6 flex flex-wrap justify-center gap-3">
                 <a
@@ -133,7 +136,7 @@ export function ContactPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSubmitted(false);
+                    setSubmitted(null);
                     setMessage('');
                   }}
                   className="ph-ui inline-flex min-h-[44px] items-center justify-center rounded-full border border-[#d8cfbb] px-5 text-sm font-semibold text-[var(--ph-ink)] hover:border-[var(--ph-brass)]"
@@ -143,7 +146,8 @@ export function ContactPage() {
               </div>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+            <form onSubmit={handleSubmit} noValidate>
+              <fieldset disabled={submitting} className="space-y-5">
               <fieldset>
                 <legend className="ph-ui text-sm font-semibold text-[var(--ph-ink)]">How can we help?</legend>
                 <div className="mt-2.5 grid grid-cols-2 gap-2">
@@ -292,6 +296,7 @@ export function ContactPage() {
                   {submitting ? 'Sending…' : 'Send message'}
                 </button>
               </div>
+              </fieldset>
             </form>
           )}
         </div>

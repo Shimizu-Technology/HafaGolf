@@ -17,7 +17,7 @@ module Api
           records = Tournament.directory_eligible
                               .joins(:organization)
                               .where(organizations: { subscription_status: "active" })
-                              .includes(:sponsors, organization: :organization_domains)
+                              .includes(organization: :organization_domains)
                               .to_a
                               .select { |tournament| tournament.organization&.primary_host.present? }
 
@@ -28,6 +28,12 @@ module Api
                                 .sort_by { |t| [parsed_event_date(t, fallback: Date.new(1900, 1, 1)), t.year.to_i] }
                                 .reverse
                                 .first(MAX_PAST_TOURNAMENTS)
+
+          # Only preload sponsors for open upcoming cards that actually need capacity calculation.
+          open_for_reg = upcoming_records.select { |t| t.open? && t.registration_open? && !t.registration_deadline_passed? }
+          if open_for_reg.any?
+            ActiveRecord::Associations::Preloader.new(records: open_for_reg, associations: :sponsors).call
+          end
 
           {
             upcoming: upcoming_records.map { |t| serialize_directory_tournament(t) },
@@ -64,7 +70,7 @@ module Api
         org = tournament.organization
         public_url = OrgUrlBuilder.public_url(org, "/#{tournament.slug}")
         features = Features.for(org, tournament)
-        can_register = tournament.can_register?
+        availability, can_register = resolve_registration_availability(tournament)
 
         {
           slug: tournament.slug,
@@ -80,7 +86,7 @@ module Api
           entry_fee_display: tournament.formatted_entry_fee_display,
           registration_open: tournament.registration_open,
           can_register: can_register,
-          availability: availability_label(tournament, can_register: can_register),
+          availability: availability,
           public_url: public_url,
           register_url: can_register ? OrgUrlBuilder.public_url(org, "/#{tournament.slug}/register") : nil,
           leaderboard_url: features.enabled?(:live_scoring) ? OrgUrlBuilder.public_url(org, "/#{tournament.slug}/leaderboard") : nil,
@@ -94,18 +100,25 @@ module Api
         }
       end
 
-      def availability_label(tournament, can_register:)
-        return "in_progress" if tournament.in_progress?
-        return "completed" if tournament.completed?
-        return "closed" unless tournament.open? && tournament.registration_open?
+      def resolve_registration_availability(tournament)
+        return ["in_progress", false] if tournament.in_progress?
+        return ["completed", false] if tournament.completed?
+        return ["closed", false] unless tournament.open? && tournament.registration_open? && !tournament.registration_deadline_passed?
 
-        if can_register
-          tournament.public_at_capacity? ? "waitlist" : "open"
-        elsif tournament.at_capacity? || tournament.public_at_capacity?
-          "full"
-        else
-          "closed"
+        # Compute capacity_summary at most once per open tournament card.
+        summary = tournament.capacity_summary
+        has_public_space = summary[:max_capacity].nil? ||
+                           (summary[:public_remaining].to_i >= 1 && summary[:remaining].to_i >= 1)
+        return ["open", true] if has_public_space
+
+        if tournament.waitlist_enabled?
+          waitlist_full = tournament.waitlist_max.present? &&
+                          tournament.waitlist_max.to_i.positive? &&
+                          (summary[:waitlist_units].to_i + 1) > tournament.waitlist_max.to_i
+          return ["waitlist", true] unless waitlist_full
         end
+
+        ["full", false]
       end
     end
   end

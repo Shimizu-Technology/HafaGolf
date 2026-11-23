@@ -79,7 +79,11 @@ function EventDetails({ tournamentSettings: event, handleTournamentChange: chang
           label="Show on HafaGolf public directory"
           checked={event.directory_listed}
           onChange={(value) => change('directory_listed', value)}
-          help="Display this tournament on golf.shimizu-technology.com so golfers can discover it and click through to your site. Only published events with a configured web domain appear."
+          help={
+            event.public_listed
+              ? 'Display this tournament on golf.shimizu-technology.com so golfers can discover it and click through to your site. Only published events with a configured web domain appear.'
+              : 'This tournament is currently unlisted on its own site (public_listed is off), so it will not appear in the HafaGolf directory until public listing is enabled.'
+          }
         />
       </SettingsSection>
       <SettingsSection title="Schedule and event details">

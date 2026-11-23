@@ -52,7 +52,8 @@ class Rack::Attack
 
   throttle("req/ip/platform-inquiries", limit: 5, period: 10.minutes) do |req|
     next unless req.post?
-    next unless req.path.match?(%r{\A/api/v1/platform/inquiries(?:\.[^/]+)?/?\z})
+    normalized_path = req.path.to_s.squeeze("/")
+    next unless normalized_path.match?(%r{\A/api/v1/platform/inquiries(?:\.[^/]+)?/?\z})
 
     req.ip
   end

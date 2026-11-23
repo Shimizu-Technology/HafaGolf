@@ -98,6 +98,19 @@ module Api
         assert_not card.key?("id"), "Public directory should not expose internal numeric IDs"
         assert_not card.key?("contact_email"), "Public directory should not leak private contact details"
       end
+
+      test "rejects reserved platform root paths as tournament slugs case-insensitively" do
+        %w[privacy PRIVACY terms contact about platform admin].each do |reserved|
+          tournament = @org.tournaments.build(
+            name: "Reserved Route Event",
+            slug: reserved,
+            year: 2027,
+            status: "draft"
+          )
+          assert_not tournament.valid?, "Expected slug '#{reserved}' to be rejected"
+          assert_includes tournament.errors[:slug].join(" "), "reserved"
+        end
+      end
     end
   end
 end

@@ -64,6 +64,41 @@ module Api
         assert_response :ok
         assert_equal true, JSON.parse(response.body)["submitted"]
       end
+
+      test "throttles repeated inquiries across canonical and duplicate-slash paths" do
+        previous_enabled = Rack::Attack.enabled
+        previous_cache = Rack::Attack.cache.store
+        Rack::Attack.enabled = true
+        Rack::Attack.cache.store = ActiveSupport::Cache::MemoryStore.new
+
+        headers = { "REMOTE_ADDR" => "203.0.113.42" }
+        payload = {
+          inquiry: {
+            name: "Jordan Reyes",
+            email: "jordan@example.test",
+            message: "We are planning a charity tournament and want a quick walkthrough."
+          }
+        }
+
+        paths = [
+          "/api/v1/platform/inquiries",
+          "/api//v1/platform/inquiries",
+          "/api/v1//platform/inquiries",
+          "/api/v1/platform//inquiries",
+          "/api//v1//platform/inquiries"
+        ]
+
+        paths.each do |path|
+          post path, params: payload, headers: headers, as: :json
+          assert_response :created
+        end
+
+        post "/api//v1/platform/inquiries", params: payload, headers: headers, as: :json
+        assert_response :too_many_requests
+      ensure
+        Rack::Attack.enabled = previous_enabled
+        Rack::Attack.cache.store = previous_cache
+      end
     end
   end
 end

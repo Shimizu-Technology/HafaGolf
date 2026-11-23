@@ -93,4 +93,46 @@ describe('ContactPage', () => {
 
     expect(container.textContent).toContain('Open in your email app instead');
   });
+
+  it('disables all fields while submitting and confirms the submitted email', async () => {
+    let resolveFetch!: (value: Response) => void;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      () => new Promise<Response>((resolve) => { resolveFetch = resolve; })
+    );
+
+    act(() => {
+      root.render(<ContactPage />);
+    });
+
+    const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input'));
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    const form = container.querySelector('form')!;
+
+    act(() => {
+      setInputValue(inputs[0], 'Jordan Reyes');
+      setInputValue(inputs[1], 'submitted@example.test');
+      setInputValue(textarea, 'Testing pending state while submitting an inquiry.');
+    });
+
+    act(() => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const fieldset = container.querySelector('fieldset')!;
+    expect(fieldset.disabled).toBe(true);
+
+    // Even if a script mutates state mid-flight, confirmation shows the submitted snapshot
+    act(() => {
+      setInputValue(inputs[1], 'changed-mid-flight@example.test');
+    });
+
+    await act(async () => {
+      resolveFetch(new Response(JSON.stringify({ submitted: true }), { status: 201 }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('submitted@example.test');
+    expect(container.textContent).not.toContain('changed-mid-flight@example.test');
+  });
 });
