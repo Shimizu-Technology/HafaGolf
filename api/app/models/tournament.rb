@@ -49,6 +49,8 @@ class Tournament < ApplicationRecord
   scope :for_organization, ->(org) { where(organization: org) }
 
   # Status constants
+  include HomepageConfigurable
+
   STATUSES = %w[draft open closed in_progress completed archived].freeze
   EVENT_TYPES = %w[golf_tournament gala].freeze
   CAPACITY_UNITS = %w[players teams].freeze

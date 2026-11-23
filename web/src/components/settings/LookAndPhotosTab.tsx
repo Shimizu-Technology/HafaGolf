@@ -1,5 +1,5 @@
 import { BrandingMediaPanel, type StoryPhotoDraft } from '../BrandingMediaPanel';
-import { ThemePackPicker } from '../ThemePackPicker';
+import { HomepageStudio } from './HomepageStudio';
 import { SettingsCheckbox, SettingsInput, SettingsSection } from './SettingsFields';
 import type { OrganizationDraft, TournamentDraftProps, TournamentSettings, UpdateOrganization } from './settingsForm';
 
@@ -16,13 +16,41 @@ export function LookAndPhotosTab({ draft, update, event, updateEvent, updateStor
   const eventDraft = event?.tournamentSettings;
   return (
     <>
-      {eventDraft && (
-        <SettingsSection title="Public theme" description="Choose how the event page presents photos, event information, and registration.">
-          <ThemePackPicker value={eventDraft.theme_preset} onChange={(theme_preset) => updateEvent({ theme_preset })}
-            eventName={eventDraft.name} organizationName={draft.name} eventDateLabel={eventDraft.event_date}
-            locationName={eventDraft.location_name} entryFeeLabel={eventDraft.entry_fee_display} />
-        </SettingsSection>
-      )}
+      <SettingsSection
+        title="Homepage Studio"
+        description="Configure your public theme archetype, hero artwork mode, landing behavior, and visible sections with a live preview before saving."
+      >
+        <HomepageStudio
+          orgName={draft.name}
+          orgConfig={draft.homepage_config}
+          eventConfig={eventDraft ? eventDraft.homepage_config : undefined}
+          themePreset={eventDraft?.theme_preset}
+          primaryColor={eventDraft && !eventDraft.use_org_branding ? eventDraft.primary_color_override || draft.primary_color : draft.primary_color}
+          accentColor={eventDraft && !eventDraft.use_org_branding ? eventDraft.accent_color_override || draft.accent_color : draft.accent_color}
+          logoUrl={draft.logo_url}
+          reversedLogoUrl={draft.reversed_logo_url}
+          commemorativeBannerUrl={eventDraft?.commemorative_banner_url}
+          eventPhotoUrl={eventDraft?.banner_url_override}
+          emblemUrl={eventDraft?.signature_image_url_override}
+          eventName={eventDraft?.name}
+          eventDate={eventDraft?.event_date}
+          locationName={eventDraft?.location_name}
+          entryFeeLabel={eventDraft?.entry_fee_display || (eventDraft?.entry_fee_dollars ? `$${eventDraft.entry_fee_dollars}` : undefined)}
+          tributeTitle={eventDraft?.tribute_title}
+          tributeSubtitle={eventDraft?.tribute_subtitle}
+          onChangeOrgConfig={(homepage_config) => update({ homepage_config })}
+          onChangeEventConfig={
+            eventDraft
+              ? (homepage_config, nextThemePreset) =>
+                  updateEvent({
+                    homepage_config,
+                    ...(nextThemePreset ? { theme_preset: nextThemePreset } : {}),
+                  })
+              : undefined
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection title="Brand colors" description="Enter a six-digit color code, such as #1E3A5F. Leave a color blank to use the default.">
         <div className="grid gap-4 sm:grid-cols-2">
           <SettingsInput label="Organization main color" placeholder="#1E3A5F" value={draft.primary_color}

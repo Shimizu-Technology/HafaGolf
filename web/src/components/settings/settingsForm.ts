@@ -2,6 +2,7 @@ import { createStoryPhotoId } from '../../utils/storyPhotoDraft';
 import type { OrganizationMedia, TournamentMedia } from '../BrandingMediaPanel';
 import type { Tournament } from '../../services/api';
 import type { Organization } from '../../stores/organizationStore';
+import type { HomepageConfig } from '../../utils/homepageConfig';
 import { resolveThemePackId } from '../../utils/themePacks';
 
 interface HomepageStat {
@@ -25,6 +26,7 @@ export interface OrganizationDraft extends OrganizationMedia {
   homepage_tagline: string;
   homepage_mission: string;
   homepage_stats: HomepageStat[];
+  homepage_config: HomepageConfig;
 }
 
 export type RegistrationMode = 'regular' | 'walkin' | 'closed';
@@ -115,6 +117,7 @@ export interface TournamentSettings extends TournamentMedia {
   sponsor_wall_title: string;
   theme_preset: string;
   use_org_branding: boolean;
+  homepage_config: HomepageConfig;
   primary_color_override: string;
   accent_color_override: string;
   raffle_enabled: boolean;
@@ -179,16 +182,18 @@ export function organizationDraft(organization: Organization): OrganizationDraft
     homepage_tagline: settings?.homepage_tagline || '',
     homepage_mission: settings?.homepage_mission || '',
     homepage_stats: settings?.homepage_stats || [{ value: '', label: '' }],
+    homepage_config: organization.homepage_config || {},
   };
 }
 
 export function organizationPayload(draft: OrganizationDraft) {
-  const { accent_color, homepage_tagline, homepage_mission, homepage_stats, ...fields } = draft;
+  const { accent_color, homepage_tagline, homepage_mission, homepage_stats, homepage_config, ...fields } = draft;
   return {
     ...fields,
     primary_color: fields.primary_color.trim(),
     logo_url: fields.logo_url.trim() || null,
     reversed_logo_url: fields.reversed_logo_url.trim() || null,
+    homepage_config,
     settings: {
       accent_color: accent_color.trim() || null,
       homepage_tagline,
@@ -240,6 +245,7 @@ export function tournamentDraft(t: Tournament): TournamentSettings {
     sponsor_wall_title: t.sponsor_wall_title || '',
     theme_preset: t.theme_preset || 'default-clean',
     use_org_branding: t.use_org_branding ?? true,
+    homepage_config: t.homepage_config || {},
     primary_color_override: t.primary_color_override || '',
     accent_color_override: t.accent_color_override || '',
     swipe_simple_url: t.swipe_simple_url || '',
@@ -318,6 +324,7 @@ export function tournamentPayload(tournamentSettings: TournamentSettings) {
     sponsor_wall_title: tournamentSettings.sponsor_wall_title.trim() || null,
     theme_preset: resolveThemePackId(tournamentSettings.theme_preset),
     use_org_branding: tournamentSettings.use_org_branding,
+    homepage_config: tournamentSettings.homepage_config,
     primary_color_override: tournamentSettings.primary_color_override.trim() || null,
     accent_color_override: tournamentSettings.accent_color_override.trim() || null,
     swipe_simple_url: tournamentSettings.swipe_simple_url || null,

@@ -339,6 +339,7 @@ export interface Tournament {
   sponsor_wall_title?: string | null;
   theme_preset?: 'default-clean' | 'charity-bright' | 'memorial-formal' | 'crest-classic' | 'classic' | 'premium' | 'minimal' | 'event';
   use_org_branding?: boolean;
+  homepage_config?: import('../utils/homepageConfig').HomepageConfig;
   
   // Schedule
   check_in_time?: string;

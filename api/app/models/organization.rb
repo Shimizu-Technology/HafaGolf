@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class Organization < ApplicationRecord
+  include HomepageConfigurable
+
   # Associations
   has_many :tournaments, dependent: :restrict_with_error
   has_many :registrations, dependent: :restrict_with_error

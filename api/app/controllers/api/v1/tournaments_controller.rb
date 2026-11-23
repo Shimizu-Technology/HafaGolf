@@ -383,7 +383,7 @@ module Api
 
       def tournament_params
         raw = params.require(:tournament)
-        attributes = raw.except(:story_photos).permit(
+        attributes = raw.except(:story_photos, :homepage_config).permit(
           :organization_id,
           :event_type,
           :name, :year, :edition, :status,
@@ -420,6 +420,7 @@ module Api
         )
         # Keep the JSON shape intact so the model can reject malformed entries.
         attributes[:story_photos] = raw[:story_photos].as_json if raw.key?(:story_photos)
+        attributes[:homepage_config] = raw[:homepage_config].as_json if raw.key?(:homepage_config)
         attributes
       end
     end

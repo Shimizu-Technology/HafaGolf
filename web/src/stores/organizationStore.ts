@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { FeatureMap } from '../utils/features';
+import type { HomepageConfig } from '../utils/homepageConfig';
 import type { OrgPaymentMode, PaymentProcessorProvider } from '../services/api';
 
 export interface HomepageStat {
@@ -51,6 +52,7 @@ export interface Organization {
   offseason_cta_label?: string | null;
   offseason_cta_url?: string | null;
   settings?: OrganizationSettings;
+  homepage_config?: HomepageConfig;
   features?: FeatureMap;
   feature_overrides?: FeatureMap;
   tournament_count?: number;
