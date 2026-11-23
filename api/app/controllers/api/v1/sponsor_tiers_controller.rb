@@ -297,6 +297,7 @@ module Api
         end
 
         sponsor = nil
+        tier_snapshot = nil
         validation_error = nil
 
         with_resolved_org_rls(organization) do
@@ -307,6 +308,14 @@ module Api
               raise ActiveRecord::Rollback
             end
 
+            tier_snapshot = {
+              label: locked_tier.label,
+              description: locked_tier.description,
+              included_player_slots: locked_tier.included_player_slots,
+              benefits: Array(locked_tier.benefits),
+              price_cents: locked_tier.price_cents
+            }
+
             sponsor = @tournament.sponsors.new(
               sponsor_tier: locked_tier,
               tier: locked_tier.key,
@@ -315,11 +324,11 @@ module Api
               website_url: buyer[:website_url],
               description: buyer[:description],
               logo_url: buyer[:logo_url],
-              slot_count: locked_tier.included_player_slots,
+              slot_count: tier_snapshot[:included_player_slots],
               payment_type: "check",
               payment_status: "pending_check",
               payment_method: "check",
-              payment_amount_cents: locked_tier.price_cents,
+              payment_amount_cents: tier_snapshot[:price_cents],
               active: false,
               invoiced_at: Time.current
             )
@@ -336,12 +345,12 @@ module Api
               action: "sponsor_check_reserved",
               target: sponsor,
               tournament: @tournament,
-              details: "#{sponsor.name} reserved #{locked_tier.label} via check invoice #{sponsor.invoice_number}",
+              details: "#{sponsor.name} reserved #{tier_snapshot[:label]} via check invoice #{sponsor.invoice_number}",
               metadata: {
                 sponsor_id: sponsor.id,
                 sponsor_tier_id: locked_tier.id,
                 invoice_number: sponsor.invoice_number,
-                amount_cents: locked_tier.price_cents
+                amount_cents: sponsor.payment_amount_cents
               }
             )
           end
@@ -356,8 +365,8 @@ module Api
 
         receipt = TaxReceiptCalculator.for_sponsorship(
           tournament: @tournament,
-          amount_cents: tier.price_cents,
-          included_player_slots: tier.included_player_slots
+          amount_cents: sponsor.payment_amount_cents,
+          included_player_slots: sponsor.slot_count
         )
 
         logo_url = with_resolved_org_rls(organization) do
@@ -380,7 +389,7 @@ module Api
           invoice: {
             invoice_number: sponsor.invoice_number,
             invoiced_at: sponsor.invoiced_at&.iso8601,
-            status: "pending_check",
+            status: sponsor.payment_status,
             organization_name: organization.name,
             tournament_name: @tournament.name,
             event_date: @tournament.event_date,
@@ -393,11 +402,11 @@ module Api
             sponsor_email: sponsor.login_email,
             sponsor_website_url: sponsor.website_url,
             sponsor_logo_url: logo_url,
-            tier_label: tier.label,
-            tier_description: tier.description,
-            included_player_slots: tier.included_player_slots,
-            benefits: Array(tier.benefits),
-            amount_cents: tier.price_cents,
+            tier_label: tier_snapshot[:label],
+            tier_description: tier_snapshot[:description],
+            included_player_slots: sponsor.slot_count,
+            benefits: tier_snapshot[:benefits],
+            amount_cents: sponsor.payment_amount_cents,
             tax_receipt: receipt.applicable? ? receipt.as_json : nil
           },
           message: "Sponsorship reserved. Print or save your invoice to submit with your check."

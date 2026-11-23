@@ -249,6 +249,27 @@ class AddonsAndSponsorCheckTest < ActionDispatch::IntegrationTest
     admin_golfer = JSON.parse(response.body)["golfers"].find { |g| g["email"] == "maria@example.com" }
     assert_equal 3_500, admin_golfer["add_ons_total_cents"]
 
+    # Check-in volunteer sees add_ons_summary in registrations#index and #show, but NOT add-on prices
+    get "/api/v1/tournaments/#{@tournament.id}/registrations", headers: headers_for(@checkin_vol)
+    assert_response :success
+    vol_reg = JSON.parse(response.body)["registrations"].find { |r| r["id"] == reg_json["id"] }
+    assert_equal "2× Mulligan Pack · 1× Super Ticket Bundle", vol_reg["add_ons_summary"]
+    assert_nil vol_reg["add_ons_total_cents"]
+    assert_nil vol_reg["add_ons"].first["unit_price_cents"]
+
+    get "/api/v1/registrations/#{reg_json['id']}", headers: headers_for(@checkin_vol)
+    assert_response :success
+    vol_reg_show = JSON.parse(response.body)["registration"]
+    assert_equal "2× Mulligan Pack · 1× Super Ticket Bundle", vol_reg_show["add_ons_summary"]
+    assert_nil vol_reg_show["add_ons_total_cents"]
+    assert_nil vol_reg_show["add_ons"].first["unit_price_cents"]
+
+    get "/api/v1/registrations/#{reg_json['id']}", headers: headers_for(@org_admin)
+    assert_response :success
+    admin_reg_show = JSON.parse(response.body)["registration"]
+    assert_equal 9_000, admin_reg_show["add_ons_total_cents"]
+    assert_equal 2_000, admin_reg_show["add_ons"].first["unit_price_cents"]
+
     # Deleting a purchased add-on soft-deactivates it instead of destroying
     delete "/api/v1/tournaments/#{@tournament.id}/add_ons/#{mulligan.id}", headers: headers_for(@org_admin)
     assert_response :success
@@ -341,6 +362,26 @@ class AddonsAndSponsorCheckTest < ActionDispatch::IntegrationTest
          headers: headers_for(@org_admin),
          as: :json
     assert_response :unprocessable_entity
+
+    # Ordinary pending Stripe sponsor CANNOT be marked paid via mark_check_paid
+    pending_stripe_sponsor = @tournament.sponsors.create!(
+      name: "Pending Card Corp",
+      tier: "silver",
+      login_email: "card@example.com",
+      slot_count: 2,
+      payment_type: "stripe",
+      payment_status: "pending",
+      payment_amount_cents: 50_000,
+      active: false
+    )
+    post "/api/v1/tournaments/#{@tournament.id}/sponsors/#{pending_stripe_sponsor.id}/mark_check_paid",
+         params: { check_number: "7777" },
+         headers: headers_for(@org_admin),
+         as: :json
+    assert_response :unprocessable_entity
+    assert_equal "pending", pending_stripe_sponsor.reload.payment_status
+    assert_equal false, pending_stripe_sponsor.active
+    assert_equal 0, pending_stripe_sponsor.sponsor_slots.count
 
     # Disabled allow_sponsor_check_invoice rejects check reservations
     @tournament.update!(allow_sponsor_check_invoice: false)

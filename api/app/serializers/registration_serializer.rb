@@ -63,11 +63,19 @@ class RegistrationSerializer < ActiveModel::Serializer
   end
 
   def add_ons_total_cents
+    return nil unless include_add_on_prices?
+
     object.add_ons_total_cents
   end
 
   def add_ons
-    object.add_ons_breakdown
+    object.add_ons_breakdown(include_prices: include_add_on_prices?)
+  end
+
+  def include_add_on_prices?
+    return true unless instance_options.key?(:include_add_on_prices)
+
+    instance_options[:include_add_on_prices] == true
   end
 
   def team_members

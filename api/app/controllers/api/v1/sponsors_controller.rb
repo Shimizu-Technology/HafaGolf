@@ -139,16 +139,6 @@ module Api
       # POST /api/v1/tournaments/:tournament_id/sponsors/:id/mark_check_paid
       # Admin - marks a pending-check sponsor reservation as paid and activates it
       def mark_check_paid
-        if @sponsor.payment_status == 'paid' && @sponsor.active?
-          render json: { error: 'Sponsor is already marked paid and active.' }, status: :unprocessable_entity
-          return
-        end
-
-        if %w[refunded cancelled expired].include?(@sponsor.payment_status)
-          render json: { error: "Cannot mark a #{@sponsor.payment_status} sponsor as paid." }, status: :unprocessable_entity
-          return
-        end
-
         @sponsor.mark_check_paid!(
           check_number: params[:check_number],
           check_notes: params[:check_notes]
@@ -173,6 +163,8 @@ module Api
           sponsor: admin_sponsor_response(@sponsor.reload),
           message: 'Sponsor check marked paid and activated'
         }
+      rescue Sponsor::InvalidCheckPaymentStateError => e
+        render json: { error: e.message }, status: :unprocessable_entity
       end
 
       # GET /api/v1/tournaments/:tournament_id/sponsors/:id

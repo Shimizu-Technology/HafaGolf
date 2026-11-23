@@ -40,9 +40,10 @@ module Api
 
         registrations = registrations.order(created_at: :desc)
         paginated = paginate(registrations)
+        can_view_finances = can_view_tournament_finances?(@tournament)
 
         render json: {
-          registrations: paginated.map { |reg| RegistrationSerializer.new(reg).as_json },
+          registrations: paginated.map { |reg| RegistrationSerializer.new(reg, include_add_on_prices: can_view_finances).as_json },
           capacity_summary: @tournament.capacity_summary,
           meta: pagination_meta(paginated)
         }
@@ -208,8 +209,9 @@ module Api
 
       # GET /api/v1/registrations/:id
       def show
+        can_view_finances = can_view_tournament_finances?(@registration.tournament)
         render json: {
-          registration: RegistrationSerializer.new(@registration).as_json
+          registration: RegistrationSerializer.new(@registration, include_add_on_prices: can_view_finances).as_json
         }
       end
 
@@ -452,6 +454,13 @@ module Api
         return if current_user&.volunteer_for?(tournament.organization)
 
         render json: { error: "Forbidden: You do not have access to this tournament" }, status: :forbidden
+      end
+
+      def can_view_tournament_finances?(tournament)
+        return false unless current_user && tournament
+
+        current_user.can?(:view_reports, organization: tournament.organization, tournament: tournament) ||
+          current_user.can?(:manage_finances, organization: tournament.organization, tournament: tournament)
       end
 
       def run_public_create(org)

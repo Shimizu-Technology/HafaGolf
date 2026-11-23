@@ -43,7 +43,13 @@ module Api
         end
 
         is_registration = record.is_a?(Registration)
-        add_on_items = record.golfer_add_ons.includes(:tournament_add_on).to_a
+        add_on_items = if record.golfer_add_ons.loaded?
+                         record.golfer_add_ons.to_a
+                       else
+                         TenantContext.with_organization(organization.id) do
+                           record.golfer_add_ons.includes(:tournament_add_on).to_a
+                         end
+                       end
         entry_fee = if is_registration
                       add_on_items.any? ? record.expected_entry_fee_cents : (record.payment_amount_cents.presence || record.expected_entry_fee_cents)
                     else
@@ -817,8 +823,8 @@ module Api
 
       def handle_test_mode_confirm(session_id)
         record = TenantContext.with_platform_access do
-          found = Golfer.includes(tournament: :organization).find_by(stripe_checkout_session_id: session_id) ||
-                  Registration.includes(:team_members, :employee_number_record, tournament: :organization).find_by(stripe_checkout_session_id: session_id)
+          found = Golfer.includes({ golfer_add_ons: :tournament_add_on }, tournament: :organization).find_by(stripe_checkout_session_id: session_id) ||
+                  Registration.includes(:team_members, :employee_number_record, { golfer_add_ons: :tournament_add_on }, tournament: :organization).find_by(stripe_checkout_session_id: session_id)
 
           if found.nil? && session_id.start_with?("test_embedded_")
             cached_data = Rails.cache.read("test_embedded_#{session_id}")

@@ -126,6 +126,8 @@ class Sponsor < ApplicationRecord
     active? && tournament.present? && tournament.status != 'archived'
   end
 
+  class InvalidCheckPaymentStateError < StandardError; end
+
   def pending_check?
     payment_status == 'pending_check'
   end
@@ -146,9 +148,14 @@ class Sponsor < ApplicationRecord
 
   def mark_check_paid!(check_number: nil, check_notes: nil)
     with_lock do
+      unless pending_check?
+        raise InvalidCheckPaymentStateError,
+              "Only pending-check sponsor reservations can be marked paid by check (current status: #{payment_status})."
+      end
+
       update!(
         payment_status: 'paid',
-        payment_type: payment_type.presence || 'check',
+        payment_type: 'check',
         payment_method: 'check',
         active: true,
         paid_at: paid_at || Time.current,
