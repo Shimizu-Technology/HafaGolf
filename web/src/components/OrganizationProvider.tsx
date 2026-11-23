@@ -40,6 +40,24 @@ export function selectAdminOrganization(
 }
 
 /**
+ * Determines whether a public OrganizationProvider should hold rendering children
+ * until host-based or explicit-slug tenant resolution completes, preventing child
+ * pages from firing premature `/organizations/default/...` requests on first paint.
+ */
+export function shouldShowPublicOrganizationLoading(
+  organization: Organization | null,
+  explicitSlug: string | null,
+  isLoading: boolean,
+  error: string | null
+): boolean {
+  const slugMismatch = Boolean(explicitSlug && organization && organization.slug !== explicitSlug);
+  const missingTargetOrg = !organization || slugMismatch;
+  if (!missingTargetOrg) return false;
+  if (isLoading) return true;
+  return !error;
+}
+
+/**
  * OrganizationProvider resolves organization context from:
  * - mode="admin": authenticated GET /api/v1/admin/organizations (never host-based)
  * - mode="public":
@@ -121,6 +139,7 @@ export function OrganizationProvider({
 
       const needsLoad = !storedOrg || (explicitSlug && storedOrg.slug !== explicitSlug);
       if (needsLoad) {
+        setError(null);
         setLoading(true);
       }
 
@@ -156,7 +175,10 @@ export function OrganizationProvider({
     };
   }, [explicitSlug, fallbackPath, mode, navigate, setError, setLoading, setOrganization]);
 
-  if (mode === 'admin' ? adminLoading : isLoading && !organization) {
+  const publicLoading = shouldShowPublicOrganizationLoading(organization, explicitSlug, isLoading, error);
+  const publicError = error && (!organization || Boolean(explicitSlug && organization.slug !== explicitSlug));
+
+  if (mode === 'admin' ? adminLoading : publicLoading) {
     return (
       <div data-static-flow={mode === 'admin' ? true : undefined} role="status" className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
@@ -167,7 +189,7 @@ export function OrganizationProvider({
     );
   }
 
-  if (mode === 'admin' ? adminError : error && !organization) {
+  if (mode === 'admin' ? adminError : publicError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
         <div className="text-center max-w-md mx-auto px-6">

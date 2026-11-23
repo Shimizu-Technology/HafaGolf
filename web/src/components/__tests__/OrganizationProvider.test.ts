@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { selectAdminOrganization } from '../OrganizationProvider';
+import {
+  selectAdminOrganization,
+  shouldShowPublicOrganizationLoading,
+} from '../OrganizationProvider';
 import { getSafeHttpUrl } from '../../pages/OffseasonPage';
 import type { Organization } from '../../stores/organizationStore';
 
@@ -21,6 +24,28 @@ describe('selectAdminOrganization', () => {
 
   it('returns null cleanly when no organizations exist yet', () => {
     expect(selectAdminOrganization([], 'alpha-golf', null)).toBeNull();
+  });
+});
+
+describe('shouldShowPublicOrganizationLoading', () => {
+  it('holds rendering before initial host-based tenant resolution sets isLoading', () => {
+    expect(shouldShowPublicOrganizationLoading(null, null, false, null)).toBe(true);
+    expect(shouldShowPublicOrganizationLoading(null, null, true, null)).toBe(true);
+  });
+
+  it('releases loading once organization resolves for the current host or slug', () => {
+    expect(shouldShowPublicOrganizationLoading(alpha, null, false, null)).toBe(false);
+    expect(shouldShowPublicOrganizationLoading(alpha, 'alpha-golf', false, null)).toBe(false);
+  });
+
+  it('holds rendering while switching to a different explicit org slug', () => {
+    expect(shouldShowPublicOrganizationLoading(alpha, 'beta-charity', false, null)).toBe(true);
+    expect(shouldShowPublicOrganizationLoading(alpha, 'beta-charity', true, null)).toBe(true);
+  });
+
+  it('stops loading and shows error state when tenant resolution fails', () => {
+    expect(shouldShowPublicOrganizationLoading(null, null, false, 'Organization not found')).toBe(false);
+    expect(shouldShowPublicOrganizationLoading(alpha, 'beta-charity', false, 'Organization not found')).toBe(false);
   });
 });
 
