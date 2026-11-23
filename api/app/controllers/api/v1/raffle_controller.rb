@@ -79,6 +79,7 @@ module Api
         input = params[:ticket_number]
         number = input.strip.downcase if input.is_a?(String)
         return render json: { error: 'Ticket number is required' }, status: :bad_request if number.blank?
+        return render json: { error: 'Ticket number is too long' }, status: :bad_request if number.length > 64
 
         tickets = @tournament.raffle_tickets
         ticket = tickets.find_by("LOWER(ticket_number) = ?", number)

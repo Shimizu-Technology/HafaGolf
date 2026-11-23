@@ -198,4 +198,36 @@ describe('Raffle Board', () => {
     expect(mount.textContent).toContain('$124.50');
     expect(mount.textContent).toContain('Sponsored by Example Sponsor');
   });
+
+  it('keeps the TV board and live spotlight visible when a background refresh fails', async () => {
+    vi.useFakeTimers();
+    let failBoard = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/raffle/board')) {
+        if (failBoard) throw new Error('Wi-Fi hiccup');
+        return Response.json(board);
+      }
+      if (url.endsWith('/tournaments/spring-open')) return Response.json(tournament);
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    await render('?display=tv');
+    expect(mount.textContent).toContain('Spring Open Raffle');
+    const { received } = cable.subscribe.mock.calls[0][1] as { received: (event: object) => void };
+
+    failBoard = true;
+    act(() => {
+      received({
+        action: 'winner_revealed',
+        draw_id: 'wifi-blip-draw',
+        hold_on_screen: true,
+        prize: { id: 1, name: 'Golf Bag', winner_name: '' },
+      });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(3600));
+
+    expect(mount.textContent).not.toContain('Raffle Unavailable');
+    expect(mount.textContent).toContain('Reconnecting…');
+    expect(mount.querySelector('[data-testid="spotlight-winner-name"]')?.textContent).toBe('Winner Selected');
+  });
 });

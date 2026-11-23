@@ -163,8 +163,10 @@ export const RaffleBoardPage: React.FC = () => {
   const { organization } = useOrganization();
   const orgSlug = organization?.slug || getDefaultOrgSlug();
   const [data, setData] = useState<RaffleBoardData | null>(null);
+  const hasDataRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState(false);
   const [prizeSearch, setPrizeSearch] = useState('');
   const [tierFilter, setTierFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<PublicPrizeStatusFilter>('');
@@ -235,13 +237,19 @@ export const RaffleBoardPage: React.FC = () => {
       if (!boardRes.ok) throw new Error('Failed to load raffle');
       const boardData = await boardRes.json();
 
+      hasDataRef.current = true;
       setData(boardData);
       setSpotlightPrefs((current) =>
         applyServerHoldPreference(current, boardData.tournament?.raffle_hold_winner_on_screen)
       );
       setError(null);
+      setRefreshError(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load raffle');
+      if (hasDataRef.current) {
+        setRefreshError(true);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load raffle');
+      }
     } finally {
       setLoading(false);
     }
@@ -253,6 +261,10 @@ export const RaffleBoardPage: React.FC = () => {
   // Initial load + visibility-aware fallback polling:
   // Fast 5s sync if ActionCable is disconnected; gentle 30s safety sync while connected; paused when tab hidden.
   useEffect(() => {
+    hasDataRef.current = false;
+    setData(null);
+    setError(null);
+    setRefreshError(false);
     void fetchData();
   }, [fetchData]);
 
@@ -563,9 +575,17 @@ export const RaffleBoardPage: React.FC = () => {
       <div className="min-h-screen bg-slate-950 text-white">
         <main className="mx-auto max-w-screen-2xl space-y-8 px-4 py-6 sm:px-8 lg:px-12">
           <header className="flex flex-wrap items-start justify-between gap-4">
-            <h1 className="min-w-0 flex-1 basis-72 break-words text-3xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
-              {tournament.name} Raffle
-            </h1>
+            <div className="min-w-0 flex-1 basis-72">
+              <h1 className="break-words text-3xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+                {tournament.name} Raffle
+              </h1>
+              {refreshError && (
+                <p role="status" className="mt-2 inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-950/70 px-3 py-1 text-sm font-medium text-amber-200">
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  Reconnecting… showing latest board
+                </p>
+              )}
+            </div>
             {exitTvButton}
           </header>
 
@@ -619,7 +639,7 @@ export const RaffleBoardPage: React.FC = () => {
                 <div className="min-w-0 break-words">
                   <p className="text-xl font-bold uppercase tracking-widest text-amber-200 sm:text-3xl">Winner</p>
                   <h2 data-testid="spotlight-winner-name" className="mt-2 text-4xl font-extrabold leading-tight sm:text-6xl lg:text-8xl">
-                    {liveDraw.winnerName}
+                    {liveDraw.winnerName || 'Winner Selected'}
                   </h2>
                   {liveDraw.winnerTicketNumber && (
                     <p className="mt-3 font-mono text-2xl font-semibold text-amber-200 sm:text-4xl">#{liveDraw.winnerTicketNumber}</p>

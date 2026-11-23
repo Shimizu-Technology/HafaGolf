@@ -93,8 +93,8 @@ class RaffleV2Test < ActionDispatch::IntegrationTest
     assert_equal ticket_result("tix-0014"), response.parsed_body
   end
 
-  test "rejects missing, blank and non-string ticket numbers" do
-    [nil, "   ", ["TIX-0015"]].each do |input|
+  test "rejects missing, blank, overly long, and non-string ticket numbers" do
+    [nil, "   ", "A" * 65, ["TIX-0015"]].each do |input|
       check(input)
       assert_response :bad_request
     end

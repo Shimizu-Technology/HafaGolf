@@ -905,6 +905,7 @@ export const RaffleManagementPage: React.FC = () => {
       toast.success(updated.claimed ? 'Prize marked as claimed' : 'Prize marked as unclaimed');
     } catch {
       toast.error('Failed to update claim status');
+      void refreshRaffle();
     } finally {
       claimRequests.current.delete(prize.id);
       setClaimingPrizes(new Set(claimRequests.current));
