@@ -76,6 +76,11 @@ Rails.application.routes.draw do
       post 'admin/uploads' => 'admin/uploads#create'
       post 'admin/uploads/presigned' => 'admin/uploads#presigned'
 
+      # Super Admin platform console
+      get 'admin/platform/overview' => 'platform#overview'
+      post 'admin/platform/organizations' => 'platform#create_organization'
+      patch 'admin/platform/organizations/:slug' => 'platform#update_organization'
+
       # Admin organizations
       get 'admin/organizations' => 'organizations#index'
       post 'admin/organizations' => 'organizations#create'

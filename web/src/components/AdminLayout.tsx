@@ -155,10 +155,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     ...(isSuperAdmin
       ? [
           {
-            label: 'Organizations',
-            path: '/admin/organizations',
+            label: 'Platform',
+            path: '/admin/platform',
             icon: ShieldCheck,
-            match: (pathname: string) => pathname === '/admin/organizations',
+            match: (pathname: string) => pathname === '/admin/platform' || pathname === '/admin/organizations',
           },
         ]
       : []),
