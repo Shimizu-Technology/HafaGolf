@@ -249,20 +249,20 @@ class AddonsAndSponsorCheckTest < ActionDispatch::IntegrationTest
     admin_golfer = JSON.parse(response.body)["golfers"].find { |g| g["email"] == "maria@example.com" }
     assert_equal 3_500, admin_golfer["add_ons_total_cents"]
 
-    # Check-in volunteer sees add_ons_summary in registrations#index and #show, but NOT add-on prices
+    # Check-in volunteer sees add_ons_summary in registrations#index and #show, with add_ons_total_cents key omitted
     get "/api/v1/tournaments/#{@tournament.id}/registrations", headers: headers_for(@checkin_vol)
     assert_response :success
     vol_reg = JSON.parse(response.body)["registrations"].find { |r| r["id"] == reg_json["id"] }
     assert_equal "2× Mulligan Pack · 1× Super Ticket Bundle", vol_reg["add_ons_summary"]
-    assert_nil vol_reg["add_ons_total_cents"]
-    assert_nil vol_reg["add_ons"].first["unit_price_cents"]
+    assert_not vol_reg.key?("add_ons_total_cents")
+    assert_not vol_reg["add_ons"].first.key?("unit_price_cents")
 
     get "/api/v1/registrations/#{reg_json['id']}", headers: headers_for(@checkin_vol)
     assert_response :success
     vol_reg_show = JSON.parse(response.body)["registration"]
     assert_equal "2× Mulligan Pack · 1× Super Ticket Bundle", vol_reg_show["add_ons_summary"]
-    assert_nil vol_reg_show["add_ons_total_cents"]
-    assert_nil vol_reg_show["add_ons"].first["unit_price_cents"]
+    assert_not vol_reg_show.key?("add_ons_total_cents")
+    assert_not vol_reg_show["add_ons"].first.key?("unit_price_cents")
 
     get "/api/v1/registrations/#{reg_json['id']}", headers: headers_for(@org_admin)
     assert_response :success
