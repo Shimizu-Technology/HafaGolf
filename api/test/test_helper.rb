@@ -1,4 +1,7 @@
 ENV["RAILS_ENV"] ||= "test"
+# Mailer defaults are asserted in tests; ignore sender settings exported in the shell.
+ENV.delete("MAILER_FROM_EMAIL")
+ENV.delete("MAILER_REPLY_TO_EMAIL")
 require_relative "../config/environment"
 require "rails/test_help"
 
