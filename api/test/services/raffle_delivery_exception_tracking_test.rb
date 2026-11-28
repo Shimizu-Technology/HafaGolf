@@ -102,6 +102,7 @@ class RaffleDeliveryExceptionTrackingTest < ActiveSupport::TestCase
       assert_equal true, result.fetch(:success)
       assert_equal @tournament.organization_id, delivery.organization_id
       assert_equal [ { name: "delivery_id", value: delivery.id.to_s } ], captured_payload.fetch(:tags)
+      assert_equal "support@shimizu-technology.com", captured_payload.fetch(:reply_to)
     end
   ensure
     ENV["RESEND_API_KEY"] = previous_key

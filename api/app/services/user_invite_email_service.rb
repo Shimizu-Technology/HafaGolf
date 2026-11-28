@@ -13,6 +13,8 @@ class UserInviteEmailService
       brand_color = org&.primary_color.presence || "#0f172a"
       subject = "You're invited to the #{org_name} #{role_label == 'volunteer' ? 'team' : 'admin portal'}"
 
+      reply_to_email = ApplicationMailer.default_reply_to_email
+
       delivery = MessageDeliveryTracker.create!(
         provider: "resend",
         channel: "email",
@@ -21,6 +23,7 @@ class UserInviteEmailService
         organization: org,
         request_payload: {
           from: from_email,
+          reply_to: reply_to_email,
           to: user.email,
           subject: subject
         },
@@ -29,6 +32,7 @@ class UserInviteEmailService
 
       email_payload = {
         from: from_email,
+        reply_to: reply_to_email,
         to: user.email,
         subject: subject,
         html: invite_html(

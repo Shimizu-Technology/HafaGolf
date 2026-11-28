@@ -93,10 +93,12 @@ class TournamentMailer
   def send_email(to:, subject:, html:)
     return { error: 'RESEND_API_KEY not configured' } unless resend_configured?
     
-    from_email = ENV.fetch("MAILER_FROM_EMAIL", "noreply@shimizu-technology.com")
+    from_email = ApplicationMailer.default_from_email
+    reply_to_email = ApplicationMailer.default_reply_to_email
     
     response = Resend::Emails.send({
       from: from_email,
+      reply_to: reply_to_email,
       to: to,
       subject: subject,
       html: html

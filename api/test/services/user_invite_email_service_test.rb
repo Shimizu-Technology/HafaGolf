@@ -68,6 +68,7 @@ class UserInviteEmailServiceTest < ActiveSupport::TestCase
       assert_equal "email_invite_123", delivery.provider_message_id
       assert_equal org.id, delivery.organization_id
       assert_equal [ { name: "delivery_id", value: delivery.id.to_s } ], captured_payload.fetch(:tags)
+      assert_equal "support@shimizu-technology.com", captured_payload.fetch(:reply_to)
 
       html = captured_payload.fetch(:html)
       assert_includes html, "https://cdn.example.com/org-logo.png"

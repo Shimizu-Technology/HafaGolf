@@ -213,7 +213,8 @@ class RaffleMailer
   def send_email(to:, subject:, html:, purpose:, tournament:, messageable:, metadata: {})
     return { success: false, error: 'RESEND_API_KEY not configured' } unless resend_configured?
     
-    from_email = ENV.fetch("MAILER_FROM_EMAIL", "noreply@shimizu-technology.com")
+    from_email = ApplicationMailer.default_from_email
+    reply_to_email = ApplicationMailer.default_reply_to_email
     delivery = MessageDeliveryTracker.create!(
       provider: "resend",
       channel: "email",
@@ -222,12 +223,13 @@ class RaffleMailer
       organization: tournament&.organization,
       tournament: tournament,
       messageable: messageable,
-      request_payload: { from: from_email, to: to, subject: subject },
+      request_payload: { from: from_email, reply_to: reply_to_email, to: to, subject: subject },
       metadata: metadata
     )
 
     email_payload = {
       from: from_email,
+      reply_to: reply_to_email,
       to: to,
       subject: subject,
       html: html

@@ -174,9 +174,11 @@ module Broadcasts
         request_payload: { subject: @subject, audience: @audience }
       )
 
-      from_email = ENV.fetch("MAILER_FROM_EMAIL", "noreply@shimizu-technology.com")
+      from_email = ApplicationMailer.default_from_email
+      reply_to_email = ApplicationMailer.default_reply_to_email
       response = Resend::Emails.send({
         from: from_email,
+        reply_to: reply_to_email,
         to: to_email,
         subject: @subject,
         html: build_email_html
