@@ -6,7 +6,8 @@ class SponsorAccessEmailService
       return { success: false, error: "RESEND_API_KEY not configured" } unless ENV["RESEND_API_KEY"].present?
 
       mail = SponsorMailer.access_link(sponsor, token)
-      from_email = ENV.fetch("MAILER_FROM_EMAIL", "noreply@shimizu-technology.com")
+      from_email = ApplicationMailer.default_from_email
+      reply_to_email = ApplicationMailer.default_reply_to_email
       tournament = sponsor.tournament
       delivery = MessageDeliveryTracker.create!(
         provider: "resend",
@@ -16,12 +17,13 @@ class SponsorAccessEmailService
         organization: tournament&.organization,
         tournament: tournament,
         messageable: sponsor,
-        request_payload: { from: from_email, to: sponsor.login_email, subject: mail.subject },
+        request_payload: { from: from_email, reply_to: reply_to_email, to: sponsor.login_email, subject: mail.subject },
         metadata: { sponsor_id: sponsor.id, sponsor_name: sponsor.name }
       )
 
       email_payload = {
         from: from_email,
+        reply_to: reply_to_email,
         to: sponsor.login_email,
         subject: mail.subject,
         html: html_body(mail),

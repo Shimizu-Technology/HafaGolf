@@ -293,6 +293,7 @@ class BroadcastAnnouncementsTest < ActionDispatch::IntegrationTest
     assert_equal 0, created["failed_count"]
     assert_equal 1, sent_payloads.length
     assert_equal "sponsor@oceanbank.example.com", sent_payloads.first[:to]
+    assert_equal "support@shimizu-technology.com", sent_payloads.first[:reply_to]
     assert_not_includes sent_payloads.first[:html], "<script>"
     assert_not_includes sent_payloads.first[:html], "<b>Hole 1</b>"
     assert_includes sent_payloads.first[:html], "&lt;b&gt;Hole 1&lt;/b&gt;"

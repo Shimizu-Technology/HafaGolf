@@ -21,7 +21,20 @@ class GolferMailerTest < ActionMailer::TestCase
     
     assert_equal "Test Tournament — Registration Confirmed!", mail.subject
     assert_equal [@golfer.email], mail.to
+    assert_equal ["noreply@shimizu-technology.com"], mail.from
+    assert_equal ["support@shimizu-technology.com"], mail.reply_to
     assert_match @golfer.name, mail.body.encoded
+  end
+
+  test "uses MAILER_REPLY_TO_EMAIL override when configured" do
+    previous_reply_to = ENV["MAILER_REPLY_TO_EMAIL"]
+    ENV["MAILER_REPLY_TO_EMAIL"] = "help@example.test"
+
+    mail = GolferMailer.confirmation_email(@golfer)
+
+    assert_equal ["help@example.test"], mail.reply_to
+  ensure
+    ENV["MAILER_REPLY_TO_EMAIL"] = previous_reply_to
   end
 
   test "confirmation_email for waitlist golfer" do

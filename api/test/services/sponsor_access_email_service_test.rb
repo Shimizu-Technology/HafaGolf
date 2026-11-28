@@ -49,6 +49,7 @@ class SponsorAccessEmailServiceTest < ActiveSupport::TestCase
     end
 
     assert_equal @sponsor.login_email, captured_payload.fetch(:to)
+    assert_equal "support@shimizu-technology.com", captured_payload.fetch(:reply_to)
     assert_includes captured_payload.fetch(:html), token
 
     delivery = MessageDelivery.last

@@ -1,5 +1,17 @@
 class ApplicationMailer < ActionMailer::Base
-  default from: ENV.fetch("MAILER_FROM_EMAIL", "noreply@shimizu-technology.com")
+  DEFAULT_FROM_EMAIL = "noreply@shimizu-technology.com"
+  DEFAULT_REPLY_TO_EMAIL = "support@shimizu-technology.com"
+
+  def self.default_from_email
+    ENV["MAILER_FROM_EMAIL"].presence || DEFAULT_FROM_EMAIL
+  end
+
+  def self.default_reply_to_email
+    ENV["MAILER_REPLY_TO_EMAIL"].presence || DEFAULT_REPLY_TO_EMAIL
+  end
+
+  default from: -> { ApplicationMailer.default_from_email },
+          reply_to: -> { ApplicationMailer.default_reply_to_email }
   layout "mailer"
   helper MailerHelper
 
